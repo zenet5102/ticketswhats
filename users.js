@@ -17,6 +17,34 @@ function normalizeRole(role) {
   return allowedRoles.has(cleanRole) ? cleanRole : 'usuario';
 }
 
+function normalizeGroups(groups) {
+  const source = Array.isArray(groups)
+    ? groups
+    : String(groups || '').split(',');
+  const seen = new Set();
+  const cleanGroups = [];
+
+  for (const group of source) {
+    const cleanGroup = String(group || '').trim();
+    const key = cleanGroup.toLowerCase();
+
+    if (cleanGroup && !seen.has(key)) {
+      seen.add(key);
+      cleanGroups.push(cleanGroup);
+    }
+  }
+
+  return cleanGroups;
+}
+
+function parseGroupsJson(value) {
+  try {
+    return normalizeGroups(JSON.parse(value || '[]'));
+  } catch (error) {
+    return [];
+  }
+}
+
 function safeCompare(leftValue, rightValue) {
   const left = Buffer.from(String(leftValue || ''), 'utf8');
   const right = Buffer.from(String(rightValue || ''), 'utf8');
@@ -43,6 +71,7 @@ function publicUser(row) {
     username: row.username,
     name: row.name,
     role: row.role,
+    groups: parseGroupsJson(row.groups_json),
     isAdmin: row.role === 'admin',
     isPrivileged: privilegedRoles.has(row.role),
     createdAt: row.created_at,
@@ -112,6 +141,7 @@ function normalizeUserInput(input = {}, passwordRequired = false) {
   const username = normalizeUsername(input.username);
   const name = normalizeName(input.name, username);
   const role = normalizeRole(input.role);
+  const groups = normalizeGroups(input.groups);
   const password = String(input.password || '');
 
   if (!username) {
@@ -138,6 +168,7 @@ function normalizeUserInput(input = {}, passwordRequired = false) {
     username,
     name,
     role,
+    groups,
     password
   };
 }
@@ -165,10 +196,11 @@ function ensureUsersSeeded() {
       username,
       name,
       role,
+      groups_json,
       password_hash,
       password_salt
     )
-    VALUES (?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?)
   `);
 
   database.exec('BEGIN');
@@ -181,6 +213,7 @@ function ensureUsersSeeded() {
         cleanUser.username,
         cleanUser.name,
         cleanUser.role,
+        JSON.stringify(cleanUser.groups),
         password.hash,
         password.salt
       );
@@ -246,6 +279,7 @@ function listUsers() {
       username,
       name,
       role,
+      groups_json,
       created_at,
       updated_at
     FROM users
@@ -263,14 +297,16 @@ function createUser(input = {}) {
         username,
         name,
         role,
+        groups_json,
         password_hash,
         password_salt
       )
-      VALUES (?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?)
     `).run(
       user.username,
       user.name,
       user.role,
+      JSON.stringify(user.groups),
       password.hash,
       password.salt
     );
@@ -318,6 +354,7 @@ function updateUser(id, input = {}) {
     username: input.username ?? existingUser.username,
     name: input.name ?? existingUser.name,
     role: input.role ?? existingUser.role,
+    groups: input.groups ?? parseGroupsJson(existingUser.groups_json),
     password: input.password || ''
   });
 
@@ -331,6 +368,7 @@ function updateUser(id, input = {}) {
         SET username = ?,
             name = ?,
             role = ?,
+            groups_json = ?,
             password_hash = ?,
             password_salt = ?,
             updated_at = CURRENT_TIMESTAMP
@@ -339,6 +377,7 @@ function updateUser(id, input = {}) {
         user.username,
         user.name,
         user.role,
+        JSON.stringify(user.groups),
         password.hash,
         password.salt,
         Number(id)
@@ -349,12 +388,14 @@ function updateUser(id, input = {}) {
         SET username = ?,
             name = ?,
             role = ?,
+            groups_json = ?,
             updated_at = CURRENT_TIMESTAMP
         WHERE id = ?
       `).run(
         user.username,
         user.name,
         user.role,
+        JSON.stringify(user.groups),
         Number(id)
       );
     }
@@ -392,12 +433,24 @@ function deleteUser(id, currentUsername) {
   return publicUser(user);
 }
 
+function listAssignedUserGroups() {
+  ensureUsersSeeded();
+  const groups = [];
+
+  for (const row of getDb().prepare('SELECT groups_json FROM users').all()) {
+    groups.push(...parseGroupsJson(row.groups_json));
+  }
+
+  return normalizeGroups(groups).sort((left, right) => left.localeCompare(right));
+}
+
 module.exports = {
   allowedRoles: Array.from(allowedRoles),
   authenticateUser,
   createUser,
   deleteUser,
   getPublicUserByUsername,
+  listAssignedUserGroups,
   listUsers,
   updateUser
 };

@@ -182,6 +182,38 @@
       border-color: var(--accent);
     }
 
+    .group-options {
+      min-height: 40px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 8px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      background: #ffffff;
+    }
+
+    .group-option {
+      min-height: 30px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 0 9px;
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      color: var(--text);
+      font-size: 13px;
+      font-weight: 700;
+      background: #f8fafc;
+      margin: 0;
+    }
+
+    .group-option input {
+      width: auto;
+      min-height: auto;
+      margin: 0;
+    }
+
     .form-actions {
       margin-top: 16px;
       display: flex;
@@ -197,7 +229,7 @@
     table {
       width: 100%;
       border-collapse: collapse;
-      min-width: 720px;
+      min-width: 860px;
     }
 
     th,
@@ -349,6 +381,9 @@
           <label for="role">Rol</label>
           <select id="role" required></select>
 
+          <label>Grupos</label>
+          <div id="groupsBox" class="group-options"></div>
+
           <label for="password">Contrasena</label>
           <input id="password" type="password" autocomplete="new-password" required>
 
@@ -375,13 +410,14 @@
                 <th>Usuario</th>
                 <th>Nombre</th>
                 <th>Rol</th>
+                <th>Grupos</th>
                 <th>Actualizado</th>
                 <th></th>
               </tr>
             </thead>
             <tbody id="usersBody">
               <tr>
-                <td colspan="5" class="muted">Cargando...</td>
+                <td colspan="6" class="muted">Cargando...</td>
               </tr>
             </tbody>
           </table>
@@ -396,6 +432,7 @@
     const state = {
       users: [],
       roles: [],
+      groups: [],
       auth: null
     };
 
@@ -403,6 +440,7 @@
       cancelBtn: document.getElementById('cancelBtn'),
       formError: document.getElementById('formError'),
       formTitle: document.getElementById('formTitle'),
+      groupsBox: document.getElementById('groupsBox'),
       logoutBtn: document.getElementById('logoutBtn'),
       name: document.getElementById('name'),
       newBtn: document.getElementById('newBtn'),
@@ -522,6 +560,40 @@
       }).join('');
     }
 
+    function renderGroupOptions(selectedGroups = []) {
+      const selected = new Set((selectedGroups || []).map(group => String(group).toLowerCase()));
+
+      if (!state.groups.length) {
+        els.groupsBox.innerHTML = '<span class="muted">Sin grupos detectados.</span>';
+        return;
+      }
+
+      els.groupsBox.innerHTML = state.groups.map(group => {
+        const id = 'group-' + group.toLowerCase().replace(/[^a-z0-9_-]+/g, '-');
+        const checked = selected.has(String(group).toLowerCase()) ? ' checked' : '';
+
+        return '<label class="group-option" for="' + escapeHtml(id) + '">' +
+          '<input id="' + escapeHtml(id) + '" type="checkbox" value="' + escapeHtml(group) + '"' + checked + '>' +
+          '<span>' + escapeHtml(group) + '</span>' +
+        '</label>';
+      }).join('');
+    }
+
+    function getSelectedGroups() {
+      return Array.from(els.groupsBox.querySelectorAll('input[type="checkbox"]:checked'))
+        .map(input => input.value);
+    }
+
+    function renderGroupBadges(groups = []) {
+      if (!groups.length) {
+        return '<span class="muted">--</span>';
+      }
+
+      return groups.map(group => {
+        return '<span class="badge blue">' + escapeHtml(group) + '</span>';
+      }).join(' ');
+    }
+
     function renderUsers() {
       els.userCount.textContent = String(state.users.length);
       els.summary.textContent = state.users.length === 1
@@ -529,7 +601,7 @@
         : state.users.length + ' usuarios';
 
       if (!state.users.length) {
-        els.usersBody.innerHTML = '<tr><td colspan="5" class="muted">Sin usuarios.</td></tr>';
+        els.usersBody.innerHTML = '<tr><td colspan="6" class="muted">Sin usuarios.</td></tr>';
         return;
       }
 
@@ -538,6 +610,7 @@
           '<td><strong>' + escapeHtml(user.username) + '</strong></td>' +
           '<td>' + escapeHtml(user.name) + '</td>' +
           '<td><span class="badge ' + roleTone(user.role) + '">' + escapeHtml(roleLabel(user.role)) + '</span></td>' +
+          '<td>' + (user.role === 'admin' ? '<span class="badge good">Todos</span>' : renderGroupBadges(user.groups || [])) + '</td>' +
           '<td class="muted">' + escapeHtml(formatDateTime(user.updatedAt)) + '</td>' +
           '<td>' +
             '<div class="row-actions">' +
@@ -573,6 +646,7 @@
       }
 
       state.roles = data.roles || [];
+      state.groups = data.groups || [];
       state.users = data.users || [];
       renderRoleOptions();
       renderUsers();
@@ -589,6 +663,7 @@
       els.username.value = '';
       els.name.value = '';
       els.role.value = 'usuario';
+      renderGroupOptions([]);
       els.password.value = '';
       els.password.required = true;
       els.password.placeholder = '';
@@ -603,6 +678,7 @@
       els.username.value = user.username;
       els.name.value = user.name;
       els.role.value = user.role;
+      renderGroupOptions(user.groups || []);
       els.password.value = '';
       els.password.required = false;
       els.password.placeholder = 'Opcional al editar';
@@ -622,6 +698,7 @@
         username: els.username.value.trim(),
         name: els.name.value.trim(),
         role: els.role.value,
+        groups: getSelectedGroups(),
         password: els.password.value
       };
 

@@ -35,6 +35,7 @@ function publicUser(user) {
     username: user.username,
     role: user.role,
     name: user.name,
+    groups: Array.isArray(user.groups) ? user.groups : [],
     isAdmin: adminRoles.has(user.role),
     isPrivileged: privilegedRoles.has(user.role)
   };

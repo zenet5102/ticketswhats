@@ -16,7 +16,10 @@ const {
 } = require('./auth');
 const {
   createTicketResponseAction,
+  filterTicketsByGroups,
   listTickets,
+  listTicketGroups,
+  listWhatsAppChatPhones,
   listWhatsAppConversations,
   listWhatsAppMessages,
   normalizeChatPhone,
@@ -38,6 +41,7 @@ const {
   allowedRoles,
   createUser,
   deleteUser,
+  listAssignedUserGroups,
   listUsers: listAppUsers,
   updateUser
 } = require('./users');
@@ -148,6 +152,7 @@ app.get('/users', requireAdmin, (req, res) => {
   res.json({
     success: true,
     roles: allowedRoles,
+    groups: listAvailableUserGroups(),
     users: listAppUsers()
   });
 });
@@ -213,6 +218,159 @@ app.get('/mensajes', requireLoggedIn, (req, res) => {
 app.get('/test', requirePrivileged, (req, res) => {
   res.sendFile(path.join(__dirname, 'enviar.html'));
 });
+
+function getUserAllowedGroups(user) {
+  if (user && user.isAdmin) {
+    return null;
+  }
+
+  return Array.isArray(user && user.groups) ? user.groups : [];
+}
+
+function listVisibleTicketsForUser(user, date) {
+  return filterTicketsByGroups(listTickets(date), getUserAllowedGroups(user));
+}
+
+function listAvailableUserGroups() {
+  const seen = new Set();
+  const groups = [];
+
+  for (const group of [...listTicketGroups(), ...listAssignedUserGroups()]) {
+    const cleanGroup = String(group || '').trim();
+    const key = cleanGroup.toLowerCase();
+
+    if (cleanGroup && !seen.has(key)) {
+      seen.add(key);
+      groups.push(cleanGroup);
+    }
+  }
+
+  return groups.sort((left, right) => left.localeCompare(right));
+}
+
+function getVisibleTicketPhones(user) {
+  const phones = new Set();
+
+  for (const ticket of listVisibleTicketsForUser(user)) {
+    const phone = normalizeChatPhone(ticket.phone || '');
+
+    if (phone) {
+      phones.add(phone);
+    }
+  }
+
+  return phones;
+}
+
+function parseTicketPayload(ticket) {
+  try {
+    return JSON.parse(ticket && ticket.payload_json || '{}') || {};
+  } catch (error) {
+    return {};
+  }
+}
+
+function getTicketIda(ticket) {
+  const payload = parseTicketPayload(ticket);
+
+  return String(
+    payload.IDA ||
+    payload.ida ||
+    payload.IDAbonado ||
+    payload.id_abonado ||
+    ''
+  ).trim();
+}
+
+function getTicketInfo(ticket) {
+  if (!ticket) {
+    return {};
+  }
+
+  return {
+    ticket_external_id: ticket.external_id,
+    ticket_ida: getTicketIda(ticket),
+    ticket_razon_social: ticket.razon_social || '',
+    ticket_delegacion: ticket.delegacion || '',
+    ticket_start: ticket.start || '',
+    ticket_start_time: ticket.start_time || ''
+  };
+}
+
+function buildTicketInfoByPhone(user) {
+  const byPhone = new Map();
+  const tickets = listVisibleTicketsForUser(user)
+    .slice()
+    .sort((left, right) => Number(right.start_ts || 0) - Number(left.start_ts || 0));
+
+  for (const ticket of tickets) {
+    const phone = normalizeChatPhone(ticket.phone || '');
+
+    if (phone && !byPhone.has(phone)) {
+      byPhone.set(phone, getTicketInfo(ticket));
+    }
+  }
+
+  return byPhone;
+}
+
+function attachTicketInfoToConversations(user, conversations) {
+  const ticketsByPhone = buildTicketInfoByPhone(user);
+
+  return conversations.map(conversation => {
+    const phone = normalizeChatPhone(conversation && conversation.phone || '');
+    const chatPhone = normalizeChatPhone(conversation && conversation.chat_id || '');
+    const ticketInfo = ticketsByPhone.get(phone) || ticketsByPhone.get(chatPhone) || {};
+
+    return {
+      ...conversation,
+      ...ticketInfo
+    };
+  });
+}
+
+function conversationMatchesPhones(conversation, phones) {
+  const directPhone = normalizeChatPhone(conversation && conversation.phone || '');
+  const chatPhone = normalizeChatPhone(conversation && conversation.chat_id || '');
+
+  return Boolean((directPhone && phones.has(directPhone)) || (chatPhone && phones.has(chatPhone)));
+}
+
+function listVisibleConversationsForUser(user, limit) {
+  if (user && user.isAdmin) {
+    return attachTicketInfoToConversations(user, listWhatsAppConversations(limit));
+  }
+
+  const requestedLimit = Math.min(Math.max(Number(limit) || 100, 1), 300);
+  const phones = getVisibleTicketPhones(user);
+
+  if (!phones.size) {
+    return [];
+  }
+
+  const conversations = listWhatsAppConversations(1000)
+    .filter(conversation => conversationMatchesPhones(conversation, phones))
+    .slice(0, requestedLimit);
+
+  return attachTicketInfoToConversations(user, conversations);
+}
+
+function canReadChat(user, chatId) {
+  if (user && user.isAdmin) {
+    return true;
+  }
+
+  const phones = getVisibleTicketPhones(user);
+  const chatPhone = normalizeChatPhone(chatId);
+
+  if (chatPhone && phones.has(chatPhone)) {
+    return true;
+  }
+
+  return listWhatsAppChatPhones(chatId)
+    .map(phone => normalizeChatPhone(phone))
+    .some(phone => phone && phones.has(phone));
+}
 
 function createWhatsAppClient() {
   return new Client({
@@ -785,7 +943,7 @@ app.get('/messages/conversations', requireLoggedIn, (req, res) => {
   try {
     res.json({
       success: true,
-      conversations: listWhatsAppConversations(req.query.limit)
+      conversations: listVisibleConversationsForUser(req.user, req.query.limit)
     });
   } catch (error) {
     res.status(500).json({
@@ -803,6 +961,13 @@ app.get('/messages', requireLoggedIn, async (req, res) => {
       return res.status(400).json({
         success: false,
         error: 'Falta chatId'
+      });
+    }
+
+    if (!canReadChat(req.user, chatId)) {
+      return res.status(403).json({
+        success: false,
+        error: 'Chat fuera de los grupos asignados'
       });
     }
 
@@ -865,7 +1030,7 @@ app.get('/tickets', requireLoggedIn, (req, res) => {
   try {
     res.json({
       success: true,
-      tickets: listTickets(req.query.date)
+      tickets: listVisibleTicketsForUser(req.user, req.query.date)
     });
   } catch (error) {
     res.status(500).json({

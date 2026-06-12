@@ -714,12 +714,27 @@
 
       const phone = conversation.phone || '';
       const chatId = conversation.chat_id || '';
+      const parts = [];
 
-      if (phone && chatId && !chatId.startsWith(phone)) {
-        return `${phone} | ${chatId}`;
+      if (conversation.ticket_external_id) {
+        parts.push('Ticket: ' + conversation.ticket_external_id);
       }
 
-      return phone || chatId || '--';
+      if (conversation.ticket_ida) {
+        parts.push('IDA: ' + conversation.ticket_ida);
+      }
+
+      if (conversation.ticket_razon_social) {
+        parts.push('Razon social: ' + conversation.ticket_razon_social);
+      }
+
+      if (phone && chatId && !chatId.startsWith(phone)) {
+        parts.push(phone, chatId);
+      } else {
+        parts.push(phone || chatId);
+      }
+
+      return parts.filter(Boolean).join(' | ') || '--';
     }
 
     function getMessagePerson(message, conversation) {

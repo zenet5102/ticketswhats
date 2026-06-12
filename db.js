@@ -80,6 +80,7 @@ function initializeDatabase(database = getDb()) {
       username TEXT NOT NULL UNIQUE COLLATE NOCASE,
       name TEXT NOT NULL,
       role TEXT NOT NULL,
+      groups_json TEXT NOT NULL DEFAULT '[]',
       password_hash TEXT NOT NULL,
       password_salt TEXT NOT NULL,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -123,6 +124,7 @@ function initializeDatabase(database = getDb()) {
   ensureWhatsAppMessageColumn(database, 'media_mime', 'TEXT');
   ensureWhatsAppMessageColumn(database, 'media_data', 'TEXT');
   ensureWhatsAppMessageColumn(database, 'media_filename', 'TEXT');
+  ensureUserColumn(database, 'groups_json', "TEXT NOT NULL DEFAULT '[]'");
 }
 
 function ensureColumn(database, columnName, definition) {
@@ -140,6 +142,15 @@ function ensureWhatsAppMessageColumn(database, columnName, definition) {
 
   if (!exists) {
     database.exec(`ALTER TABLE whatsapp_messages ADD COLUMN ${columnName} ${definition}`);
+  }
+}
+
+function ensureUserColumn(database, columnName, definition) {
+  const columns = database.prepare('PRAGMA table_info(users)').all();
+  const exists = columns.some(column => column.name === columnName);
+
+  if (!exists) {
+    database.exec(`ALTER TABLE users ADD COLUMN ${columnName} ${definition}`);
   }
 }
 
@@ -230,6 +241,65 @@ function pruneTicketsForDate(date, externalIds = []) {
   return result.changes;
 }
 
+function normalizeGroupName(value) {
+  return String(value || '').trim();
+}
+
+function parseTicketPayload(ticket) {
+  try {
+    return JSON.parse(ticket && ticket.payload_json || '{}') || {};
+  } catch (error) {
+    return {};
+  }
+}
+
+function getTicketGroupName(ticket) {
+  const payload = parseTicketPayload(ticket);
+
+  return normalizeGroupName(
+    payload.Grupo ||
+    payload.grupo ||
+    payload.Grupo_Tecnico ||
+    payload.grupo_tecnico ||
+    ticket.delegacion ||
+    'Sin grupo'
+  ) || 'Sin grupo';
+}
+
+function normalizeGroupList(groups) {
+  const source = Array.isArray(groups)
+    ? groups
+    : String(groups || '').split(',');
+  const seen = new Set();
+  const cleanGroups = [];
+
+  for (const group of source) {
+    const cleanGroup = normalizeGroupName(group);
+    const key = cleanGroup.toLowerCase();
+
+    if (cleanGroup && !seen.has(key)) {
+      seen.add(key);
+      cleanGroups.push(cleanGroup);
+    }
+  }
+
+  return cleanGroups;
+}
+
+function filterTicketsByGroups(tickets, groups) {
+  if (groups === null) {
+    return tickets;
+  }
+
+  const allowedGroups = new Set(normalizeGroupList(groups).map(group => group.toLowerCase()));
+
+  if (!allowedGroups.size) {
+    return [];
+  }
+
+  return tickets.filter(ticket => allowedGroups.has(getTicketGroupName(ticket).toLowerCase()));
+}
+
 function listTickets(date) {
   const database = getDb();
 
@@ -247,6 +317,17 @@ function listTickets(date) {
     FROM tickets
     ORDER BY start_ts ASC, external_id ASC
   `).all();
+}
+
+function listTicketGroups() {
+  const rows = getDb().prepare(`
+    SELECT delegacion, payload_json
+    FROM tickets
+    ORDER BY delegacion ASC
+  `).all();
+  const groups = normalizeGroupList(rows.map(getTicketGroupName));
+
+  return groups.sort((left, right) => left.localeCompare(right));
 }
 
 function getTicket(externalId) {
@@ -587,7 +668,7 @@ function saveWhatsAppMessage(message = {}) {
 }
 
 function listWhatsAppConversations(limit = 100) {
-  const safeLimit = Math.min(Math.max(Number(limit) || 100, 1), 300);
+  const safeLimit = Math.min(Math.max(Number(limit) || 100, 1), 1000);
 
   return getDb().prepare(`
     WITH ranked AS (
@@ -702,6 +783,22 @@ function listWhatsAppMessages(chatId, limit = 200) {
   `).all(chatId, safeLimit);
 }
 
+function listWhatsAppChatPhones(chatId) {
+  const cleanChatId = String(chatId || '').trim();
+
+  if (!cleanChatId) {
+    return [];
+  }
+
+  return getDb().prepare(`
+    SELECT DISTINCT phone
+    FROM whatsapp_messages
+    WHERE chat_id = ?
+      AND phone IS NOT NULL
+      AND phone <> ''
+  `).all(cleanChatId).map(row => row.phone);
+}
+
 function closeDb() {
   if (db) {
     db.close();
@@ -717,6 +814,10 @@ module.exports = {
   getNextTicket,
   getPendingTicketResponseActionByChat,
   getTicket,
+  getTicketGroupName,
+  filterTicketsByGroups,
+  listTicketGroups,
+  listWhatsAppChatPhones,
   listWhatsAppConversations,
   listWhatsAppMessages,
   listTickets,
