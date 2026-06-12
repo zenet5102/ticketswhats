@@ -1,0 +1,687 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Usuarios</title>
+  <style>
+    :root {
+      --bg: #f6f7f9;
+      --panel: #ffffff;
+      --line: #d9dee7;
+      --text: #17202a;
+      --muted: #657386;
+      --accent: #2563eb;
+      --good: #11845b;
+      --warn: #b76e00;
+      --bad: #bd2c2c;
+      --soft-good: #e7f7ef;
+      --soft-warn: #fff3d8;
+      --soft-bad: #fde8e8;
+      --soft-blue: #eaf1ff;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: Arial, Helvetica, sans-serif;
+      font-size: 15px;
+    }
+
+    .topbar {
+      border-bottom: 1px solid var(--line);
+      background: var(--panel);
+    }
+
+    .topbar-inner,
+    .content {
+      width: min(1180px, calc(100% - 32px));
+      margin: 0 auto;
+    }
+
+    .topbar-inner {
+      min-height: 68px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 24px;
+      font-weight: 700;
+      letter-spacing: 0;
+    }
+
+    .subtitle {
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .actions {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      gap: 8px;
+    }
+
+    button,
+    .button-link {
+      min-height: 38px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      color: var(--text);
+      padding: 0 12px;
+      font: inherit;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      white-space: nowrap;
+      text-decoration: none;
+    }
+
+    button.primary {
+      border-color: var(--accent);
+      background: var(--accent);
+      color: #ffffff;
+    }
+
+    button.danger {
+      border-color: #f4b7b7;
+      color: var(--bad);
+    }
+
+    button:disabled {
+      cursor: progress;
+      opacity: 0.7;
+    }
+
+    .session-chip {
+      min-height: 38px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #f8fafc;
+      color: var(--muted);
+      padding: 0 12px;
+      display: inline-flex;
+      align-items: center;
+      white-space: nowrap;
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .content {
+      padding: 18px 0 32px;
+    }
+
+    .layout {
+      display: grid;
+      grid-template-columns: minmax(280px, 360px) minmax(0, 1fr);
+      gap: 16px;
+      align-items: start;
+    }
+
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+
+    .panel-head {
+      min-height: 54px;
+      padding: 0 14px;
+      border-bottom: 1px solid var(--line);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .panel-title {
+      font-weight: 700;
+    }
+
+    form {
+      padding: 14px;
+    }
+
+    label {
+      display: block;
+      margin: 12px 0 6px;
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    input,
+    select {
+      width: 100%;
+      min-height: 40px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 9px 11px;
+      color: var(--text);
+      font: inherit;
+      background: #ffffff;
+    }
+
+    input:focus,
+    select:focus {
+      outline: 2px solid #bfdbfe;
+      border-color: var(--accent);
+    }
+
+    .form-actions {
+      margin-top: 16px;
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .table-wrap {
+      width: 100%;
+      overflow: auto;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      min-width: 720px;
+    }
+
+    th,
+    td {
+      padding: 11px 12px;
+      border-bottom: 1px solid var(--line);
+      text-align: left;
+      vertical-align: middle;
+      white-space: nowrap;
+    }
+
+    th {
+      color: var(--muted);
+      background: #f8fafc;
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0;
+    }
+
+    tbody tr:hover {
+      background: #fbfcfe;
+    }
+
+    .row-actions {
+      display: flex;
+      gap: 8px;
+      justify-content: flex-end;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      min-height: 24px;
+      border-radius: 999px;
+      padding: 0 9px;
+      font-size: 12px;
+      font-weight: 700;
+      border: 1px solid transparent;
+      white-space: nowrap;
+    }
+
+    .badge.good {
+      background: var(--soft-good);
+      border-color: #bfe8d4;
+      color: var(--good);
+    }
+
+    .badge.warn {
+      background: var(--soft-warn);
+      border-color: #f3d088;
+      color: var(--warn);
+    }
+
+    .badge.blue {
+      background: var(--soft-blue);
+      border-color: #c8d9ff;
+      color: var(--accent);
+    }
+
+    .muted {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .error-text {
+      color: var(--bad);
+      font-size: 13px;
+      line-height: 1.35;
+    }
+
+    .toast {
+      position: fixed;
+      right: 16px;
+      bottom: 16px;
+      max-width: min(420px, calc(100% - 32px));
+      background: #17202a;
+      color: #ffffff;
+      border-radius: 8px;
+      padding: 12px 14px;
+      box-shadow: 0 12px 28px rgba(0, 0, 0, 0.2);
+      opacity: 0;
+      transform: translateY(12px);
+      transition: opacity 0.2s ease, transform 0.2s ease;
+      pointer-events: none;
+    }
+
+    .toast.visible {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    @media (max-width: 860px) {
+      .topbar-inner {
+        align-items: flex-start;
+        flex-direction: column;
+        padding: 14px 0;
+      }
+
+      .actions {
+        justify-content: flex-start;
+      }
+
+      .layout {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <div>
+        <h1>Usuarios</h1>
+        <div class="subtitle" id="summary">Cargando...</div>
+      </div>
+      <div class="actions">
+        <a class="button-link" href="/dashboard" title="Volver al monitor">
+          <span aria-hidden="true">&#8592;</span>
+          Tickets
+        </a>
+        <span id="sessionBadge" class="session-chip">Sesion</span>
+        <button id="logoutBtn" type="button" title="Cerrar sesion">
+          <span aria-hidden="true">&#9211;</span>
+          Salir
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <main class="content">
+    <section class="layout" aria-label="Gestion de usuarios">
+      <section class="panel">
+        <div class="panel-head">
+          <div class="panel-title" id="formTitle">Nuevo usuario</div>
+          <button id="newBtn" type="button" title="Nuevo usuario">
+            <span aria-hidden="true">&#43;</span>
+            Nuevo
+          </button>
+        </div>
+        <form id="userForm">
+          <input id="userId" type="hidden">
+
+          <label for="username">Usuario</label>
+          <input id="username" autocomplete="off" required>
+
+          <label for="name">Nombre</label>
+          <input id="name" autocomplete="off" required>
+
+          <label for="role">Rol</label>
+          <select id="role" required></select>
+
+          <label for="password">Contrasena</label>
+          <input id="password" type="password" autocomplete="new-password" required>
+
+          <div class="form-actions">
+            <button id="saveBtn" class="primary" type="submit">
+              <span aria-hidden="true">&#10003;</span>
+              Guardar
+            </button>
+            <button id="cancelBtn" type="button" hidden>Cancelar</button>
+          </div>
+          <div id="formError" class="error-text"></div>
+        </form>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <div class="panel-title">Listado</div>
+          <span class="badge blue" id="userCount">0</span>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Usuario</th>
+                <th>Nombre</th>
+                <th>Rol</th>
+                <th>Actualizado</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="usersBody">
+              <tr>
+                <td colspan="5" class="muted">Cargando...</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </section>
+  </main>
+
+  <div class="toast" id="toast"></div>
+
+  <script>
+    const state = {
+      users: [],
+      roles: [],
+      auth: null
+    };
+
+    const els = {
+      cancelBtn: document.getElementById('cancelBtn'),
+      formError: document.getElementById('formError'),
+      formTitle: document.getElementById('formTitle'),
+      logoutBtn: document.getElementById('logoutBtn'),
+      name: document.getElementById('name'),
+      newBtn: document.getElementById('newBtn'),
+      password: document.getElementById('password'),
+      role: document.getElementById('role'),
+      saveBtn: document.getElementById('saveBtn'),
+      sessionBadge: document.getElementById('sessionBadge'),
+      summary: document.getElementById('summary'),
+      toast: document.getElementById('toast'),
+      userCount: document.getElementById('userCount'),
+      userForm: document.getElementById('userForm'),
+      userId: document.getElementById('userId'),
+      username: document.getElementById('username'),
+      usersBody: document.getElementById('usersBody')
+    };
+
+    function escapeHtml(value) {
+      return String(value ?? '')
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&#039;');
+    }
+
+    function roleLabel(role) {
+      const labels = {
+        admin: 'Admin',
+        usuario: 'Usuario'
+      };
+      return labels[role] || role;
+    }
+
+    function roleTone(role) {
+      if (role === 'admin') {
+        return 'good';
+      }
+
+      return 'blue';
+    }
+
+    function formatDateTime(value) {
+      if (!value) {
+        return '--';
+      }
+
+      const normalized = String(value).includes('T') ? value : String(value).replace(' ', 'T') + 'Z';
+      const date = new Date(normalized);
+
+      if (Number.isNaN(date.getTime())) {
+        return String(value);
+      }
+
+      return date.toLocaleString('es-AR', {
+        hour: '2-digit',
+        minute: '2-digit',
+        day: '2-digit',
+        month: '2-digit'
+      });
+    }
+
+    function showToast(message) {
+      els.toast.textContent = message;
+      els.toast.classList.add('visible');
+      clearTimeout(showToast.timer);
+      showToast.timer = setTimeout(() => {
+        els.toast.classList.remove('visible');
+      }, 3000);
+    }
+
+    async function fetchJson(url, options) {
+      const response = await fetch(url, options);
+      const data = await response.json().catch(() => ({}));
+
+      if (response.status === 401) {
+        window.location.href = '/login?next=' + encodeURIComponent(window.location.pathname + window.location.search);
+        return null;
+      }
+
+      if (response.status === 403) {
+        window.location.href = '/dashboard';
+        return null;
+      }
+
+      if (!response.ok || data.success === false) {
+        throw new Error(data.error || 'Error HTTP ' + response.status);
+      }
+
+      return data;
+    }
+
+    async function loadSession() {
+      const data = await fetchJson('/auth/me');
+
+      if (!data) {
+        return null;
+      }
+
+      if (data.user.role !== 'admin') {
+        window.location.href = '/dashboard';
+        return null;
+      }
+
+      state.auth = data.user;
+      els.sessionBadge.textContent = data.user.name + ' | ADMIN';
+      return data.user;
+    }
+
+    async function logout() {
+      await fetch('/auth/logout', { method: 'POST' }).catch(() => {});
+      window.location.href = '/login';
+    }
+
+    function renderRoleOptions() {
+      els.role.innerHTML = state.roles.map(role => {
+        return '<option value="' + escapeHtml(role) + '">' + escapeHtml(roleLabel(role)) + '</option>';
+      }).join('');
+    }
+
+    function renderUsers() {
+      els.userCount.textContent = String(state.users.length);
+      els.summary.textContent = state.users.length === 1
+        ? '1 usuario'
+        : state.users.length + ' usuarios';
+
+      if (!state.users.length) {
+        els.usersBody.innerHTML = '<tr><td colspan="5" class="muted">Sin usuarios.</td></tr>';
+        return;
+      }
+
+      els.usersBody.innerHTML = state.users.map(user => {
+        return '<tr>' +
+          '<td><strong>' + escapeHtml(user.username) + '</strong></td>' +
+          '<td>' + escapeHtml(user.name) + '</td>' +
+          '<td><span class="badge ' + roleTone(user.role) + '">' + escapeHtml(roleLabel(user.role)) + '</span></td>' +
+          '<td class="muted">' + escapeHtml(formatDateTime(user.updatedAt)) + '</td>' +
+          '<td>' +
+            '<div class="row-actions">' +
+              '<button type="button" data-action="edit" data-id="' + user.id + '">Editar</button>' +
+              '<button class="danger" type="button" data-action="delete" data-id="' + user.id + '">Eliminar</button>' +
+            '</div>' +
+          '</td>' +
+        '</tr>';
+      }).join('');
+
+      els.usersBody.querySelectorAll('button[data-action]').forEach(button => {
+        button.addEventListener('click', () => {
+          const user = state.users.find(item => String(item.id) === button.dataset.id);
+
+          if (!user) {
+            return;
+          }
+
+          if (button.dataset.action === 'edit') {
+            editUser(user);
+          } else {
+            deleteUser(user);
+          }
+        });
+      });
+    }
+
+    async function loadUsers() {
+      const data = await fetchJson('/users');
+
+      if (!data) {
+        return;
+      }
+
+      state.roles = data.roles || [];
+      state.users = data.users || [];
+      renderRoleOptions();
+      renderUsers();
+    }
+
+    function setSaving(saving) {
+      els.saveBtn.disabled = saving;
+      els.newBtn.disabled = saving;
+      els.cancelBtn.disabled = saving;
+    }
+
+    function resetForm() {
+      els.userId.value = '';
+      els.username.value = '';
+      els.name.value = '';
+      els.role.value = 'usuario';
+      els.password.value = '';
+      els.password.required = true;
+      els.password.placeholder = '';
+      els.formTitle.textContent = 'Nuevo usuario';
+      els.cancelBtn.hidden = true;
+      els.formError.textContent = '';
+      els.username.focus();
+    }
+
+    function editUser(user) {
+      els.userId.value = user.id;
+      els.username.value = user.username;
+      els.name.value = user.name;
+      els.role.value = user.role;
+      els.password.value = '';
+      els.password.required = false;
+      els.password.placeholder = 'Opcional al editar';
+      els.formTitle.textContent = 'Editar usuario';
+      els.cancelBtn.hidden = false;
+      els.formError.textContent = '';
+      els.username.focus();
+    }
+
+    async function saveUser(event) {
+      event.preventDefault();
+      setSaving(true);
+      els.formError.textContent = '';
+
+      const id = els.userId.value;
+      const body = {
+        username: els.username.value.trim(),
+        name: els.name.value.trim(),
+        role: els.role.value,
+        password: els.password.value
+      };
+
+      if (id && !body.password) {
+        delete body.password;
+      }
+
+      try {
+        await fetchJson(id ? '/users/' + encodeURIComponent(id) : '/users', {
+          method: id ? 'PUT' : 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(body)
+        });
+        resetForm();
+        await loadUsers();
+        showToast('Usuario guardado');
+      } catch (error) {
+        els.formError.textContent = error.message;
+      } finally {
+        setSaving(false);
+      }
+    }
+
+    async function deleteUser(user) {
+      const confirmed = window.confirm('Eliminar usuario ' + user.username + '?');
+
+      if (!confirmed) {
+        return;
+      }
+
+      try {
+        await fetchJson('/users/' + encodeURIComponent(user.id), {
+          method: 'DELETE'
+        });
+        await loadUsers();
+        showToast('Usuario eliminado');
+      } catch (error) {
+        showToast(error.message);
+      }
+    }
+
+    els.logoutBtn.addEventListener('click', logout);
+    els.newBtn.addEventListener('click', resetForm);
+    els.cancelBtn.addEventListener('click', resetForm);
+    els.userForm.addEventListener('submit', saveUser);
+
+    async function init() {
+      const user = await loadSession();
+
+      if (!user) {
+        return;
+      }
+
+      await loadUsers();
+      resetForm();
+    }
+
+    init();
+  </script>
+</body>
+</html>

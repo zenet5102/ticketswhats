@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>Enviar WhatsApp</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background: #f3f4f6;
+            padding: 40px;
+        }
+
+        .card {
+            max-width: 450px;
+            margin: auto;
+            background: white;
+            padding: 25px;
+            border-radius: 10px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.12);
+        }
+
+        h2 {
+            margin-top: 0;
+        }
+
+        .session-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+            margin-bottom: 18px;
+            color: #64748b;
+            font-size: 13px;
+            font-weight: bold;
+        }
+
+        label {
+            display: block;
+            margin-top: 15px;
+            font-weight: bold;
+        }
+
+        input, textarea, button {
+            width: 100%;
+            padding: 10px;
+            margin-top: 6px;
+            box-sizing: border-box;
+            font-size: 15px;
+        }
+
+        textarea {
+            min-height: 120px;
+        }
+
+        button {
+            margin-top: 20px;
+            background: #16a34a;
+            color: white;
+            border: none;
+            cursor: pointer;
+            border-radius: 6px;
+        }
+
+        button:hover {
+            background: #15803d;
+        }
+
+        .logout {
+            width: auto;
+            min-width: 82px;
+            margin-top: 0;
+            background: white;
+            color: #111827;
+            border: 1px solid #d1d5db;
+        }
+
+        .logout:hover {
+            background: #f9fafb;
+        }
+
+        .result {
+            margin-top: 15px;
+            padding: 10px;
+            background: #f1f5f9;
+            border-radius: 6px;
+            font-size: 14px;
+        }
+    </style>
+</head>
+<body>
+
+<div class="card">
+    <div class="session-row">
+        <span id="sessionBadge">Sesion</span>
+        <button id="logoutBtn" class="logout" type="button">Salir</button>
+    </div>
+
+    <h2>Enviar WhatsApp</h2>
+
+    <form id="formWhatsapp">
+        <label>Telefono</label>
+        <input
+            type="text"
+            id="phone"
+            placeholder="Ej: 5491123456789"
+            required
+        >
+
+        <label>Mensaje</label>
+        <textarea id="message" required>Hola, le informamos que nuestro tecnico esta proximo a llegar a su domicilio.</textarea>
+
+        <button type="submit">Enviar mensaje</button>
+    </form>
+
+    <div id="result" class="result"></div>
+</div>
+
+<script>
+async function loadSession() {
+    const response = await fetch('/auth/me');
+    const data = await response.json().catch(() => ({}));
+
+    if (!response.ok || !data.success) {
+        window.location.href = '/login?next=' + encodeURIComponent(window.location.pathname + window.location.search);
+        return;
+    }
+
+    document.getElementById('sessionBadge').textContent = data.user.name + ' | ' + data.user.role.toUpperCase();
+}
+
+document.getElementById('logoutBtn').addEventListener('click', async function() {
+    await fetch('/auth/logout', { method: 'POST' }).catch(() => {});
+    window.location.href = '/login';
+});
+
+document.getElementById('formWhatsapp').addEventListener('submit', async function(e) {
+    e.preventDefault();
+
+    const phone = document.getElementById('phone').value.trim();
+    const message = document.getElementById('message').value.trim();
+    const result = document.getElementById('result');
+
+    result.innerHTML = 'Enviando...';
+
+    try {
+        const response = await fetch('/send', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                phone: phone,
+                message: message
+            })
+        });
+        const data = await response.json().catch(() => ({}));
+
+        if (response.status === 401) {
+            window.location.href = '/login?next=' + encodeURIComponent(window.location.pathname + window.location.search);
+            return;
+        }
+
+        if (data.success) {
+            result.innerHTML = 'Mensaje enviado correctamente';
+        } else {
+            result.innerHTML = 'Error: ' + (data.error || 'No se pudo enviar');
+        }
+    } catch (error) {
+        result.innerHTML = 'Error de conexion con la API: ' + error.message;
+    }
+});
+
+loadSession();
+</script>
+
+</body>
+</html>

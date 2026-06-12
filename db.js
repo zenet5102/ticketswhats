@@ -1,0 +1,732 @@
+const fs = require('fs');
+const path = require('path');
+const { DatabaseSync } = require('node:sqlite');
+const { config } = require('./config');
+
+let db;
+
+function getDb() {
+  if (db) {
+    return db;
+  }
+
+  const dbDirectory = path.dirname(config.dbPath);
+  fs.mkdirSync(dbDirectory, { recursive: true });
+
+  db = new DatabaseSync(config.dbPath);
+  db.exec('PRAGMA journal_mode = WAL');
+  db.exec('PRAGMA foreign_keys = ON');
+  initializeDatabase(db);
+
+  return db;
+}
+
+function initializeDatabase(database = getDb()) {
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS tickets (
+      external_id TEXT PRIMARY KEY,
+      delegacion TEXT NOT NULL,
+      start TEXT NOT NULL,
+      start_ts INTEGER NOT NULL,
+      start_date TEXT NOT NULL,
+      start_time TEXT NOT NULL,
+      status TEXT,
+      phone TEXT,
+      razon_social TEXT,
+      response_action TEXT,
+      response_label TEXT,
+      response_body TEXT,
+      response_received_at TEXT,
+      payload_json TEXT NOT NULL DEFAULT '{}',
+      message_sent_at TEXT,
+      message_error TEXT,
+      last_status_check_at TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_tickets_start_order
+      ON tickets (start_date, start_ts, external_id);
+
+    CREATE INDEX IF NOT EXISTS idx_tickets_status
+      ON tickets (status);
+
+    CREATE TABLE IF NOT EXISTS whatsapp_messages (
+      id TEXT PRIMARY KEY,
+      chat_id TEXT NOT NULL,
+      phone TEXT,
+      contact_name TEXT,
+      direction TEXT NOT NULL,
+      body TEXT NOT NULL,
+      media_mime TEXT,
+      media_data TEXT,
+      media_filename TEXT,
+      timestamp_ts INTEGER NOT NULL,
+      timestamp_iso TEXT NOT NULL,
+      from_me INTEGER NOT NULL DEFAULT 0,
+      ack INTEGER,
+      source TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_whatsapp_messages_chat_time
+      ON whatsapp_messages (chat_id, timestamp_ts);
+
+    CREATE INDEX IF NOT EXISTS idx_whatsapp_messages_time
+      ON whatsapp_messages (timestamp_ts);
+
+    CREATE TABLE IF NOT EXISTS users (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      username TEXT NOT NULL UNIQUE COLLATE NOCASE,
+      name TEXT NOT NULL,
+      role TEXT NOT NULL,
+      password_hash TEXT NOT NULL,
+      password_salt TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_users_role
+      ON users (role);
+
+    CREATE TABLE IF NOT EXISTS ticket_response_actions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      ticket_external_id TEXT NOT NULL,
+      chat_id TEXT NOT NULL,
+      phone TEXT,
+      question TEXT NOT NULL,
+      options_json TEXT NOT NULL,
+      delivery_mode TEXT NOT NULL DEFAULT 'text',
+      sent_message_id TEXT,
+      status TEXT NOT NULL DEFAULT 'pending',
+      selected_key TEXT,
+      selected_label TEXT,
+      selected_action TEXT,
+      response_message_id TEXT,
+      response_body TEXT,
+      action_result TEXT,
+      completed_at TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_ticket_response_actions_chat
+      ON ticket_response_actions (chat_id, status, created_at);
+
+  `);
+
+  ensureColumn(database, 'razon_social', 'TEXT');
+  ensureColumn(database, 'response_action', 'TEXT');
+  ensureColumn(database, 'response_label', 'TEXT');
+  ensureColumn(database, 'response_body', 'TEXT');
+  ensureColumn(database, 'response_received_at', 'TEXT');
+  ensureWhatsAppMessageColumn(database, 'media_mime', 'TEXT');
+  ensureWhatsAppMessageColumn(database, 'media_data', 'TEXT');
+  ensureWhatsAppMessageColumn(database, 'media_filename', 'TEXT');
+}
+
+function ensureColumn(database, columnName, definition) {
+  const columns = database.prepare('PRAGMA table_info(tickets)').all();
+  const exists = columns.some(column => column.name === columnName);
+
+  if (!exists) {
+    database.exec(`ALTER TABLE tickets ADD COLUMN ${columnName} ${definition}`);
+  }
+}
+
+function ensureWhatsAppMessageColumn(database, columnName, definition) {
+  const columns = database.prepare('PRAGMA table_info(whatsapp_messages)').all();
+  const exists = columns.some(column => column.name === columnName);
+
+  if (!exists) {
+    database.exec(`ALTER TABLE whatsapp_messages ADD COLUMN ${columnName} ${definition}`);
+  }
+}
+
+function upsertTickets(tickets) {
+  if (!tickets.length) {
+    return 0;
+  }
+
+  const database = getDb();
+  const statement = database.prepare(`
+    INSERT INTO tickets (
+      external_id,
+      delegacion,
+      start,
+      start_ts,
+      start_date,
+      start_time,
+      status,
+      phone,
+      razon_social,
+      payload_json,
+      updated_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+    ON CONFLICT(external_id) DO UPDATE SET
+      delegacion = excluded.delegacion,
+      start = excluded.start,
+      start_ts = excluded.start_ts,
+      start_date = excluded.start_date,
+      start_time = excluded.start_time,
+      status = COALESCE(excluded.status, tickets.status),
+      phone = COALESCE(excluded.phone, tickets.phone),
+      razon_social = COALESCE(excluded.razon_social, tickets.razon_social),
+      payload_json = excluded.payload_json,
+      updated_at = CURRENT_TIMESTAMP
+  `);
+
+  let saved = 0;
+  database.exec('BEGIN');
+
+  try {
+    for (const ticket of tickets) {
+      statement.run(
+        ticket.externalId,
+        ticket.delegacion,
+        ticket.startRaw,
+        ticket.startTs,
+        ticket.startDate,
+        ticket.startTime,
+        ticket.status || null,
+        ticket.phone || null,
+        ticket.razonSocial || null,
+        JSON.stringify(ticket.raw || {})
+      );
+      saved += 1;
+    }
+
+    database.exec('COMMIT');
+  } catch (error) {
+    database.exec('ROLLBACK');
+    throw error;
+  }
+
+  return saved;
+}
+
+function pruneTicketsForDate(date, externalIds = []) {
+  const database = getDb();
+  const ids = externalIds
+    .map(value => String(value || '').trim())
+    .filter(Boolean);
+
+  if (!ids.length) {
+    const result = database.prepare(`
+      DELETE FROM tickets
+      WHERE start_date = ?
+    `).run(date);
+    return result.changes;
+  }
+
+  const placeholders = ids.map(() => '?').join(', ');
+  const result = database.prepare(`
+    DELETE FROM tickets
+    WHERE start_date = ?
+      AND external_id NOT IN (${placeholders})
+  `).run(date, ...ids);
+
+  return result.changes;
+}
+
+function listTickets(date) {
+  const database = getDb();
+
+  if (date) {
+    return database.prepare(`
+      SELECT *
+      FROM tickets
+      WHERE start_date = ?
+      ORDER BY start_ts ASC, external_id ASC
+    `).all(date);
+  }
+
+  return database.prepare(`
+    SELECT *
+    FROM tickets
+    ORDER BY start_ts ASC, external_id ASC
+  `).all();
+}
+
+function getTicket(externalId) {
+  return getDb().prepare(`
+    SELECT *
+    FROM tickets
+    WHERE external_id = ?
+  `).get(externalId);
+}
+
+function getNextTicket(ticket, minimumStartTs = Date.now()) {
+  if (!ticket) {
+    return null;
+  }
+
+  const currentStartTs = Number(ticket.start_ts || 0);
+  const thresholdStartTs = Math.max(currentStartTs, Number(minimumStartTs || 0));
+
+  if (thresholdStartTs === currentStartTs) {
+    return getDb().prepare(`
+      SELECT *
+      FROM tickets
+      WHERE start_date = ?
+        AND delegacion = ?
+        AND (
+          start_ts > ?
+          OR (start_ts = ? AND external_id > ?)
+        )
+      ORDER BY start_ts ASC, external_id ASC
+      LIMIT 1
+    `).get(ticket.start_date, ticket.delegacion, thresholdStartTs, thresholdStartTs, ticket.external_id);
+  }
+
+  return getDb().prepare(`
+    SELECT *
+    FROM tickets
+    WHERE start_date = ?
+      AND delegacion = ?
+      AND start_ts > ?
+    ORDER BY start_ts ASC, external_id ASC
+    LIMIT 1
+  `).get(ticket.start_date, ticket.delegacion, thresholdStartTs);
+}
+
+function updateTicketStatus(externalId, status) {
+  getDb().prepare(`
+    UPDATE tickets
+    SET status = ?,
+        last_status_check_at = CURRENT_TIMESTAMP,
+        updated_at = CURRENT_TIMESTAMP
+    WHERE external_id = ?
+  `).run(status || null, externalId);
+}
+
+function updateTicketPhone(externalId, phone) {
+  getDb().prepare(`
+    UPDATE tickets
+    SET phone = ?,
+        updated_at = CURRENT_TIMESTAMP
+    WHERE external_id = ?
+  `).run(phone || null, externalId);
+}
+
+function updateTicketClientInfo(externalId, clientInfo = {}) {
+  getDb().prepare(`
+    UPDATE tickets
+    SET phone = COALESCE(?, phone),
+        razon_social = COALESCE(?, razon_social),
+        updated_at = CURRENT_TIMESTAMP
+    WHERE external_id = ?
+  `).run(
+    clientInfo.phone || null,
+    clientInfo.razonSocial || null,
+    externalId
+  );
+}
+
+function markMessageSent(externalId) {
+  getDb().prepare(`
+    UPDATE tickets
+    SET message_sent_at = CURRENT_TIMESTAMP,
+        message_error = NULL,
+        updated_at = CURRENT_TIMESTAMP
+    WHERE external_id = ?
+  `).run(externalId);
+}
+
+function markMessageError(externalId, errorMessage) {
+  getDb().prepare(`
+    UPDATE tickets
+    SET message_error = ?,
+        updated_at = CURRENT_TIMESTAMP
+    WHERE external_id = ?
+  `).run(String(errorMessage || 'Error enviando mensaje'), externalId);
+}
+
+function createTicketResponseAction(action = {}) {
+  const ticketExternalId = String(action.ticketExternalId || '').trim();
+  const chatId = String(action.chatId || '').trim();
+  const phone = normalizeChatPhone(action.phone || chatId);
+  const question = String(action.question || '').trim();
+  const options = Array.isArray(action.options) ? action.options : [];
+
+  if (!ticketExternalId || !chatId || !question || !options.length) {
+    throw new Error('Faltan datos de la pregunta del ticket');
+  }
+
+  const database = getDb();
+
+  database.prepare(`
+    UPDATE ticket_response_actions
+    SET status = 'superseded',
+        updated_at = CURRENT_TIMESTAMP
+    WHERE ticket_external_id = ?
+      AND status = 'pending'
+  `).run(ticketExternalId);
+
+  const result = database.prepare(`
+    INSERT INTO ticket_response_actions (
+      ticket_external_id,
+      chat_id,
+      phone,
+      question,
+      options_json,
+      delivery_mode,
+      sent_message_id
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    ticketExternalId,
+    chatId,
+    phone || null,
+    question,
+    JSON.stringify(options),
+    String(action.deliveryMode || 'text').trim() || 'text',
+    String(action.sentMessageId || '').trim() || null
+  );
+
+  return getTicketResponseAction(result.lastInsertRowid);
+}
+
+function parseTicketResponseAction(row) {
+  if (!row) {
+    return null;
+  }
+
+  let options = [];
+
+  try {
+    options = JSON.parse(row.options_json || '[]');
+  } catch (error) {
+    options = [];
+  }
+
+  return {
+    ...row,
+    options
+  };
+}
+
+function getTicketResponseAction(id) {
+  return parseTicketResponseAction(getDb().prepare(`
+    SELECT *
+    FROM ticket_response_actions
+    WHERE id = ?
+  `).get(Number(id)));
+}
+
+function getPendingTicketResponseActionByChat(chatId, phone) {
+  const cleanChatId = String(chatId || '').trim();
+  const cleanPhone = normalizeChatPhone(phone || chatId);
+
+  if (!cleanChatId && !cleanPhone) {
+    return null;
+  }
+
+  return parseTicketResponseAction(getDb().prepare(`
+    SELECT *
+    FROM ticket_response_actions
+    WHERE status = 'pending'
+      AND (
+        chat_id = ?
+        OR phone = ?
+      )
+    ORDER BY created_at DESC, id DESC
+    LIMIT 1
+  `).get(cleanChatId, cleanPhone || null));
+}
+
+function completeTicketResponseAction(id, response = {}) {
+  const action = getTicketResponseAction(id);
+
+  if (!action) {
+    throw new Error('Pregunta pendiente no encontrada');
+  }
+
+  const selectedKey = String(response.selectedKey || '').trim();
+  const selectedLabel = String(response.selectedLabel || '').trim();
+  const selectedAction = String(response.selectedAction || '').trim();
+  const responseBody = String(response.responseBody || '').trim();
+  const responseMessageId = String(response.responseMessageId || '').trim();
+  const actionResult = String(response.actionResult || '').trim();
+
+  getDb().prepare(`
+    UPDATE ticket_response_actions
+    SET status = 'completed',
+        selected_key = ?,
+        selected_label = ?,
+        selected_action = ?,
+        response_message_id = ?,
+        response_body = ?,
+        action_result = ?,
+        completed_at = CURRENT_TIMESTAMP,
+        updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `).run(
+    selectedKey || null,
+    selectedLabel || null,
+    selectedAction || null,
+    responseMessageId || null,
+    responseBody || null,
+    actionResult || null,
+    Number(id)
+  );
+
+  getDb().prepare(`
+    UPDATE tickets
+    SET response_action = ?,
+        response_label = ?,
+        response_body = ?,
+        response_received_at = CURRENT_TIMESTAMP,
+        updated_at = CURRENT_TIMESTAMP
+    WHERE external_id = ?
+  `).run(
+    selectedAction || null,
+    selectedLabel || null,
+    responseBody || selectedLabel || null,
+    action.ticket_external_id
+  );
+
+  return getTicketResponseAction(id);
+}
+
+function normalizeChatPhone(value) {
+  return String(value || '')
+    .replace(/@c\.us$/i, '')
+    .replace(/@s\.whatsapp\.net$/i, '')
+    .replace(/@lid$/i, '')
+    .replace(/@g\.us$/i, '')
+    .replace(/\D/g, '');
+}
+
+function isLidChatId(value) {
+  return /@lid$/i.test(String(value || '').trim());
+}
+
+function normalizeMessagePhone(phone, chatId) {
+  const normalized = normalizeChatPhone(phone);
+  const lidUser = isLidChatId(chatId) ? normalizeChatPhone(chatId) : '';
+
+  if (normalized && lidUser && normalized === lidUser) {
+    return '';
+  }
+
+  return normalized;
+}
+
+function getWhatsAppMessage(id) {
+  return getDb().prepare(`
+    SELECT *
+    FROM whatsapp_messages
+    WHERE id = ?
+  `).get(id);
+}
+
+function saveWhatsAppMessage(message = {}) {
+  const chatId = String(message.chatId || '').trim();
+  const direction = message.direction === 'incoming' ? 'incoming' : 'outgoing';
+  const timestampTs = Number(message.timestampTs || Date.now());
+  const timestamp = Number.isFinite(timestampTs) && timestampTs > 0 ? timestampTs : Date.now();
+  const body = String(message.body || '').trim();
+  const id = String(message.id || `${direction}-${chatId}-${timestamp}`).trim();
+
+  if (!id || !chatId || !body) {
+    throw new Error('Faltan datos del mensaje');
+  }
+
+  getDb().prepare(`
+    INSERT INTO whatsapp_messages (
+      id,
+      chat_id,
+      phone,
+      contact_name,
+      direction,
+      body,
+      media_mime,
+      media_data,
+      media_filename,
+      timestamp_ts,
+      timestamp_iso,
+      from_me,
+      ack,
+      source
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET
+      chat_id = excluded.chat_id,
+      phone = COALESCE(excluded.phone, whatsapp_messages.phone),
+      contact_name = COALESCE(excluded.contact_name, whatsapp_messages.contact_name),
+      body = CASE
+        WHEN whatsapp_messages.body LIKE '[% sin texto]' AND excluded.body NOT LIKE '[% sin texto]'
+        THEN excluded.body
+        ELSE whatsapp_messages.body
+      END,
+      media_mime = COALESCE(excluded.media_mime, whatsapp_messages.media_mime),
+      media_data = COALESCE(excluded.media_data, whatsapp_messages.media_data),
+      media_filename = COALESCE(excluded.media_filename, whatsapp_messages.media_filename),
+      ack = COALESCE(excluded.ack, whatsapp_messages.ack),
+      source = COALESCE(excluded.source, whatsapp_messages.source)
+  `).run(
+    id,
+    chatId,
+    normalizeMessagePhone(message.phone || chatId, chatId) || null,
+    String(message.contactName || '').trim() || null,
+    direction,
+    body,
+    String(message.mediaMime || '').trim() || null,
+    String(message.mediaData || '').trim() || null,
+    String(message.mediaFilename || '').trim() || null,
+    timestamp,
+    new Date(timestamp).toISOString(),
+    message.fromMe ? 1 : 0,
+    Number.isFinite(Number(message.ack)) ? Number(message.ack) : null,
+    String(message.source || '').trim() || null
+  );
+
+  return getWhatsAppMessage(id);
+}
+
+function listWhatsAppConversations(limit = 100) {
+  const safeLimit = Math.min(Math.max(Number(limit) || 100, 1), 300);
+
+  return getDb().prepare(`
+    WITH ranked AS (
+      SELECT
+        *,
+        ROW_NUMBER() OVER (
+          PARTITION BY chat_id
+          ORDER BY timestamp_ts DESC, created_at DESC, id DESC
+        ) AS row_number
+      FROM whatsapp_messages
+    ),
+    counts AS (
+      SELECT
+        chat_id,
+        COUNT(*) AS total_messages,
+        SUM(CASE WHEN direction = 'incoming' THEN 1 ELSE 0 END) AS incoming_messages,
+        SUM(CASE WHEN direction = 'outgoing' THEN 1 ELSE 0 END) AS outgoing_messages,
+        MAX(CASE WHEN direction = 'incoming' THEN timestamp_ts ELSE NULL END) AS last_incoming_ts
+      FROM whatsapp_messages
+      GROUP BY chat_id
+    )
+    SELECT
+      ranked.id,
+      ranked.chat_id,
+      COALESCE(
+        (
+          SELECT latest_phone.phone
+          FROM whatsapp_messages latest_phone
+          WHERE latest_phone.chat_id = ranked.chat_id
+            AND latest_phone.phone IS NOT NULL
+            AND latest_phone.phone <> ''
+            AND NOT (
+              LOWER(ranked.chat_id) LIKE '%@lid'
+              AND latest_phone.phone = REPLACE(LOWER(ranked.chat_id), '@lid', '')
+            )
+          ORDER BY latest_phone.timestamp_ts DESC, latest_phone.created_at DESC
+          LIMIT 1
+        ),
+        CASE
+          WHEN LOWER(ranked.chat_id) LIKE '%@lid'
+            AND ranked.phone = REPLACE(LOWER(ranked.chat_id), '@lid', '')
+          THEN NULL
+          ELSE ranked.phone
+        END
+      ) AS phone,
+      COALESCE(
+        (
+          SELECT latest_contact.contact_name
+          FROM whatsapp_messages latest_contact
+          WHERE latest_contact.chat_id = ranked.chat_id
+            AND latest_contact.direction = 'incoming'
+            AND latest_contact.contact_name IS NOT NULL
+            AND latest_contact.contact_name <> ''
+          ORDER BY latest_contact.timestamp_ts DESC, latest_contact.created_at DESC
+          LIMIT 1
+        ),
+        ranked.contact_name
+      ) AS contact_name,
+      ranked.direction,
+      ranked.body,
+      ranked.timestamp_ts,
+      ranked.timestamp_iso,
+      ranked.from_me,
+      ranked.ack,
+      ranked.source,
+      ranked.created_at,
+      counts.total_messages,
+      counts.incoming_messages,
+      counts.outgoing_messages,
+      counts.last_incoming_ts
+    FROM ranked
+    JOIN counts ON counts.chat_id = ranked.chat_id
+    WHERE ranked.row_number = 1
+    ORDER BY ranked.timestamp_ts DESC, ranked.created_at DESC
+    LIMIT ?
+  `).all(safeLimit);
+}
+
+function listWhatsAppMessages(chatId, limit = 200) {
+  const safeLimit = Math.min(Math.max(Number(limit) || 200, 1), 500);
+
+  return getDb().prepare(`
+    SELECT
+      id,
+      chat_id,
+      CASE
+        WHEN LOWER(chat_id) LIKE '%@lid'
+          AND phone = REPLACE(LOWER(chat_id), '@lid', '')
+        THEN NULL
+        ELSE phone
+      END AS phone,
+      contact_name,
+      direction,
+      body,
+      media_mime,
+      media_data,
+      media_filename,
+      timestamp_ts,
+      timestamp_iso,
+      from_me,
+      ack,
+      source,
+      created_at
+    FROM (
+      SELECT *
+      FROM whatsapp_messages
+      WHERE chat_id = ?
+      ORDER BY timestamp_ts DESC, created_at DESC, id DESC
+      LIMIT ?
+    )
+    ORDER BY timestamp_ts ASC, created_at ASC, id ASC
+  `).all(chatId, safeLimit);
+}
+
+function closeDb() {
+  if (db) {
+    db.close();
+    db = null;
+  }
+}
+
+module.exports = {
+  closeDb,
+  completeTicketResponseAction,
+  createTicketResponseAction,
+  getDb,
+  getNextTicket,
+  getPendingTicketResponseActionByChat,
+  getTicket,
+  listWhatsAppConversations,
+  listWhatsAppMessages,
+  listTickets,
+  markMessageError,
+  markMessageSent,
+  normalizeChatPhone,
+  pruneTicketsForDate,
+  saveWhatsAppMessage,
+  updateTicketClientInfo,
+  updateTicketStatus,
+  updateTicketPhone,
+  upsertTickets
+};

@@ -1,0 +1,1347 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Monitor de Tickets</title>
+  <style>
+    :root {
+      --bg: #f6f7f9;
+      --panel: #ffffff;
+      --line: #d9dee7;
+      --text: #17202a;
+      --muted: #657386;
+      --accent: #2563eb;
+      --good: #11845b;
+      --warn: #b76e00;
+      --bad: #bd2c2c;
+      --soft-good: #e7f7ef;
+      --soft-warn: #fff3d8;
+      --soft-bad: #fde8e8;
+      --soft-blue: #eaf1ff;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: Arial, Helvetica, sans-serif;
+      font-size: 15px;
+    }
+
+    .topbar {
+      border-bottom: 1px solid var(--line);
+      background: var(--panel);
+    }
+
+    .topbar-inner,
+    .content {
+      width: min(1180px, calc(100% - 32px));
+      margin: 0 auto;
+    }
+
+    .topbar-inner {
+      min-height: 68px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 24px;
+      font-weight: 700;
+      letter-spacing: 0;
+    }
+
+    .subtitle {
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .actions {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      gap: 8px;
+    }
+
+    .session-chip {
+      min-height: 38px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #f8fafc;
+      color: var(--muted);
+      padding: 0 12px;
+      display: inline-flex;
+      align-items: center;
+      white-space: nowrap;
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    button {
+      min-height: 38px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      color: var(--text);
+      padding: 0 12px;
+      font: inherit;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      white-space: nowrap;
+    }
+
+    button.primary {
+      border-color: var(--accent);
+      background: var(--accent);
+      color: #ffffff;
+    }
+
+    button:disabled {
+      cursor: progress;
+      opacity: 0.7;
+    }
+
+    .content {
+      padding: 18px 0 32px;
+    }
+
+    .status-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+      margin-bottom: 18px;
+    }
+
+    .metric {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 14px;
+      min-height: 94px;
+    }
+
+    .metric-label {
+      color: var(--muted);
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0;
+      margin-bottom: 8px;
+    }
+
+    .metric-value {
+      font-size: 22px;
+      font-weight: 700;
+      word-break: break-word;
+    }
+
+    .metric-detail {
+      margin-top: 7px;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.35;
+    }
+
+    .qr-panel {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 14px;
+      margin-bottom: 18px;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+
+    .qr-panel[hidden] {
+      display: none;
+    }
+
+    .qr-panel img {
+      width: 220px;
+      height: 220px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #ffffff;
+      padding: 8px;
+    }
+
+    .qr-copy {
+      min-width: 240px;
+      flex: 1 1 260px;
+    }
+
+    .qr-title {
+      font-size: 16px;
+      font-weight: 700;
+      margin-bottom: 6px;
+    }
+
+    .qr-detail {
+      color: var(--muted);
+      line-height: 1.4;
+      margin-bottom: 10px;
+    }
+
+    .qr-text {
+      max-width: 100%;
+      overflow: auto;
+      margin: 0;
+      padding: 10px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #ffffff;
+      color: #000000;
+      font-family: Consolas, "Courier New", monospace;
+      font-size: 9px;
+      line-height: 1;
+      white-space: pre;
+    }
+
+    .qr-actions {
+      margin-top: 10px;
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      min-height: 24px;
+      border-radius: 999px;
+      padding: 0 9px;
+      font-size: 12px;
+      font-weight: 700;
+      border: 1px solid transparent;
+      white-space: nowrap;
+    }
+
+    .badge.good {
+      background: var(--soft-good);
+      border-color: #bfe8d4;
+      color: var(--good);
+    }
+
+    .badge.warn {
+      background: var(--soft-warn);
+      border-color: #f3d088;
+      color: var(--warn);
+    }
+
+    .badge.bad {
+      background: var(--soft-bad);
+      border-color: #f4b7b7;
+      color: var(--bad);
+    }
+
+    .badge.blue {
+      background: var(--soft-blue);
+      border-color: #c8d9ff;
+      color: var(--accent);
+    }
+
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+
+    .message-panel {
+      margin-bottom: 18px;
+    }
+
+    .panel-head {
+      min-height: 54px;
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--line);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .panel-title {
+      font-size: 16px;
+      font-weight: 700;
+    }
+
+    .panel-actions {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .switch-row {
+      min-height: 38px;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    .switch-row input {
+      position: absolute;
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    .switch-track {
+      width: 42px;
+      height: 24px;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      background: #cbd5e1;
+      position: relative;
+      transition: background 0.2s ease, border-color 0.2s ease;
+    }
+
+    .switch-track::after {
+      content: "";
+      width: 18px;
+      height: 18px;
+      border-radius: 999px;
+      background: #ffffff;
+      position: absolute;
+      left: 2px;
+      top: 2px;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+      transition: transform 0.2s ease;
+    }
+
+    .switch-row input:checked+.switch-track {
+      border-color: var(--accent);
+      background: var(--accent);
+    }
+
+    .switch-row input:checked+.switch-track::after {
+      transform: translateX(18px);
+    }
+
+    .switch-row input:disabled+.switch-track {
+      opacity: 0.55;
+    }
+
+    .message-form {
+      padding: 14px;
+      display: grid;
+      gap: 10px;
+    }
+
+    textarea {
+      width: 100%;
+      min-height: 92px;
+      resize: vertical;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 10px 12px;
+      color: var(--text);
+      font: inherit;
+      line-height: 1.45;
+      background: #ffffff;
+    }
+
+    textarea:focus {
+      outline: 2px solid #bfdbfe;
+      border-color: var(--accent);
+    }
+
+    .form-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .message-footer {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .message-footer .muted {
+      margin-right: auto;
+    }
+
+    .placeholder-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+
+    .tickets-head {
+      margin: 0 0 10px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .tickets-title {
+      font-size: 17px;
+      font-weight: 700;
+    }
+
+    .date-controls {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+
+    input[type="date"] {
+      min-height: 38px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      color: var(--text);
+      padding: 0 10px;
+      font: inherit;
+    }
+
+    .groups-grid {
+      display: grid;
+      gap: 14px;
+    }
+
+    .group-card {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+
+    .group-card-head {
+      min-height: 54px;
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--line);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .group-name {
+      font-size: 16px;
+      font-weight: 700;
+    }
+
+    .group-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      justify-content: flex-end;
+    }
+
+    .table-wrap {
+      overflow-x: auto;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      min-width: 1020px;
+    }
+
+    th,
+    td {
+      text-align: left;
+      padding: 11px 12px;
+      border-bottom: 1px solid var(--line);
+      vertical-align: top;
+      font-size: 14px;
+    }
+
+    th {
+      color: var(--muted);
+      background: #fbfcfe;
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0;
+    }
+
+    tr:last-child td {
+      border-bottom: 0;
+    }
+
+    .mono {
+      font-family: Consolas, "Courier New", monospace;
+      font-size: 13px;
+    }
+
+    .muted {
+      color: var(--muted);
+    }
+
+    .error-text {
+      color: var(--bad);
+      max-width: 260px;
+      white-space: normal;
+    }
+
+    .empty {
+      padding: 28px 16px;
+      color: var(--muted);
+      text-align: center;
+    }
+
+    .toast {
+      position: fixed;
+      right: 16px;
+      bottom: 16px;
+      max-width: min(430px, calc(100% - 32px));
+      background: var(--text);
+      color: #ffffff;
+      border-radius: 8px;
+      padding: 12px 14px;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.18);
+      opacity: 0;
+      transform: translateY(10px);
+      pointer-events: none;
+      transition: opacity 160ms ease, transform 160ms ease;
+      z-index: 10;
+    }
+
+    .toast.visible {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    @media (max-width: 900px) {
+      .topbar-inner {
+        align-items: flex-start;
+        flex-direction: column;
+        padding: 14px 0;
+      }
+
+      .actions {
+        width: 100%;
+        justify-content: flex-start;
+      }
+
+      .status-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
+
+    @media (max-width: 560px) {
+
+      .topbar-inner,
+      .content {
+        width: min(100% - 20px, 1180px);
+      }
+
+      h1 {
+        font-size: 21px;
+      }
+
+      .status-grid {
+        grid-template-columns: 1fr;
+      }
+
+      button {
+        flex: 1 1 calc(50% - 8px);
+        justify-content: center;
+      }
+
+      .qr-panel img {
+        width: 100%;
+        max-width: 260px;
+        height: auto;
+      }
+    }
+  </style>
+</head>
+
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <div>
+        <h1>Monitor de Tickets</h1>
+        <div class="subtitle" id="lastRefresh">Cargando...</div>
+      </div>
+      <div class="actions">
+        <button type="button" title="Ver mensajes de WhatsApp" onclick="window.location.href='/mensajes'">
+          <span aria-hidden="true">&#9993;</span>
+          Mensajes
+        </button>
+        <button id="refreshBtn" type="button" title="Actualizar ahora">
+          <span aria-hidden="true">&#8635;</span>
+          Actualizar
+        </button>
+        <button id="syncBtn" type="button" title="Traer tickets desde la API">
+          <span aria-hidden="true">&#8645;</span>
+          Sync
+        </button>
+        <button id="statusBtn" type="button" title="Actualizar estados">
+          <span aria-hidden="true">&#8634;</span>
+          Estados
+        </button>
+        <button id="phonesBtn" type="button" title="Completar moviles desde cliente">
+          <span aria-hidden="true">&#9742;</span>
+          Moviles
+        </button>
+        <button id="runBtn" class="primary" type="button" title="Ejecutar ciclo completo">
+          <span aria-hidden="true">&#9658;</span>
+          Ciclo
+        </button>
+        <button id="whatsappReconnectTopBtn" type="button" title="Volver a intentar conexion y mostrar QR" hidden>
+          <span aria-hidden="true">&#8635;</span>
+          Mostrar QR
+        </button>
+        <button id="whatsappResetAuthTopBtn" type="button" title="Borrar la sesion local de WhatsApp y generar un QR nuevo" hidden>
+          <span aria-hidden="true">&#9003;</span>
+          Borrar sesion
+        </button>
+        <button id="usersBtn" type="button" title="Administrar usuarios" hidden
+          onclick="window.location.href='/usuarios'">
+          <span aria-hidden="true">&#128100;</span>
+          Usuarios
+        </button>
+        <span id="sessionBadge" class="session-chip">Sesion</span>
+        <button id="logoutBtn" type="button" title="Cerrar sesion">
+          <span aria-hidden="true">&#9211;</span>
+          Salir
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <main class="content">
+    <section class="status-grid" aria-label="Estado">
+      <div class="metric">
+        <div class="metric-label">Intervalo</div>
+        <div class="metric-value" id="intervalBadge">--</div>
+        <div class="metric-detail" id="nextRun">Proxima: --</div>
+      </div>
+      <div class="metric">
+        <div class="metric-label">Ciclo</div>
+        <div class="metric-value" id="cycleBadge">--</div>
+        <div class="metric-detail" id="lastRun">Ultima: --</div>
+      </div>
+      <div class="metric">
+        <div class="metric-label">WhatsApp</div>
+        <div class="metric-value" id="whatsappBadge">--</div>
+        <div class="metric-detail" id="apiStatus">API: --</div>
+      </div>
+      <div class="metric">
+        <div class="metric-label">Tickets</div>
+        <div class="metric-value" id="ticketCount">0</div>
+        <div class="metric-detail" id="ticketSummary">Sin datos</div>
+      </div>
+    </section>
+
+    <section class="qr-panel" id="whatsappQrPanel" hidden>
+      <img id="whatsappQrImage" alt="QR para vincular WhatsApp">
+      <div class="qr-copy">
+        <div class="qr-title">Vincular WhatsApp</div>
+        <div class="qr-detail" id="whatsappQrDetail">Escanea este codigo desde WhatsApp para conectar la sesion.</div>
+        <div class="qr-actions">
+          <button id="whatsappReconnectBtn" type="button" title="Volver a intentar conexion y mostrar QR">
+            <span aria-hidden="true">&#8635;</span>
+            Mostrar QR
+          </button>
+          <button id="whatsappResetAuthBtn" type="button" title="Borrar la sesion local de WhatsApp y generar un QR nuevo">
+            <span aria-hidden="true">&#9003;</span>
+            Borrar sesion
+          </button>
+        </div>
+        <pre class="qr-text" id="whatsappQrText" aria-label="QR en texto"></pre>
+      </div>
+    </section>
+
+    <section class="panel message-panel">
+      <div class="panel-head">
+        <div class="panel-title">Mensaje de WhatsApp</div>
+        <div class="panel-actions">
+          <label class="switch-row" title="Habilitar envio automatico de recordatorios">
+            <input id="autoReminderSwitch" type="checkbox">
+            <span class="switch-track" aria-hidden="true"></span>
+            <span id="autoReminderText">Recordatorios</span>
+          </label>
+        </div>
+      </div>
+      <div class="message-form">
+        <textarea id="messageTemplate" spellcheck="true"></textarea>
+        <div class="form-row">
+          <div class="placeholder-list" id="placeholderList"></div>
+        </div>
+        <div class="message-footer">
+          <span class="muted" id="messageStatus">Sin cambios</span>
+          <button id="saveMessageBtn" class="primary" type="button" title="Guardar mensaje">
+            <span aria-hidden="true">&#10003;</span>
+            Guardar
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <div class="tickets-head">
+        <div class="tickets-title">Tickets por grupo</div>
+        <div class="date-controls">
+          <input id="dateFilter" type="date" aria-label="Fecha de tickets">
+          <button id="todayBtn" type="button" title="Ver tickets de hoy">Hoy</button>
+        </div>
+      </div>
+      <div class="groups-grid" id="groupsContainer"></div>
+      <div class="empty" id="emptyState" hidden>No hay tickets guardados.</div>
+    </section>
+  </main>
+
+  <div class="toast" id="toast"></div>
+
+  <script>
+    const state = {
+      status: null,
+      tickets: [],
+      selectedDate: toDateInputValue(new Date()),
+      auth: null,
+      loading: false
+    };
+
+    const els = {
+      apiStatus: document.getElementById('apiStatus'),
+      autoReminderSwitch: document.getElementById('autoReminderSwitch'),
+      autoReminderText: document.getElementById('autoReminderText'),
+      cycleBadge: document.getElementById('cycleBadge'),
+      dateFilter: document.getElementById('dateFilter'),
+      emptyState: document.getElementById('emptyState'),
+      groupsContainer: document.getElementById('groupsContainer'),
+      intervalBadge: document.getElementById('intervalBadge'),
+      lastRefresh: document.getElementById('lastRefresh'),
+      lastRun: document.getElementById('lastRun'),
+      logoutBtn: document.getElementById('logoutBtn'),
+      nextRun: document.getElementById('nextRun'),
+      refreshBtn: document.getElementById('refreshBtn'),
+      runBtn: document.getElementById('runBtn'),
+      saveMessageBtn: document.getElementById('saveMessageBtn'),
+      sessionBadge: document.getElementById('sessionBadge'),
+      messageStatus: document.getElementById('messageStatus'),
+      messageTemplate: document.getElementById('messageTemplate'),
+      phonesBtn: document.getElementById('phonesBtn'),
+      placeholderList: document.getElementById('placeholderList'),
+      statusBtn: document.getElementById('statusBtn'),
+      syncBtn: document.getElementById('syncBtn'),
+      ticketCount: document.getElementById('ticketCount'),
+      ticketSummary: document.getElementById('ticketSummary'),
+      todayBtn: document.getElementById('todayBtn'),
+      toast: document.getElementById('toast'),
+      usersBtn: document.getElementById('usersBtn'),
+      whatsappBadge: document.getElementById('whatsappBadge'),
+      whatsappQrDetail: document.getElementById('whatsappQrDetail'),
+      whatsappQrImage: document.getElementById('whatsappQrImage'),
+      whatsappQrPanel: document.getElementById('whatsappQrPanel'),
+      whatsappReconnectBtn: document.getElementById('whatsappReconnectBtn'),
+      whatsappReconnectTopBtn: document.getElementById('whatsappReconnectTopBtn'),
+      whatsappResetAuthBtn: document.getElementById('whatsappResetAuthBtn'),
+      whatsappResetAuthTopBtn: document.getElementById('whatsappResetAuthTopBtn'),
+      whatsappQrText: document.getElementById('whatsappQrText')
+    };
+
+    function toDateInputValue(date) {
+      return [
+        date.getFullYear(),
+        String(date.getMonth() + 1).padStart(2, '0'),
+        String(date.getDate()).padStart(2, '0')
+      ].join('-');
+    }
+
+    function badge(text, type) {
+      return '<span class="badge ' + type + '">' + escapeHtml(text) + '</span>';
+    }
+
+    function escapeHtml(value) {
+      return String(value ?? '')
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&#039;');
+    }
+
+    function formatDateTime(value) {
+      if (!value) {
+        return '--';
+      }
+
+      const normalized = String(value).includes('T') ? value : String(value).replace(' ', 'T') + 'Z';
+      const date = new Date(normalized);
+
+      if (Number.isNaN(date.getTime())) {
+        return String(value);
+      }
+
+      return date.toLocaleString('es-AR', {
+        hour: '2-digit',
+        minute: '2-digit',
+        day: '2-digit',
+        month: '2-digit'
+      });
+    }
+
+    function formatTimeLeft(value) {
+      if (!value) {
+        return '--';
+      }
+
+      const target = new Date(value).getTime();
+
+      if (Number.isNaN(target)) {
+        return '--';
+      }
+
+      const diff = Math.max(0, target - Date.now());
+      const minutes = Math.floor(diff / 60000);
+      const seconds = Math.floor((diff % 60000) / 1000);
+      return String(minutes).padStart(2, '0') + ':' + String(seconds).padStart(2, '0');
+    }
+
+    function statusBadge(status) {
+      const clean = String(status || '').trim();
+      const normalized = clean
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .toLowerCase();
+
+      if (!clean) {
+        return badge('Sin estado', 'warn');
+      }
+
+      if (normalized.includes('proceso')) {
+        return badge(clean, 'good');
+      }
+
+      if (normalized.includes('cancel') || normalized.includes('error')) {
+        return badge(clean, 'bad');
+      }
+
+      return badge(clean, 'blue');
+    }
+
+    function renderStatus() {
+      const payload = state.status;
+
+      if (!payload) {
+        return;
+      }
+
+      const job = payload.job || {};
+      const cfg = job.config || {};
+
+      els.intervalBadge.innerHTML = job.active ? badge('Activo', 'good') : badge('Inactivo', 'bad');
+      els.nextRun.textContent = 'Cada ' + (cfg.syncIntervalMinutes || '--') + ' min | Proxima: ' + formatTimeLeft(job.nextRunAt);
+      els.cycleBadge.innerHTML = job.cycleRunning ? badge('Corriendo', 'warn') : badge('Libre', 'good');
+      els.lastRun.textContent = 'Ultima: ' + formatDateTime(job.lastRunFinishedAt) + ' | Corridas: ' + (job.runCount || 0);
+      els.whatsappBadge.innerHTML = payload.whatsappReady ? badge('Conectado', 'good') : badge('No conectado', 'warn');
+      els.apiStatus.textContent =
+        'WA: ' + ((payload.whatsapp && payload.whatsapp.state) || '--') +
+        ' | ' +
+        'Tickets: ' + (cfg.ticketsApiConfigured ? 'OK' : 'Falta') +
+        ' | Estado: ' + (cfg.ticketStatusApiConfigured ? 'OK' : 'Falta') +
+        ' | Cliente: ' + (cfg.clientApiConfigured ? 'OK' : 'Falta');
+
+      const whatsapp = payload.whatsapp || {};
+      const canReconnectWhatsApp = hasFullAccess();
+      els.whatsappReconnectTopBtn.hidden = !canReconnectWhatsApp;
+      els.whatsappReconnectTopBtn.disabled = !canReconnectWhatsApp;
+      els.whatsappResetAuthTopBtn.hidden = !canReconnectWhatsApp;
+      els.whatsappResetAuthTopBtn.disabled = !canReconnectWhatsApp;
+
+      if (!payload.whatsappReady && (whatsapp.qrSvg || hasFullAccess())) {
+        els.whatsappQrPanel.hidden = false;
+        els.whatsappQrImage.hidden = !whatsapp.qrSvg;
+        if (whatsapp.qrSvg) {
+          els.whatsappQrImage.src = whatsapp.qrSvg;
+        } else {
+          els.whatsappQrImage.removeAttribute('src');
+        }
+        els.whatsappQrText.textContent = whatsapp.qrText || '';
+        els.whatsappQrDetail.textContent = whatsapp.qrSvg
+          ? 'Escanea este codigo desde WhatsApp para conectar la sesion.'
+          : 'Si no aparece el QR, toca Mostrar QR para reiniciar la conexion de WhatsApp.';
+        els.whatsappReconnectBtn.hidden = !canReconnectWhatsApp;
+        els.whatsappReconnectBtn.disabled = !canReconnectWhatsApp;
+        els.whatsappResetAuthBtn.hidden = !canReconnectWhatsApp;
+        els.whatsappResetAuthBtn.disabled = !canReconnectWhatsApp;
+      } else {
+        els.whatsappQrPanel.hidden = true;
+        els.whatsappQrImage.hidden = false;
+        els.whatsappQrImage.removeAttribute('src');
+        els.whatsappQrText.textContent = '';
+        els.whatsappReconnectBtn.hidden = true;
+        els.whatsappResetAuthBtn.hidden = true;
+      }
+
+      if (job.lastError && job.lastError.message) {
+        els.lastRun.textContent += ' | Error: ' + job.lastError.message;
+      } else if (
+        job.lastResult &&
+        job.lastResult.statuses &&
+        job.lastResult.statuses.notificationHalted
+      ) {
+        els.lastRun.textContent += ' | Avisos detenidos: ' + (job.lastResult.statuses.notificationHaltReason || 'error de envio');
+      }
+    }
+
+    function renderMessageSettings(settings) {
+      if (!settings) {
+        return;
+      }
+
+      setAutoReminderState(settings.automaticReminderEnabled !== false);
+
+      if (document.activeElement !== els.messageTemplate) {
+        els.messageTemplate.value = settings.template || '';
+      }
+
+      els.placeholderList.innerHTML = (settings.placeholders || []).map(name => {
+        return '<span class="badge blue">{' + escapeHtml(name) + '}</span>';
+      }).join('');
+    }
+
+    function renderTickets() {
+      const tickets = state.tickets;
+      const notified = tickets.filter(ticket => ticket.message_sent_at).length;
+      const errors = tickets.filter(ticket => ticket.message_error).length;
+      const inProcess = tickets.filter(ticket => String(ticket.status || '').toLowerCase().includes('proceso')).length;
+
+      els.ticketCount.textContent = String(tickets.length);
+      els.ticketSummary.textContent = 'En proceso: ' + inProcess + ' | Avisados: ' + notified + ' | Errores: ' + errors;
+      els.emptyState.hidden = tickets.length > 0;
+      els.dateFilter.value = state.selectedDate;
+      els.groupsContainer.innerHTML = '';
+
+      if (!tickets.length) {
+        return;
+      }
+
+      const groups = groupTickets(tickets);
+      els.groupsContainer.innerHTML = groups.map(group => renderGroupCard(group)).join('');
+    }
+
+    function groupTickets(tickets) {
+      const groupsByName = new Map();
+
+      for (const ticket of tickets) {
+        const groupName = getTicketGroup(ticket);
+
+        if (!groupsByName.has(groupName)) {
+          groupsByName.set(groupName, []);
+        }
+
+        groupsByName.get(groupName).push(ticket);
+      }
+
+      return Array.from(groupsByName.entries())
+        .map(([name, groupTickets]) => ({
+          name,
+          tickets: groupTickets.sort(compareTicketsByTime)
+        }))
+        .sort((left, right) => {
+          const leftFirst = left.tickets[0];
+          const rightFirst = right.tickets[0];
+          return compareTicketsByTime(leftFirst, rightFirst) || left.name.localeCompare(right.name);
+        });
+    }
+
+    function getTicketGroup(ticket) {
+      let payload = {};
+
+      try {
+        payload = JSON.parse(ticket.payload_json || '{}');
+      } catch (error) {
+        payload = {};
+      }
+
+      return String(
+        payload.Grupo ||
+        payload.grupo ||
+        payload.Grupo_Tecnico ||
+        payload.grupo_tecnico ||
+        ticket.delegacion ||
+        'Sin grupo'
+      ).trim() || 'Sin grupo';
+    }
+
+    function compareTicketsByTime(left, right) {
+      const leftStart = Number(left.start_ts || 0);
+      const rightStart = Number(right.start_ts || 0);
+
+      if (leftStart !== rightStart) {
+        return leftStart - rightStart;
+      }
+
+      return String(left.external_id || '').localeCompare(String(right.external_id || ''));
+    }
+
+    function renderGroupCard(group) {
+      const inProcess = group.tickets.filter(ticket => String(ticket.status || '').toLowerCase().includes('proceso')).length;
+      const sent = group.tickets.filter(ticket => ticket.message_sent_at).length;
+      const missingMovil = group.tickets.filter(ticket => !ticket.phone).length;
+
+      return '<article class="group-card">' +
+        '<div class="group-card-head">' +
+        '<div class="group-name">' + escapeHtml(group.name) + '</div>' +
+        '<div class="group-meta">' +
+        badge(group.tickets.length + ' tickets', 'blue') +
+        badge(inProcess + ' en proceso', inProcess ? 'good' : 'blue') +
+        badge(sent + ' avisados', sent ? 'good' : 'blue') +
+        (missingMovil ? badge(missingMovil + ' sin movil', 'bad') : badge('Moviles OK', 'good')) +
+        '</div>' +
+        '</div>' +
+        '<div class="table-wrap">' +
+        '<table>' +
+        '<thead>' +
+        '<tr>' +
+        '<th>Hora</th>' +
+        '<th>IDTT</th>' +
+        '<th>Cliente</th>' +
+        '<th>Estado</th>' +
+        '<th>Movil</th>' +
+        '<th>Mensaje</th>' +
+        '<th>Respuesta</th>' +
+        '<th>Ultimo estado</th>' +
+        '<th>Error</th>' +
+        '</tr>' +
+        '</thead>' +
+        '<tbody>' + group.tickets.map(renderTicketRow).join('') + '</tbody>' +
+        '</table>' +
+        '</div>' +
+        '</article>';
+    }
+
+    function renderTicketRow(ticket) {
+      const phoneCell = ticket.phone
+        ? '<span class="mono">' + escapeHtml(ticket.phone) + '</span>'
+        : badge('Sin movil', 'bad');
+      const messageCell = ticket.message_sent_at
+        ? badge('Enviado', 'good') + '<div class="muted">' + escapeHtml(formatDateTime(ticket.message_sent_at)) + '</div>'
+        : ticket.message_error
+          ? badge('Fallo', 'bad')
+          : badge('Pendiente', 'warn');
+      const responseCell = ticket.response_label
+        ? badge(ticket.response_label, 'blue') + '<div class="muted">' + escapeHtml(formatDateTime(ticket.response_received_at)) + '</div>'
+        : badge('Sin respuesta', 'warn');
+
+      return '<tr>' +
+        '<td class="mono">' + escapeHtml(ticket.start_time || '--') + '</td>' +
+        '<td class="mono">' + '<a target="_blank" href="http://192.168.200.14:5594/Phantom/Includes/DESk/desk_tracking.php?idt=' + ticket.external_id + '">' + escapeHtml(ticket.external_id) + '</a></td>' +
+        '<td>' + escapeHtml(ticket.razon_social || '--') + '</td>' +
+        '<td>' + statusBadge(ticket.status) + '</td>' +
+        '<td>' + phoneCell + '</td>' +
+        '<td>' + messageCell + '</td>' +
+        '<td>' + responseCell + '</td>' +
+        '<td class="muted">' + escapeHtml(formatDateTime(ticket.last_status_check_at)) + '</td>' +
+        '<td class="error-text">' + escapeHtml(ticket.message_error || '') + '</td>' +
+        '</tr>';
+    }
+
+    function showToast(message) {
+      els.toast.textContent = message;
+      els.toast.classList.add('visible');
+      clearTimeout(showToast.timer);
+      showToast.timer = setTimeout(() => {
+        els.toast.classList.remove('visible');
+      }, 3200);
+    }
+
+    function hasFullAccess() {
+      return Boolean(state.auth && state.auth.isAdmin);
+    }
+
+    function setAutoReminderState(enabled) {
+      els.autoReminderSwitch.checked = Boolean(enabled);
+      els.autoReminderText.textContent = enabled ? 'Recordatorios activos' : 'Recordatorios pausados';
+    }
+
+    function applySession(user) {
+      state.auth = user;
+      const roleLabel = user.role === 'usuario' ? 'Usuario' : user.role.toUpperCase();
+      els.sessionBadge.textContent = user.name + ' | ' + roleLabel;
+
+      const fullAccess = hasFullAccess();
+      [els.syncBtn, els.statusBtn, els.phonesBtn, els.runBtn, els.saveMessageBtn].forEach(button => {
+        button.hidden = !fullAccess;
+      });
+      els.usersBtn.hidden = user.role !== 'admin';
+      els.autoReminderSwitch.disabled = !fullAccess;
+      els.messageTemplate.disabled = !fullAccess;
+
+      if (!fullAccess) {
+        els.messageStatus.textContent = 'Solo lectura';
+      }
+    }
+
+    async function loadSession() {
+      const response = await fetch('/auth/me');
+      const data = await response.json().catch(() => ({}));
+
+      if (!response.ok || !data.success) {
+        window.location.href = '/login?next=' + encodeURIComponent(window.location.pathname + window.location.search);
+        return null;
+      }
+
+      applySession(data.user);
+      return data.user;
+    }
+
+    async function logout() {
+      await fetch('/auth/logout', { method: 'POST' }).catch(() => { });
+      window.location.href = '/login';
+    }
+
+    async function fetchJson(url, options) {
+      const response = await fetch(url, options);
+      const data = await response.json().catch(() => ({}));
+
+      if (response.status === 401) {
+        window.location.href = '/login?next=' + encodeURIComponent(window.location.pathname + window.location.search);
+        return null;
+      }
+
+      if (!response.ok || data.success === false) {
+        throw new Error(data.error || 'Error HTTP ' + response.status);
+      }
+
+      return data;
+    }
+
+    async function loadDashboard() {
+      if (state.loading) {
+        return;
+      }
+
+      state.loading = true;
+      setButtons(true);
+
+      try {
+        const statusRequest = fetchJson('/tickets/job-status');
+        const ticketsRequest = fetchJson('/tickets?date=' + encodeURIComponent(state.selectedDate));
+        const settingsRequest = fetchJson('/settings/message-template');
+        const results = await Promise.all([statusRequest, ticketsRequest, settingsRequest]);
+
+        state.status = results[0];
+        state.tickets = results[1].tickets || [];
+        renderStatus();
+        renderTickets();
+        renderMessageSettings(results[2]);
+        els.lastRefresh.textContent = 'Actualizado: ' + new Date().toLocaleTimeString('es-AR');
+      } catch (error) {
+        showToast(error.message);
+      } finally {
+        state.loading = false;
+        setButtons(false);
+      }
+    }
+
+    function setButtons(disabled) {
+      const fullAccess = hasFullAccess();
+      els.refreshBtn.disabled = disabled;
+      els.runBtn.disabled = disabled || !fullAccess;
+      els.statusBtn.disabled = disabled || !fullAccess;
+      els.syncBtn.disabled = disabled || !fullAccess;
+      els.phonesBtn.disabled = disabled || !fullAccess;
+      els.saveMessageBtn.disabled = disabled || !fullAccess;
+      els.autoReminderSwitch.disabled = disabled || !fullAccess;
+      els.whatsappReconnectBtn.disabled = disabled || !fullAccess;
+      els.whatsappReconnectTopBtn.disabled = disabled || !fullAccess;
+      els.whatsappResetAuthBtn.disabled = disabled || !fullAccess;
+      els.whatsappResetAuthTopBtn.disabled = disabled || !fullAccess;
+      els.messageTemplate.disabled = disabled || !fullAccess;
+      els.todayBtn.disabled = disabled;
+      els.dateFilter.disabled = disabled;
+    }
+
+    async function runAction(url, label) {
+      setButtons(true);
+
+      try {
+        const options = {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            date: state.selectedDate
+          })
+        };
+
+        const data = await fetchJson(url, options);
+        const result = data.result || {};
+        const apiMessage = result.diagnostics && result.diagnostics.apiMessage;
+
+        if (apiMessage) {
+          showToast(label + ': ' + apiMessage);
+        } else if (typeof result.saved === 'number') {
+          showToast(label + ' listo: ' + result.saved + ' tickets');
+        } else {
+          showToast(label + ' listo');
+        }
+
+        await loadDashboard();
+      } catch (error) {
+        showToast(error.message);
+      } finally {
+        setButtons(false);
+      }
+    }
+
+    els.dateFilter.value = state.selectedDate;
+    els.refreshBtn.addEventListener('click', loadDashboard);
+    els.logoutBtn.addEventListener('click', logout);
+    els.dateFilter.addEventListener('change', () => {
+      state.selectedDate = els.dateFilter.value || toDateInputValue(new Date());
+      loadDashboard();
+    });
+    els.todayBtn.addEventListener('click', () => {
+      state.selectedDate = toDateInputValue(new Date());
+      els.dateFilter.value = state.selectedDate;
+      loadDashboard();
+    });
+    els.syncBtn.addEventListener('click', () => runAction('/tickets/sync', 'Sync'));
+    els.statusBtn.addEventListener('click', () => runAction('/tickets/status', 'Estados'));
+    els.phonesBtn.addEventListener('click', () => runAction('/tickets/phones', 'Moviles'));
+    els.runBtn.addEventListener('click', () => runAction('/tickets/run', 'Ciclo'));
+    async function reconnectWhatsApp() {
+      setButtons(true);
+      showToast('Reiniciando WhatsApp...');
+
+      try {
+        await fetchJson('/whatsapp/reconnect', {
+          method: 'POST'
+        });
+        showToast('WhatsApp reiniciado. El QR puede tardar unos segundos.');
+        await loadDashboard();
+      } catch (error) {
+        showToast(error.message);
+      } finally {
+        setButtons(false);
+      }
+    }
+
+    els.whatsappReconnectBtn.addEventListener('click', reconnectWhatsApp);
+    els.whatsappReconnectTopBtn.addEventListener('click', reconnectWhatsApp);
+
+    async function resetWhatsAppAuth() {
+      if (!window.confirm('Esto borra la sesion local de WhatsApp y genera un QR nuevo. Continuar?')) {
+        return;
+      }
+
+      setButtons(true);
+      showToast('Borrando sesion de WhatsApp...');
+
+      try {
+        await fetchJson('/whatsapp/reset-auth', {
+          method: 'POST'
+        });
+        showToast('Sesion borrada. El QR puede tardar unos segundos.');
+        await loadDashboard();
+      } catch (error) {
+        showToast(error.message);
+      } finally {
+        setButtons(false);
+      }
+    }
+
+    els.whatsappResetAuthBtn.addEventListener('click', resetWhatsAppAuth);
+    els.whatsappResetAuthTopBtn.addEventListener('click', resetWhatsAppAuth);
+    els.messageTemplate.addEventListener('input', () => {
+      if (hasFullAccess()) {
+        els.messageStatus.textContent = 'Cambios sin guardar';
+      }
+    });
+    els.autoReminderSwitch.addEventListener('change', () => {
+      if (!hasFullAccess()) {
+        return;
+      }
+
+      const nextEnabled = els.autoReminderSwitch.checked;
+      setAutoReminderState(nextEnabled);
+      els.autoReminderSwitch.disabled = true;
+
+      fetchJson('/settings/automatic-reminder', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          enabled: nextEnabled
+        })
+      })
+        .then(data => {
+          setAutoReminderState(data.automaticReminderEnabled);
+          showToast(data.automaticReminderEnabled ? 'Recordatorios automaticos activados' : 'Recordatorios automaticos pausados');
+        })
+        .catch(error => {
+          setAutoReminderState(!nextEnabled);
+          showToast(error.message);
+        })
+        .finally(() => {
+          els.autoReminderSwitch.disabled = !hasFullAccess();
+        });
+    });
+    els.saveMessageBtn.addEventListener('click', async () => {
+      setButtons(true);
+
+      try {
+        const data = await fetchJson('/settings/message-template', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            template: els.messageTemplate.value,
+            automaticReminderEnabled: els.autoReminderSwitch.checked
+          })
+        });
+        els.messageStatus.textContent = 'Guardado';
+        renderMessageSettings(data);
+        showToast('Mensaje guardado');
+      } catch (error) {
+        showToast(error.message);
+      } finally {
+        setButtons(false);
+      }
+    });
+
+    async function init() {
+      const user = await loadSession();
+
+      if (!user) {
+        return;
+      }
+
+      setInterval(loadDashboard, 5000);
+      setInterval(renderStatus, 1000);
+      loadDashboard();
+    }
+
+    init();
+  </script>
+</body>
+
+</html>
