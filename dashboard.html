@@ -390,6 +390,194 @@
       gap: 6px;
     }
 
+    .modal-backdrop {
+      position: fixed;
+      inset: 0;
+      z-index: 20;
+      background: rgba(23, 32, 42, 0.46);
+      padding: 24px;
+      display: grid;
+      place-items: center;
+    }
+
+    .modal-backdrop[hidden] {
+      display: none;
+    }
+
+    .modal {
+      width: min(860px, 100%);
+      max-height: min(760px, calc(100vh - 48px));
+      overflow: hidden;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      box-shadow: 0 24px 70px rgba(23, 32, 42, 0.24);
+      display: flex;
+      flex-direction: column;
+    }
+
+    .modal-head {
+      min-height: 58px;
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--line);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .modal-title {
+      font-size: 17px;
+      font-weight: 700;
+    }
+
+    .modal-subtitle {
+      margin-top: 3px;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.35;
+    }
+
+    .modal-close {
+      width: 38px;
+      min-width: 38px;
+      padding: 0;
+      justify-content: center;
+      font-size: 20px;
+      line-height: 1;
+    }
+
+    .modal-body {
+      padding: 14px;
+      overflow: auto;
+      display: grid;
+      gap: 14px;
+    }
+
+    .transfer-layout {
+      display: grid;
+      grid-template-columns: minmax(220px, 0.8fr) minmax(0, 1.2fr);
+      gap: 14px;
+      align-items: start;
+    }
+
+    .transfer-column,
+    .transfer-form,
+    .transfer-active {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fbfcfe;
+      padding: 12px;
+    }
+
+    .transfer-section-title {
+      margin-bottom: 10px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0;
+    }
+
+    .connected-list {
+      display: grid;
+      gap: 8px;
+    }
+
+    .connected-user {
+      width: 100%;
+      min-height: 52px;
+      justify-content: space-between;
+      text-align: left;
+      background: #ffffff;
+    }
+
+    .connected-user.selected {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 2px #bfdbfe;
+    }
+
+    .connected-user-main {
+      min-width: 0;
+      display: grid;
+      gap: 2px;
+    }
+
+    .connected-user-name {
+      font-weight: 700;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .connected-user-meta {
+      color: var(--muted);
+      font-size: 12px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .transfer-selected {
+      margin-bottom: 12px;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.4;
+    }
+
+    .transfer-group-options {
+      min-height: 48px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 8px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      background: #ffffff;
+    }
+
+    .transfer-group-option {
+      min-height: 30px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 0 9px;
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      color: var(--text);
+      font-size: 13px;
+      font-weight: 700;
+      background: #f8fafc;
+      margin: 0;
+    }
+
+    .transfer-group-option input {
+      width: auto;
+      min-height: auto;
+      margin: 0;
+    }
+
+    .transfer-actions {
+      margin-top: 12px;
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .transfer-active-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .transfer-active-item {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #ffffff;
+      padding: 8px 10px;
+      display: grid;
+      gap: 4px;
+      min-width: min(250px, 100%);
+    }
+
     .tickets-head {
       margin: 0 0 10px;
       display: flex;
@@ -545,6 +733,10 @@
       .status-grid {
         grid-template-columns: repeat(2, minmax(0, 1fr));
       }
+
+      .transfer-layout {
+        grid-template-columns: 1fr;
+      }
     }
 
     @media (max-width: 560px) {
@@ -572,6 +764,80 @@
         max-width: 260px;
         height: auto;
       }
+
+      .modal-backdrop {
+        padding: 10px;
+        align-items: stretch;
+      }
+
+      .modal {
+        max-height: calc(100vh - 20px);
+      }
+    }
+
+    .topbar-inner {
+      min-height: 96px;
+      padding: 12px 0;
+      display: flex;
+      flex-direction: column;
+      align-items: stretch;
+      justify-content: center;
+      gap: 10px;
+    }
+
+    .topbar-row {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 10px;
+      width: 100%;
+    }
+
+    .topbar-main {
+      justify-content: space-between;
+    }
+
+    .topbar-info {
+      min-width: 230px;
+      flex: 1 1 260px;
+    }
+
+    .topbar-tabs,
+    .topbar-session,
+    .topbar-actions {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .topbar-tabs {
+      flex: 1 1 260px;
+      justify-content: center;
+    }
+
+    .topbar-session {
+      flex: 1 1 250px;
+      justify-content: flex-end;
+    }
+
+    .topbar-actions {
+      justify-content: flex-end;
+    }
+
+    .nav-tab.active {
+      border-color: var(--accent);
+      background: var(--soft-blue);
+      color: var(--accent);
+      font-weight: 700;
+    }
+
+    @media (max-width: 900px) {
+      .topbar-tabs,
+      .topbar-session,
+      .topbar-actions {
+        justify-content: flex-start;
+      }
     }
   </style>
 </head>
@@ -579,53 +845,68 @@
 <body>
   <header class="topbar">
     <div class="topbar-inner">
-      <div>
-        <h1>Monitor de Tickets</h1>
-        <div class="subtitle" id="lastRefresh">Cargando...</div>
+      <div class="topbar-row topbar-main">
+        <div class="topbar-info">
+          <h1>Monitor de Tickets</h1>
+          <div class="subtitle" id="lastRefresh">Cargando...</div>
+        </div>
+        <div class="topbar-tabs" aria-label="Secciones">
+          <button class="nav-tab active" type="button" title="Monitor de tickets" onclick="window.location.href='/dashboard'">
+            <span aria-hidden="true">&#9638;</span>
+            Tickets
+          </button>
+          <button class="nav-tab" type="button" title="Ver mensajes de WhatsApp" onclick="window.location.href='/mensajes'">
+            <span aria-hidden="true">&#9993;</span>
+            Mensajes
+          </button>
+          <button id="usersBtn" class="nav-tab" type="button" title="Administrar usuarios" hidden
+            onclick="window.location.href='/usuarios'">
+            <span aria-hidden="true">&#128100;</span>
+            Usuarios
+          </button>
+        </div>
+        <div class="topbar-session">
+          <span id="sessionBadge" class="session-chip">Sesion</span>
+          <button id="logoutBtn" type="button" title="Cerrar sesion">
+            <span aria-hidden="true">&#9211;</span>
+            Salir
+          </button>
+        </div>
       </div>
-      <div class="actions">
-        <button type="button" title="Ver mensajes de WhatsApp" onclick="window.location.href='/mensajes'">
-          <span aria-hidden="true">&#9993;</span>
-          Mensajes
-        </button>
-        <button id="refreshBtn" type="button" title="Actualizar ahora">
-          <span aria-hidden="true">&#8635;</span>
-          Actualizar
-        </button>
-        <button id="syncBtn" type="button" title="Traer tickets desde la API">
-          <span aria-hidden="true">&#8645;</span>
-          Sync
-        </button>
-        <button id="statusBtn" type="button" title="Actualizar estados">
-          <span aria-hidden="true">&#8634;</span>
-          Estados
-        </button>
-        <button id="phonesBtn" type="button" title="Completar moviles desde cliente">
-          <span aria-hidden="true">&#9742;</span>
-          Moviles
-        </button>
-        <button id="runBtn" class="primary" type="button" title="Ejecutar ciclo completo">
-          <span aria-hidden="true">&#9658;</span>
-          Ciclo
-        </button>
-        <button id="whatsappReconnectTopBtn" type="button" title="Volver a intentar conexion y mostrar QR" hidden>
-          <span aria-hidden="true">&#8635;</span>
-          Mostrar QR
-        </button>
-        <button id="whatsappResetAuthTopBtn" type="button" title="Borrar la sesion local de WhatsApp y generar un QR nuevo" hidden>
-          <span aria-hidden="true">&#9003;</span>
-          Borrar sesion
-        </button>
-        <button id="usersBtn" type="button" title="Administrar usuarios" hidden
-          onclick="window.location.href='/usuarios'">
-          <span aria-hidden="true">&#128100;</span>
-          Usuarios
-        </button>
-        <span id="sessionBadge" class="session-chip">Sesion</span>
-        <button id="logoutBtn" type="button" title="Cerrar sesion">
-          <span aria-hidden="true">&#9211;</span>
-          Salir
-        </button>
+      <div class="topbar-row topbar-actions" aria-label="Acciones del monitor">
+          <button id="transferBtn" type="button" title="Transferir grupos temporalmente">
+            <span aria-hidden="true">&#8646;</span>
+            Transferir
+          </button>
+          <button id="refreshBtn" type="button" title="Actualizar ahora">
+            <span aria-hidden="true">&#8635;</span>
+            Actualizar
+          </button>
+          <button id="syncBtn" type="button" title="Traer tickets desde la API">
+            <span aria-hidden="true">&#8645;</span>
+            Sync
+          </button>
+          <button id="statusBtn" type="button" title="Actualizar estados">
+            <span aria-hidden="true">&#8634;</span>
+            Estados
+          </button>
+          <button id="phonesBtn" type="button" title="Completar moviles desde cliente">
+            <span aria-hidden="true">&#9742;</span>
+            Moviles
+          </button>
+          <button id="runBtn" class="primary" type="button" title="Ejecutar ciclo completo">
+            <span aria-hidden="true">&#9658;</span>
+            Ciclo
+          </button>
+          <button id="whatsappReconnectTopBtn" type="button" title="Volver a intentar conexion y mostrar QR" hidden>
+            <span aria-hidden="true">&#8635;</span>
+            Mostrar QR
+          </button>
+          <button id="whatsappResetAuthTopBtn" type="button"
+            title="Borrar la sesion local de WhatsApp y generar un QR nuevo" hidden>
+            <span aria-hidden="true">&#9003;</span>
+            Borrar sesion
+          </button>
       </div>
     </div>
   </header>
@@ -664,7 +945,8 @@
             <span aria-hidden="true">&#8635;</span>
             Mostrar QR
           </button>
-          <button id="whatsappResetAuthBtn" type="button" title="Borrar la sesion local de WhatsApp y generar un QR nuevo">
+          <button id="whatsappResetAuthBtn" type="button"
+            title="Borrar la sesion local de WhatsApp y generar un QR nuevo">
             <span aria-hidden="true">&#9003;</span>
             Borrar sesion
           </button>
@@ -714,10 +996,57 @@
 
   <div class="toast" id="toast"></div>
 
+  <div id="transferModal" class="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="transferTitle" hidden>
+    <section class="modal">
+      <div class="modal-head">
+        <div>
+          <div id="transferTitle" class="modal-title">Transferir grupos</div>
+          <div id="transferSummary" class="modal-subtitle">Cargando...</div>
+        </div>
+        <button id="transferCloseBtn" class="modal-close" type="button" title="Cerrar"
+          aria-label="Cerrar">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="transfer-layout">
+          <section class="transfer-column" aria-label="Usuarios conectados">
+            <div class="transfer-section-title">Conectados</div>
+            <div id="transferUsersList" class="connected-list"></div>
+          </section>
+          <form id="transferForm" class="transfer-form">
+            <input id="transferUsername" type="hidden">
+            <div id="transferSelectedUser" class="transfer-selected">Selecciona un usuario.</div>
+            <div class="transfer-section-title">Grupos</div>
+            <div id="transferGroupsBox" class="transfer-group-options"></div>
+            <div class="transfer-actions">
+              <button id="transferSaveBtn" class="primary" type="submit">
+                <span aria-hidden="true">&#10003;</span>
+                Transferir
+              </button>
+              <button id="transferClearBtn" type="button">
+                <span aria-hidden="true">&#9003;</span>
+                Quitar
+              </button>
+            </div>
+            <div id="transferError" class="error-text"></div>
+          </form>
+        </div>
+        <section class="transfer-active" aria-label="Transferencias activas">
+          <div class="transfer-section-title">Activas</div>
+          <div id="transferActiveList" class="transfer-active-list"></div>
+        </section>
+      </div>
+    </section>
+  </div>
+
   <script>
     const state = {
       status: null,
       tickets: [],
+      transferGroups: [],
+      transferHours: 0,
+      transferUsers: [],
+      transfers: [],
+      selectedTransferUsername: '',
       selectedDate: toDateInputValue(new Date()),
       auth: null,
       loading: false
@@ -750,6 +1079,19 @@
       ticketSummary: document.getElementById('ticketSummary'),
       todayBtn: document.getElementById('todayBtn'),
       toast: document.getElementById('toast'),
+      transferActiveList: document.getElementById('transferActiveList'),
+      transferBtn: document.getElementById('transferBtn'),
+      transferClearBtn: document.getElementById('transferClearBtn'),
+      transferCloseBtn: document.getElementById('transferCloseBtn'),
+      transferError: document.getElementById('transferError'),
+      transferForm: document.getElementById('transferForm'),
+      transferGroupsBox: document.getElementById('transferGroupsBox'),
+      transferModal: document.getElementById('transferModal'),
+      transferSaveBtn: document.getElementById('transferSaveBtn'),
+      transferSelectedUser: document.getElementById('transferSelectedUser'),
+      transferSummary: document.getElementById('transferSummary'),
+      transferUsername: document.getElementById('transferUsername'),
+      transferUsersList: document.getElementById('transferUsersList'),
       usersBtn: document.getElementById('usersBtn'),
       whatsappBadge: document.getElementById('whatsappBadge'),
       whatsappQrDetail: document.getElementById('whatsappQrDetail'),
@@ -1069,8 +1411,217 @@
       }, 3200);
     }
 
+    function getSelectedTransferUser() {
+      return state.transferUsers.find(user => user.username === state.selectedTransferUsername) || null;
+    }
+
+    function getUserTransfer(user) {
+      if (!user) {
+        return null;
+      }
+
+      return user.transfer || state.transfers.find(transfer => transfer.username === user.username) || null;
+    }
+
+    function setTransferSaving(saving) {
+      els.transferSaveBtn.disabled = saving || !state.selectedTransferUsername;
+      els.transferClearBtn.disabled = saving || !getUserTransfer(getSelectedTransferUser());
+      els.transferUsersList.querySelectorAll('button[data-username]').forEach(button => {
+        button.disabled = saving;
+      });
+    }
+
+    function renderTransferUsers() {
+      if (!state.transferUsers.length) {
+        els.transferUsersList.innerHTML = '<div class="empty">No hay usuarios conectados.</div>';
+        state.selectedTransferUsername = '';
+        return;
+      }
+
+      els.transferUsersList.innerHTML = state.transferUsers.map(user => {
+        const transfer = getUserTransfer(user);
+        const selected = user.username === state.selectedTransferUsername ? ' selected' : '';
+        const meta = transfer
+          ? 'Temporal: ' + transfer.groups.join(', ')
+          : 'Activo: ' + formatDateTime(user.lastSeenAt);
+
+        return '<button class="connected-user' + selected + '" type="button" data-username="' + escapeHtml(user.username) + '">' +
+          '<span class="connected-user-main">' +
+          '<span class="connected-user-name">' + escapeHtml(user.name || user.username) + '</span>' +
+          '<span class="connected-user-meta">' + escapeHtml(meta) + '</span>' +
+          '</span>' +
+          (transfer ? badge('Transferido', 'good') : badge('Conectado', 'blue')) +
+          '</button>';
+      }).join('');
+
+      els.transferUsersList.querySelectorAll('button[data-username]').forEach(button => {
+        button.addEventListener('click', () => selectTransferUser(button.dataset.username));
+      });
+    }
+
+    function renderTransferGroups(selectedGroups = []) {
+      const selected = new Set((selectedGroups || []).map(group => String(group).toLowerCase()));
+
+      if (!state.selectedTransferUsername) {
+        els.transferGroupsBox.innerHTML = '<span class="muted">--</span>';
+        return;
+      }
+
+      if (!state.transferGroups.length) {
+        els.transferGroupsBox.innerHTML = '<span class="muted">Sin grupos detectados.</span>';
+        return;
+      }
+
+      els.transferGroupsBox.innerHTML = state.transferGroups.map((group, index) => {
+        const id = 'transfer-group-' + index;
+        const checked = selected.has(String(group).toLowerCase()) ? ' checked' : '';
+
+        return '<label class="transfer-group-option" for="' + escapeHtml(id) + '">' +
+          '<input id="' + escapeHtml(id) + '" type="checkbox" value="' + escapeHtml(group) + '"' + checked + '>' +
+          '<span>' + escapeHtml(group) + '</span>' +
+          '</label>';
+      }).join('');
+    }
+
+    function getSelectedTransferGroups() {
+      return Array.from(els.transferGroupsBox.querySelectorAll('input[type="checkbox"]:checked'))
+        .map(input => input.value);
+    }
+
+    function renderActiveTransfers() {
+      if (!state.transfers.length) {
+        els.transferActiveList.innerHTML = '<span class="muted">Sin transferencias activas.</span>';
+        return;
+      }
+
+      els.transferActiveList.innerHTML = state.transfers.map(transfer => {
+        return '<div class="transfer-active-item">' +
+          '<strong>' + escapeHtml(transfer.name || transfer.username) + '</strong>' +
+          '<div>' + (transfer.groups || []).map(group => badge(group, 'blue')).join(' ') + '</div>' +
+          '<div class="muted">Hasta ' + escapeHtml(formatDateTime(transfer.expiresAt)) + '</div>' +
+          '</div>';
+      }).join('');
+    }
+
+    function renderTransferModal() {
+      const selectedUser = getSelectedTransferUser();
+      const selectedTransfer = getUserTransfer(selectedUser);
+      const hours = state.transferHours || 0;
+      els.transferSummary.textContent =
+        state.transferUsers.length + ' usuarios conectados' +
+        (hours ? ' | Vigencia: ' + hours + ' h' : '');
+      els.transferUsername.value = state.selectedTransferUsername;
+      els.transferSelectedUser.textContent = selectedUser
+        ? (selectedUser.name || selectedUser.username) + ' | ' + selectedUser.username
+        : 'Selecciona un usuario.';
+
+      renderTransferUsers();
+      renderTransferGroups(selectedTransfer ? selectedTransfer.groups : []);
+      renderActiveTransfers();
+      setTransferSaving(false);
+    }
+
+    function selectTransferUser(username) {
+      state.selectedTransferUsername = username;
+      els.transferError.textContent = '';
+      renderTransferModal();
+    }
+
+    async function loadTransfers() {
+      const data = await fetchJson('/transfers');
+
+      if (!data) {
+        return;
+      }
+
+      state.transferUsers = data.users || [];
+      state.transferGroups = data.groups || [];
+      state.transfers = data.transfers || [];
+      state.transferHours = data.expiresAfterHours || 0;
+
+      if (
+        state.selectedTransferUsername &&
+        !state.transferUsers.some(user => user.username === state.selectedTransferUsername)
+      ) {
+        state.selectedTransferUsername = '';
+      }
+
+      renderTransferModal();
+    }
+
+    async function openTransferModal() {
+      if (!hasFullAccess()) {
+        return;
+      }
+
+      els.transferModal.hidden = false;
+      els.transferError.textContent = '';
+
+      try {
+        await loadTransfers();
+      } catch (error) {
+        els.transferError.textContent = error.message;
+      }
+    }
+
+    function closeTransferModal() {
+      els.transferModal.hidden = true;
+    }
+
+    async function saveTransfer(event) {
+      event.preventDefault();
+
+      if (!state.selectedTransferUsername) {
+        els.transferError.textContent = 'Selecciona un usuario';
+        return;
+      }
+
+      setTransferSaving(true);
+      els.transferError.textContent = '';
+
+      try {
+        const data = await fetchJson('/transfers', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            username: state.selectedTransferUsername,
+            groups: getSelectedTransferGroups()
+          })
+        });
+        showToast('Grupos transferidos a ' + (data.transfer && data.transfer.name || state.selectedTransferUsername));
+        await loadTransfers();
+      } catch (error) {
+        els.transferError.textContent = error.message;
+      } finally {
+        setTransferSaving(false);
+      }
+    }
+
+    async function clearTransfer() {
+      if (!state.selectedTransferUsername) {
+        return;
+      }
+
+      setTransferSaving(true);
+      els.transferError.textContent = '';
+
+      try {
+        await fetchJson('/transfers/' + encodeURIComponent(state.selectedTransferUsername), {
+          method: 'DELETE'
+        });
+        showToast('Transferencia quitada');
+        await loadTransfers();
+      } catch (error) {
+        els.transferError.textContent = error.message;
+      } finally {
+        setTransferSaving(false);
+      }
+    }
+
     function hasFullAccess() {
-      return Boolean(state.auth && state.auth.isAdmin);
+      return Boolean(state.auth);
     }
 
     function setAutoReminderState(enabled) {
@@ -1088,6 +1639,7 @@
         button.hidden = !fullAccess;
       });
       els.usersBtn.hidden = user.role !== 'admin';
+      els.transferBtn.hidden = false;
       els.autoReminderSwitch.disabled = !fullAccess;
       els.messageTemplate.disabled = !fullAccess;
 
@@ -1213,6 +1765,20 @@
     els.dateFilter.value = state.selectedDate;
     els.refreshBtn.addEventListener('click', loadDashboard);
     els.logoutBtn.addEventListener('click', logout);
+    els.transferBtn.addEventListener('click', openTransferModal);
+    els.transferCloseBtn.addEventListener('click', closeTransferModal);
+    els.transferForm.addEventListener('submit', saveTransfer);
+    els.transferClearBtn.addEventListener('click', clearTransfer);
+    els.transferModal.addEventListener('click', event => {
+      if (event.target === els.transferModal) {
+        closeTransferModal();
+      }
+    });
+    window.addEventListener('keydown', event => {
+      if (event.key === 'Escape' && !els.transferModal.hidden) {
+        closeTransferModal();
+      }
+    });
     els.dateFilter.addEventListener('change', () => {
       state.selectedDate = els.dateFilter.value || toDateInputValue(new Date());
       loadDashboard();

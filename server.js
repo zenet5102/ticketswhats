@@ -11,6 +11,7 @@ const {
   handleLogin,
   handleLogout,
   handleMe,
+  listConnectedUsers,
   redirectIfAuthenticated,
   requireAuth
 } = require('./auth');
@@ -41,6 +42,7 @@ const {
   allowedRoles,
   createUser,
   deleteUser,
+  getPublicUserByUsername,
   listAssignedUserGroups,
   listUsers: listAppUsers,
   updateUser
@@ -69,6 +71,16 @@ const notificationChannelReplyByChat = new Map();
 const notificationChannelReplyCooldownMs = 6 * 60 * 60 * 1000;
 const whatsappAuthRoot = path.resolve(__dirname, '.wwebjs_auth');
 const whatsappAuthSessionDir = path.resolve(whatsappAuthRoot, 'session-bot-1');
+const temporaryTransferHours = parsePositiveInteger(
+  process.env.GROUP_TRANSFER_HOURS,
+  parsePositiveInteger(process.env.AUTH_SESSION_HOURS, 12)
+);
+const temporaryGroupTransfers = new Map();
+
+function parsePositiveInteger(value, fallback) {
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
 
 function markWhatsAppState(state, ready = state === 'CONNECTED') {
   whatsappState = state;
@@ -129,15 +141,23 @@ app.use(cors());
 app.use(express.json());
 
 const requireLoggedIn = requireAuth();
-const requirePrivileged = requireAuth(['admin']);
+const requirePrivileged = requireLoggedIn;
 const requireAdmin = requireAuth(['admin']);
 
 app.get('/favicon.ico', (req, res) => {
   res.status(204).end();
 });
 
+function sendHtmlFile(res, filename) {
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+  res.setHeader('Surrogate-Control', 'no-store');
+  res.sendFile(path.join(__dirname, filename));
+}
+
 app.get('/login', redirectIfAuthenticated, (req, res) => {
-  res.sendFile(path.join(__dirname, 'login.html'));
+  sendHtmlFile(res, 'login.html');
 });
 
 app.post('/auth/login', handleLogin);
@@ -145,7 +165,7 @@ app.post('/auth/logout', handleLogout);
 app.get('/auth/me', requireLoggedIn, handleMe);
 
 app.get('/usuarios', requireAdmin, (req, res) => {
-  res.sendFile(path.join(__dirname, 'users.html'));
+  sendHtmlFile(res, 'users.html');
 });
 
 app.get('/users', requireAdmin, (req, res) => {
@@ -199,24 +219,73 @@ app.delete('/users/:id', requireAdmin, (req, res) => {
   }
 });
 
+app.get('/transfers', requireLoggedIn, (req, res) => {
+  try {
+    res.json({
+      success: true,
+      users: listTransferUsers(req.user && req.user.username),
+      groups: listTransferableGroupsForUser(req.user),
+      transfers: listTemporaryGroupTransfers(),
+      expiresAfterHours: temporaryTransferHours
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+app.post('/transfers', requireLoggedIn, (req, res) => {
+  try {
+    res.json({
+      success: true,
+      transfer: setTemporaryGroupTransfer(
+        req.body && req.body.username,
+        req.body && req.body.groups,
+        req.user
+      )
+    });
+  } catch (error) {
+    res.status(400).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+app.delete('/transfers/:username', requireLoggedIn, (req, res) => {
+  try {
+    res.json({
+      success: true,
+      transfer: clearTemporaryGroupTransfer(req.params.username)
+    });
+  } catch (error) {
+    res.status(400).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
 app.get('/enviar', requirePrivileged, (req, res) => {
-  res.sendFile(path.join(__dirname, 'enviar.html'));
+  sendHtmlFile(res, 'enviar.html');
 });
 
 app.get('/', requireLoggedIn, (req, res) => {
-  res.sendFile(path.join(__dirname, 'dashboard.html'));
+  sendHtmlFile(res, 'dashboard.html');
 });
 
 app.get('/dashboard', requireLoggedIn, (req, res) => {
-  res.sendFile(path.join(__dirname, 'dashboard.html'));
+  sendHtmlFile(res, 'dashboard.html');
 });
 
 app.get('/mensajes', requireLoggedIn, (req, res) => {
-  res.sendFile(path.join(__dirname, 'messages.html'));
+  sendHtmlFile(res, 'messages.html');
 });
 
 app.get('/test', requirePrivileged, (req, res) => {
-  res.sendFile(path.join(__dirname, 'enviar.html'));
+  sendHtmlFile(res, 'enviar.html');
 });
 
 function getUserAllowedGroups(user) {
@@ -224,7 +293,7 @@ function getUserAllowedGroups(user) {
     return null;
   }
 
-  return Array.isArray(user && user.groups) ? user.groups : [];
+  return listEffectiveUserGroups(user);
 }
 
 function listVisibleTicketsForUser(user, date) {
@@ -246,6 +315,177 @@ function listAvailableUserGroups() {
   }
 
   return groups.sort((left, right) => left.localeCompare(right));
+}
+
+function normalizeGroupListForTransfer(groups, allowedGroups) {
+  const availableGroups = new Map(
+    (Array.isArray(allowedGroups) ? allowedGroups : listAvailableUserGroups())
+      .map(group => [group.toLowerCase(), group])
+  );
+  const source = Array.isArray(groups)
+    ? groups
+    : String(groups || '').split(',');
+  const seen = new Set();
+  const cleanGroups = [];
+
+  for (const group of source) {
+    const key = String(group || '').trim().toLowerCase();
+
+    if (key && availableGroups.has(key) && !seen.has(key)) {
+      seen.add(key);
+      cleanGroups.push(availableGroups.get(key));
+    }
+  }
+
+  return cleanGroups;
+}
+
+function mergeGroupLists(...groupLists) {
+  const seen = new Set();
+  const merged = [];
+
+  for (const groups of groupLists) {
+    for (const group of Array.isArray(groups) ? groups : []) {
+      const cleanGroup = String(group || '').trim();
+      const key = cleanGroup.toLowerCase();
+
+      if (cleanGroup && !seen.has(key)) {
+        seen.add(key);
+        merged.push(cleanGroup);
+      }
+    }
+  }
+
+  return merged;
+}
+
+function transferKey(username) {
+  return String(username || '').trim().toLowerCase();
+}
+
+function pruneTemporaryGroupTransfers() {
+  const now = Date.now();
+
+  for (const [username, transfer] of temporaryGroupTransfers.entries()) {
+    if (Number(transfer.expiresAtTs || 0) <= now) {
+      temporaryGroupTransfers.delete(username);
+    }
+  }
+}
+
+function publicTransfer(transfer) {
+  if (!transfer) {
+    return null;
+  }
+
+  return {
+    username: transfer.username,
+    name: transfer.name,
+    role: transfer.role,
+    groups: transfer.groups,
+    grantedBy: transfer.grantedBy,
+    grantedByName: transfer.grantedByName,
+    grantedAt: transfer.grantedAt,
+    expiresAt: transfer.expiresAt
+  };
+}
+
+function getTemporaryGroupTransfer(username) {
+  pruneTemporaryGroupTransfers();
+  return publicTransfer(temporaryGroupTransfers.get(transferKey(username)));
+}
+
+function listTemporaryGroupTransfers() {
+  pruneTemporaryGroupTransfers();
+  return Array.from(temporaryGroupTransfers.values())
+    .map(publicTransfer)
+    .sort((left, right) => left.name.localeCompare(right.name) || left.username.localeCompare(right.username));
+}
+
+function listEffectiveUserGroups(user) {
+  if (!user) {
+    return [];
+  }
+
+  const transfer = getTemporaryGroupTransfer(user.username);
+  return mergeGroupLists(user.groups, transfer && transfer.groups);
+}
+
+function listTransferableGroupsForUser(user) {
+  if (user && user.isAdmin) {
+    return listAvailableUserGroups();
+  }
+
+  return listEffectiveUserGroups(user).sort((left, right) => left.localeCompare(right));
+}
+
+function listTransferUsers(currentUsername) {
+  const currentKey = transferKey(currentUsername);
+
+  return listConnectedUsers()
+    .filter(user => transferKey(user.username) !== currentKey)
+    .filter(user => !user.isAdmin)
+    .map(user => ({
+      username: user.username,
+      name: user.name,
+      role: user.role,
+      isAdmin: Boolean(user.isAdmin),
+      lastSeenAt: user.lastSeenAt,
+      transfer: getTemporaryGroupTransfer(user.username)
+    }));
+}
+
+function isConnectedUsername(username) {
+  const key = transferKey(username);
+  return listConnectedUsers().some(user => transferKey(user.username) === key);
+}
+
+function setTemporaryGroupTransfer(username, groups, actor) {
+  const target = getPublicUserByUsername(username);
+
+  if (!target) {
+    throw new Error('Usuario no encontrado');
+  }
+
+  if (!isConnectedUsername(target.username)) {
+    throw new Error('El usuario no esta conectado');
+  }
+
+  if (target.isAdmin) {
+    throw new Error('El usuario admin ya ve todos los grupos');
+  }
+
+  const cleanGroups = normalizeGroupListForTransfer(groups, listTransferableGroupsForUser(actor));
+
+  if (!cleanGroups.length) {
+    throw new Error('Selecciona al menos un grupo');
+  }
+
+  const now = Date.now();
+  const expiresAtTs = now + temporaryTransferHours * 60 * 60 * 1000;
+  const transfer = {
+    username: target.username,
+    name: target.name,
+    role: target.role,
+    groups: cleanGroups,
+    grantedBy: actor && actor.username || '',
+    grantedByName: actor && actor.name || '',
+    grantedAt: new Date(now).toISOString(),
+    expiresAt: new Date(expiresAtTs).toISOString(),
+    expiresAtTs
+  };
+
+  temporaryGroupTransfers.set(transferKey(target.username), transfer);
+  return publicTransfer(transfer);
+}
+
+function clearTemporaryGroupTransfer(username) {
+  const target = getPublicUserByUsername(username);
+  const key = transferKey(target ? target.username : username);
+  const existingTransfer = temporaryGroupTransfers.get(key);
+
+  temporaryGroupTransfers.delete(key);
+  return publicTransfer(existingTransfer);
 }
 
 function getVisibleTicketPhones(user) {

@@ -832,7 +832,7 @@
     }
 
     function hasFullAccess() {
-      return Boolean(state.auth && state.auth.isAdmin);
+      return Boolean(state.auth);
     }
 
     function applySession(user) {

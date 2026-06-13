@@ -6,9 +6,11 @@ const {
 
 const cookieName = process.env.AUTH_COOKIE_NAME || 'wwebjs_session';
 const sessionHours = parsePositiveInteger(process.env.AUTH_SESSION_HOURS, 12);
+const activeUserMinutes = parsePositiveInteger(process.env.AUTH_ACTIVE_USER_MINUTES, 5);
 const sessionSecret = process.env.AUTH_SESSION_SECRET || crypto.randomBytes(32).toString('hex');
 const adminRoles = new Set(['admin']);
-const privilegedRoles = new Set(['admin']);
+const privilegedRoles = new Set(['admin', 'usuario']);
+const activeUsers = new Map();
 
 function parsePositiveInteger(value, fallback) {
   const parsed = Number.parseInt(value, 10);
@@ -117,6 +119,58 @@ function getSessionUser(req) {
   return parseSessionValue(cookies[cookieName]);
 }
 
+function recordUserActivity(user) {
+  if (!user || !user.username) {
+    return;
+  }
+
+  const now = Date.now();
+  activeUsers.set(String(user.username).toLowerCase(), {
+    username: user.username,
+    role: user.role,
+    name: user.name,
+    groups: Array.isArray(user.groups) ? user.groups : [],
+    isAdmin: Boolean(user.isAdmin),
+    isPrivileged: Boolean(user.isPrivileged),
+    lastSeenAt: new Date(now).toISOString(),
+    lastSeenTs: now
+  });
+}
+
+function removeUserActivity(username) {
+  const cleanUsername = String(username || '').trim().toLowerCase();
+
+  if (cleanUsername) {
+    activeUsers.delete(cleanUsername);
+  }
+}
+
+function pruneActiveUsers() {
+  const now = Date.now();
+  const ttlMs = activeUserMinutes * 60 * 1000;
+
+  for (const [username, user] of activeUsers.entries()) {
+    if (now - Number(user.lastSeenTs || 0) > ttlMs) {
+      activeUsers.delete(username);
+    }
+  }
+}
+
+function listConnectedUsers() {
+  pruneActiveUsers();
+  return Array.from(activeUsers.values())
+    .map(user => ({
+      username: user.username,
+      role: user.role,
+      name: user.name,
+      groups: user.groups,
+      isAdmin: user.isAdmin,
+      isPrivileged: user.isPrivileged,
+      lastSeenAt: user.lastSeenAt
+    }))
+    .sort((left, right) => left.name.localeCompare(right.name) || left.username.localeCompare(right.username));
+}
+
 function serializeCookie(name, value, options = {}) {
   const parts = [
     `${name}=${encodeURIComponent(value)}`,
@@ -189,6 +243,7 @@ function requireAuth(allowedRoles) {
       });
     }
 
+    recordUserActivity(user);
     req.user = user;
     next();
   };
@@ -215,6 +270,7 @@ function handleLogin(req, res) {
   }
 
   res.setHeader('Set-Cookie', createSessionCookie(user, req));
+  recordUserActivity(user);
   res.json({
     success: true,
     user,
@@ -223,6 +279,12 @@ function handleLogin(req, res) {
 }
 
 function handleLogout(req, res) {
+  const user = getSessionUser(req);
+
+  if (user) {
+    removeUserActivity(user.username);
+  }
+
   res.setHeader('Set-Cookie', clearSessionCookie());
   res.json({ success: true });
 }
@@ -239,6 +301,7 @@ module.exports = {
   handleLogin,
   handleLogout,
   handleMe,
+  listConnectedUsers,
   redirectIfAuthenticated,
   requireAuth
 };
