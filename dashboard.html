@@ -777,52 +777,80 @@
 
     .topbar-inner {
       min-height: 96px;
-      padding: 12px 0;
+      padding: 10px 0;
       display: flex;
       flex-direction: column;
       align-items: stretch;
-      justify-content: center;
-      gap: 10px;
-    }
-
-    .topbar-row {
-      display: flex;
-      flex-wrap: wrap;
-      align-items: center;
-      gap: 10px;
-      width: 100%;
-    }
-
-    .topbar-main {
-      justify-content: space-between;
-    }
-
-    .topbar-info {
-      min-width: 230px;
-      flex: 1 1 260px;
-    }
-
-    .topbar-tabs,
-    .topbar-session,
-    .topbar-actions {
-      display: flex;
-      flex-wrap: wrap;
-      align-items: center;
+      justify-content: flex-start;
       gap: 8px;
     }
 
-    .topbar-tabs {
-      flex: 1 1 260px;
-      justify-content: center;
+    .topbar-main {
+      display: flex;
+      flex-direction: row;
+      align-items: center;
+      gap: 10px;
+      width: 100%;
+      min-width: 0;
     }
 
+    .topbar-info {
+      flex: 0 0 220px;
+      min-width: 0;
+    }
+
+    .topbar-info h1 {
+      font-size: 21px;
+    }
+
+    .topbar-info h1,
+    .topbar-info .subtitle {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .topbar-tabs,
+    .topbar-actions,
     .topbar-session {
-      flex: 1 1 250px;
-      justify-content: flex-end;
+      display: flex;
+      flex-wrap: nowrap;
+      align-items: center;
+      gap: 6px;
+      min-width: 0;
+    }
+
+    .topbar-tabs {
+      flex: 0 1 auto;
     }
 
     .topbar-actions {
+      width: 100%;
+      justify-content: flex-start;
+      padding-top: 8px;
+      border-top: 1px solid var(--line);
+    }
+
+    .topbar-session {
+      flex: 0 0 auto;
+      margin-left: auto;
       justify-content: flex-end;
+    }
+
+    .topbar-tabs button,
+    .topbar-actions button,
+    .topbar-session button,
+    .topbar-session .session-chip {
+      min-height: 34px;
+      padding-left: 8px;
+      padding-right: 8px;
+      font-size: 13px;
+    }
+
+    .topbar-session .session-chip {
+      max-width: 150px;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
 
     .nav-tab.active {
@@ -832,11 +860,39 @@
       font-weight: 700;
     }
 
+    #transferBtn {
+      border-color: var(--accent);
+      background: var(--soft-blue);
+      color: var(--accent);
+      font-weight: 700;
+    }
+
     @media (max-width: 900px) {
+      .topbar-inner {
+        align-items: flex-start;
+      }
+
+      .topbar-main {
+        flex-wrap: wrap;
+      }
+
+      .topbar-info {
+        flex: 1 1 100%;
+      }
+
       .topbar-tabs,
-      .topbar-session,
-      .topbar-actions {
+      .topbar-actions,
+      .topbar-session {
+        flex-wrap: wrap;
         justify-content: flex-start;
+      }
+
+      .topbar-actions {
+        width: 100%;
+      }
+
+      .topbar-session {
+        margin-left: 0;
       }
     }
   </style>
@@ -845,26 +901,32 @@
 <body>
   <header class="topbar">
     <div class="topbar-inner">
-      <div class="topbar-row topbar-main">
+      <div class="topbar-main">
         <div class="topbar-info">
           <h1>Monitor de Tickets</h1>
           <div class="subtitle" id="lastRefresh">Cargando...</div>
         </div>
-        <div class="topbar-tabs" aria-label="Secciones">
-          <button class="nav-tab active" type="button" title="Monitor de tickets" onclick="window.location.href='/dashboard'">
+        <nav class="topbar-tabs" aria-label="Secciones">
+          <button class="nav-tab active" type="button" title="Monitor de tickets"
+            onclick="window.location.href='/dashboard'">
             <span aria-hidden="true">&#9638;</span>
             Tickets
           </button>
-          <button class="nav-tab" type="button" title="Ver mensajes de WhatsApp" onclick="window.location.href='/mensajes'">
+          <button class="nav-tab" type="button" title="Ver mensajes de WhatsApp"
+            onclick="window.location.href='/mensajes'">
             <span aria-hidden="true">&#9993;</span>
             Mensajes
+          </button>
+          <button id="transferBtn" class="nav-tab" type="button" title="Transferir grupos temporalmente" hidden>
+            <span aria-hidden="true">&#8646;</span>
+            Transferir
           </button>
           <button id="usersBtn" class="nav-tab" type="button" title="Administrar usuarios" hidden
             onclick="window.location.href='/usuarios'">
             <span aria-hidden="true">&#128100;</span>
             Usuarios
           </button>
-        </div>
+        </nav>
         <div class="topbar-session">
           <span id="sessionBadge" class="session-chip">Sesion</span>
           <button id="logoutBtn" type="button" title="Cerrar sesion">
@@ -873,40 +935,27 @@
           </button>
         </div>
       </div>
-      <div class="topbar-row topbar-actions" aria-label="Acciones del monitor">
-          <button id="transferBtn" type="button" title="Transferir grupos temporalmente">
-            <span aria-hidden="true">&#8646;</span>
-            Transferir
-          </button>
-          <button id="refreshBtn" type="button" title="Actualizar ahora">
-            <span aria-hidden="true">&#8635;</span>
-            Actualizar
-          </button>
-          <button id="syncBtn" type="button" title="Traer tickets desde la API">
-            <span aria-hidden="true">&#8645;</span>
-            Sync
-          </button>
-          <button id="statusBtn" type="button" title="Actualizar estados">
-            <span aria-hidden="true">&#8634;</span>
-            Estados
-          </button>
-          <button id="phonesBtn" type="button" title="Completar moviles desde cliente">
-            <span aria-hidden="true">&#9742;</span>
-            Moviles
-          </button>
-          <button id="runBtn" class="primary" type="button" title="Ejecutar ciclo completo">
-            <span aria-hidden="true">&#9658;</span>
-            Ciclo
-          </button>
-          <button id="whatsappReconnectTopBtn" type="button" title="Volver a intentar conexion y mostrar QR" hidden>
-            <span aria-hidden="true">&#8635;</span>
-            Mostrar QR
-          </button>
-          <button id="whatsappResetAuthTopBtn" type="button"
-            title="Borrar la sesion local de WhatsApp y generar un QR nuevo" hidden>
-            <span aria-hidden="true">&#9003;</span>
-            Borrar sesion
-          </button>
+      <div class="topbar-actions" aria-label="Acciones del monitor">
+        <button id="refreshBtn" type="button" title="Actualizar ahora">
+          <span aria-hidden="true">&#8635;</span>
+          Actualizar
+        </button>
+        <button id="syncBtn" type="button" title="Traer tickets desde la API">
+          <span aria-hidden="true">&#8645;</span>
+          Sync
+        </button>
+        <button id="statusBtn" type="button" title="Actualizar estados">
+          <span aria-hidden="true">&#8634;</span>
+          Estados
+        </button>
+        <button id="phonesBtn" type="button" title="Completar moviles desde cliente">
+          <span aria-hidden="true">&#9742;</span>
+          Moviles
+        </button>
+        <button id="runBtn" class="primary" type="button" title="Ejecutar ciclo completo">
+          <span aria-hidden="true">&#9658;</span>
+          Ciclo
+        </button>
       </div>
     </div>
   </header>
@@ -1049,7 +1098,11 @@
       selectedTransferUsername: '',
       selectedDate: toDateInputValue(new Date()),
       auth: null,
-      loading: false
+      loading: false,
+      messageNotificationReady: false,
+      messageNotificationStartedAt: 0,
+      lastIncomingByChat: new Map(),
+      notificationAudioContext: null
     };
 
     const els = {
@@ -1098,9 +1151,7 @@
       whatsappQrImage: document.getElementById('whatsappQrImage'),
       whatsappQrPanel: document.getElementById('whatsappQrPanel'),
       whatsappReconnectBtn: document.getElementById('whatsappReconnectBtn'),
-      whatsappReconnectTopBtn: document.getElementById('whatsappReconnectTopBtn'),
       whatsappResetAuthBtn: document.getElementById('whatsappResetAuthBtn'),
-      whatsappResetAuthTopBtn: document.getElementById('whatsappResetAuthTopBtn'),
       whatsappQrText: document.getElementById('whatsappQrText')
     };
 
@@ -1208,23 +1259,21 @@
 
       const whatsapp = payload.whatsapp || {};
       const canReconnectWhatsApp = hasFullAccess();
-      els.whatsappReconnectTopBtn.hidden = !canReconnectWhatsApp;
-      els.whatsappReconnectTopBtn.disabled = !canReconnectWhatsApp;
-      els.whatsappResetAuthTopBtn.hidden = !canReconnectWhatsApp;
-      els.whatsappResetAuthTopBtn.disabled = !canReconnectWhatsApp;
 
-      if (!payload.whatsappReady && (whatsapp.qrSvg || hasFullAccess())) {
+      if (canReconnectWhatsApp || (!payload.whatsappReady && whatsapp.qrSvg)) {
         els.whatsappQrPanel.hidden = false;
-        els.whatsappQrImage.hidden = !whatsapp.qrSvg;
+        els.whatsappQrImage.hidden = payload.whatsappReady || !whatsapp.qrSvg;
         if (whatsapp.qrSvg) {
           els.whatsappQrImage.src = whatsapp.qrSvg;
         } else {
           els.whatsappQrImage.removeAttribute('src');
         }
-        els.whatsappQrText.textContent = whatsapp.qrText || '';
-        els.whatsappQrDetail.textContent = whatsapp.qrSvg
-          ? 'Escanea este codigo desde WhatsApp para conectar la sesion.'
-          : 'Si no aparece el QR, toca Mostrar QR para reiniciar la conexion de WhatsApp.';
+        els.whatsappQrText.textContent = payload.whatsappReady ? '' : whatsapp.qrText || '';
+        els.whatsappQrDetail.textContent = payload.whatsappReady
+          ? 'WhatsApp esta conectado. Usa estos controles solo si necesitas vincular de nuevo.'
+          : whatsapp.qrSvg
+            ? 'Escanea este codigo desde WhatsApp para conectar la sesion.'
+            : 'Si no aparece el QR, toca Mostrar QR para reiniciar la conexion de WhatsApp.';
         els.whatsappReconnectBtn.hidden = !canReconnectWhatsApp;
         els.whatsappReconnectBtn.disabled = !canReconnectWhatsApp;
         els.whatsappResetAuthBtn.hidden = !canReconnectWhatsApp;
@@ -1624,6 +1673,138 @@
       return Boolean(state.auth);
     }
 
+    function getIncomingTimestamp(conversation) {
+      const timestamp = Number(conversation && conversation.last_incoming_ts || 0);
+      return Number.isFinite(timestamp) && timestamp > 0 ? timestamp : 0;
+    }
+
+    function isTicketConversation(conversation) {
+      return Boolean(
+        conversation &&
+        (
+          conversation.ticket_external_id ||
+          conversation.ticket_ida ||
+          conversation.ticket_razon_social ||
+          conversation.ticket_delegacion ||
+          conversation.ticket_start
+        )
+      );
+    }
+
+    function getNotificationAudioContext() {
+      const AudioContextConstructor = window.AudioContext || window.webkitAudioContext;
+
+      if (!AudioContextConstructor) {
+        return null;
+      }
+
+      if (!state.notificationAudioContext) {
+        state.notificationAudioContext = new AudioContextConstructor();
+      }
+
+      return state.notificationAudioContext;
+    }
+
+    function unlockNotificationSound() {
+      const context = getNotificationAudioContext();
+
+      if (context && context.state === 'suspended') {
+        context.resume().catch(() => { });
+      }
+    }
+
+    function playMessageNotificationSound() {
+      const context = getNotificationAudioContext();
+
+      if (!context) {
+        return;
+      }
+
+      const play = () => {
+        const start = context.currentTime;
+        const oscillator = context.createOscillator();
+        const gain = context.createGain();
+
+        oscillator.type = 'sine';
+        oscillator.frequency.setValueAtTime(880, start);
+        oscillator.frequency.setValueAtTime(1175, start + 0.12);
+        gain.gain.setValueAtTime(0.001, start);
+        gain.gain.exponentialRampToValueAtTime(0.12, start + 0.03);
+        gain.gain.exponentialRampToValueAtTime(0.001, start + 0.32);
+        oscillator.connect(gain);
+        gain.connect(context.destination);
+        oscillator.start(start);
+        oscillator.stop(start + 0.34);
+      };
+
+      if (context.state === 'suspended') {
+        context.resume().then(play).catch(() => { });
+      } else {
+        play();
+      }
+    }
+
+    function shouldPlayMessageNotificationSound() {
+      const now = Date.now();
+
+      try {
+        const lastSoundAt = Number(window.localStorage.getItem('ticketMessageNotificationSoundAt') || 0);
+
+        if (now - lastSoundAt < 1500) {
+          return false;
+        }
+
+        window.localStorage.setItem('ticketMessageNotificationSoundAt', String(now));
+      } catch (error) {
+        return true;
+      }
+
+      return true;
+    }
+
+    function detectNewTicketMessages(conversations) {
+      const shouldNotify = state.messageNotificationReady;
+      let hasNewMessage = false;
+
+      for (const conversation of conversations) {
+        const chatId = String(conversation && conversation.chat_id || '').trim();
+        const timestamp = getIncomingTimestamp(conversation);
+
+        if (!chatId || !timestamp) {
+          continue;
+        }
+
+        const hadPrevious = state.lastIncomingByChat.has(chatId);
+        const previousTimestamp = state.lastIncomingByChat.get(chatId) || 0;
+        const isNewConversationMessage = !hadPrevious && timestamp >= state.messageNotificationStartedAt - 5000;
+
+        if (
+          shouldNotify &&
+          isTicketConversation(conversation) &&
+          ((hadPrevious && timestamp > previousTimestamp) || isNewConversationMessage)
+        ) {
+          hasNewMessage = true;
+        }
+
+        state.lastIncomingByChat.set(chatId, Math.max(previousTimestamp, timestamp));
+      }
+
+      if (!state.messageNotificationReady) {
+        state.messageNotificationReady = true;
+        state.messageNotificationStartedAt = Date.now();
+        return;
+      }
+
+      if (hasNewMessage && shouldPlayMessageNotificationSound()) {
+        playMessageNotificationSound();
+      }
+    }
+
+    async function checkTicketMessageNotifications() {
+      const data = await fetchJson('/messages/conversations');
+      detectNewTicketMessages(data.conversations || []);
+    }
+
     function setAutoReminderState(enabled) {
       els.autoReminderSwitch.checked = Boolean(enabled);
       els.autoReminderText.textContent = enabled ? 'Recordatorios activos' : 'Recordatorios pausados';
@@ -1639,7 +1820,7 @@
         button.hidden = !fullAccess;
       });
       els.usersBtn.hidden = user.role !== 'admin';
-      els.transferBtn.hidden = false;
+      els.transferBtn.hidden = !fullAccess;
       els.autoReminderSwitch.disabled = !fullAccess;
       els.messageTemplate.disabled = !fullAccess;
 
@@ -1701,6 +1882,7 @@
         renderStatus();
         renderTickets();
         renderMessageSettings(results[2]);
+        await checkTicketMessageNotifications().catch(() => { });
         els.lastRefresh.textContent = 'Actualizado: ' + new Date().toLocaleTimeString('es-AR');
       } catch (error) {
         showToast(error.message);
@@ -1720,9 +1902,7 @@
       els.saveMessageBtn.disabled = disabled || !fullAccess;
       els.autoReminderSwitch.disabled = disabled || !fullAccess;
       els.whatsappReconnectBtn.disabled = disabled || !fullAccess;
-      els.whatsappReconnectTopBtn.disabled = disabled || !fullAccess;
       els.whatsappResetAuthBtn.disabled = disabled || !fullAccess;
-      els.whatsappResetAuthTopBtn.disabled = disabled || !fullAccess;
       els.messageTemplate.disabled = disabled || !fullAccess;
       els.todayBtn.disabled = disabled;
       els.dateFilter.disabled = disabled;
@@ -1765,6 +1945,8 @@
     els.dateFilter.value = state.selectedDate;
     els.refreshBtn.addEventListener('click', loadDashboard);
     els.logoutBtn.addEventListener('click', logout);
+    document.addEventListener('pointerdown', unlockNotificationSound, { once: true });
+    document.addEventListener('keydown', unlockNotificationSound, { once: true });
     els.transferBtn.addEventListener('click', openTransferModal);
     els.transferCloseBtn.addEventListener('click', closeTransferModal);
     els.transferForm.addEventListener('submit', saveTransfer);
@@ -1810,7 +1992,6 @@
     }
 
     els.whatsappReconnectBtn.addEventListener('click', reconnectWhatsApp);
-    els.whatsappReconnectTopBtn.addEventListener('click', reconnectWhatsApp);
 
     async function resetWhatsAppAuth() {
       if (!window.confirm('Esto borra la sesion local de WhatsApp y genera un QR nuevo. Continuar?')) {
@@ -1834,7 +2015,6 @@
     }
 
     els.whatsappResetAuthBtn.addEventListener('click', resetWhatsAppAuth);
-    els.whatsappResetAuthTopBtn.addEventListener('click', resetWhatsAppAuth);
     els.messageTemplate.addEventListener('input', () => {
       if (hasFullAccess()) {
         els.messageStatus.textContent = 'Cambios sin guardar';

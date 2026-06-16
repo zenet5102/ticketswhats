@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="es">
+
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -535,6 +536,7 @@
     }
 
     @media (max-width: 520px) {
+
       .topbar-inner,
       .content {
         width: min(100% - 20px, 1180px);
@@ -560,6 +562,7 @@
     }
   </style>
 </head>
+
 <body>
   <header class="topbar">
     <div class="topbar-inner">
@@ -601,15 +604,6 @@
         <div class="metric-label">Ultima respuesta</div>
         <div class="metric-value" id="lastIncoming">--</div>
         <div class="metric-detail" id="lastIncomingDetail">--</div>
-      </div>
-    </section>
-
-    <section class="qr-panel" id="whatsappQrPanel" hidden>
-      <img id="whatsappQrImage" alt="QR para vincular WhatsApp">
-      <div class="qr-copy">
-        <div class="qr-title">Vincular WhatsApp</div>
-        <div class="qr-detail" id="whatsappQrDetail">Escanea este codigo desde WhatsApp para conectar la sesion.</div>
-        <pre class="qr-text" id="whatsappQrText" aria-label="QR en texto"></pre>
       </div>
     </section>
 
@@ -658,7 +652,11 @@
       conversations: [],
       selectedChatId: '',
       auth: null,
-      loading: false
+      loading: false,
+      messageNotificationReady: false,
+      messageNotificationStartedAt: 0,
+      lastIncomingByChat: new Map(),
+      notificationAudioContext: null
     };
 
     const els = {
@@ -683,10 +681,6 @@
       sessionBadge: document.getElementById('sessionBadge'),
       startChatBtn: document.getElementById('startChatBtn'),
       whatsappDetail: document.getElementById('whatsappDetail'),
-      whatsappQrDetail: document.getElementById('whatsappQrDetail'),
-      whatsappQrImage: document.getElementById('whatsappQrImage'),
-      whatsappQrPanel: document.getElementById('whatsappQrPanel'),
-      whatsappQrText: document.getElementById('whatsappQrText'),
       whatsappState: document.getElementById('whatsappState')
     };
 
@@ -704,7 +698,17 @@
     }
 
     function getConversationName(conversation) {
-      return conversation.contact_name || conversation.phone || conversation.chat_id;
+      if (!conversation.ticket_razon_social) {
+        return conversation.contact_name || conversation.phone || conversation.chat_id;
+      }
+
+      return [
+        conversation.ticket_external_id,
+        conversation.ticket_razon_social,
+        conversation.ticket_ida
+      ]
+        .filter(Boolean)
+        .join(" - ");
     }
 
     function getConversationMeta(conversation) {
@@ -835,6 +839,133 @@
       return Boolean(state.auth);
     }
 
+    function getIncomingTimestamp(conversation) {
+      const timestamp = Number(conversation && conversation.last_incoming_ts || 0);
+      return Number.isFinite(timestamp) && timestamp > 0 ? timestamp : 0;
+    }
+
+    function isTicketConversation(conversation) {
+      return Boolean(
+        conversation &&
+        (
+          conversation.ticket_external_id ||
+          conversation.ticket_ida ||
+          conversation.ticket_razon_social ||
+          conversation.ticket_delegacion ||
+          conversation.ticket_start
+        )
+      );
+    }
+
+    function getNotificationAudioContext() {
+      const AudioContextConstructor = window.AudioContext || window.webkitAudioContext;
+
+      if (!AudioContextConstructor) {
+        return null;
+      }
+
+      if (!state.notificationAudioContext) {
+        state.notificationAudioContext = new AudioContextConstructor();
+      }
+
+      return state.notificationAudioContext;
+    }
+
+    function unlockNotificationSound() {
+      const context = getNotificationAudioContext();
+
+      if (context && context.state === 'suspended') {
+        context.resume().catch(() => { });
+      }
+    }
+
+    function playMessageNotificationSound() {
+      const context = getNotificationAudioContext();
+
+      if (!context) {
+        return;
+      }
+
+      const play = () => {
+        const start = context.currentTime;
+        const oscillator = context.createOscillator();
+        const gain = context.createGain();
+
+        oscillator.type = 'sine';
+        oscillator.frequency.setValueAtTime(880, start);
+        oscillator.frequency.setValueAtTime(1175, start + 0.12);
+        gain.gain.setValueAtTime(0.001, start);
+        gain.gain.exponentialRampToValueAtTime(0.12, start + 0.03);
+        gain.gain.exponentialRampToValueAtTime(0.001, start + 0.32);
+        oscillator.connect(gain);
+        gain.connect(context.destination);
+        oscillator.start(start);
+        oscillator.stop(start + 0.34);
+      };
+
+      if (context.state === 'suspended') {
+        context.resume().then(play).catch(() => { });
+      } else {
+        play();
+      }
+    }
+
+    function shouldPlayMessageNotificationSound() {
+      const now = Date.now();
+
+      try {
+        const lastSoundAt = Number(window.localStorage.getItem('ticketMessageNotificationSoundAt') || 0);
+
+        if (now - lastSoundAt < 1500) {
+          return false;
+        }
+
+        window.localStorage.setItem('ticketMessageNotificationSoundAt', String(now));
+      } catch (error) {
+        return true;
+      }
+
+      return true;
+    }
+
+    function detectNewTicketMessages(conversations) {
+      const shouldNotify = state.messageNotificationReady;
+      let hasNewMessage = false;
+
+      for (const conversation of conversations) {
+        const chatId = String(conversation && conversation.chat_id || '').trim();
+        const timestamp = getIncomingTimestamp(conversation);
+
+        if (!chatId || !timestamp) {
+          continue;
+        }
+
+        const hadPrevious = state.lastIncomingByChat.has(chatId);
+        const previousTimestamp = state.lastIncomingByChat.get(chatId) || 0;
+        const isNewConversationMessage = !hadPrevious && timestamp >= state.messageNotificationStartedAt - 5000;
+
+        if (
+          shouldNotify &&
+          isTicketConversation(conversation) &&
+          ((hadPrevious && timestamp > previousTimestamp) || isNewConversationMessage)
+        ) {
+          hasNewMessage = true;
+        }
+
+        state.lastIncomingByChat.set(chatId, Math.max(previousTimestamp, timestamp));
+      }
+
+      if (!state.messageNotificationReady) {
+        state.messageNotificationReady = true;
+        state.messageNotificationStartedAt = Date.now();
+        return;
+      }
+
+      if (hasNewMessage && shouldPlayMessageNotificationSound()) {
+        playMessageNotificationSound();
+      }
+    }
+
     function applySession(user) {
       state.auth = user;
       const roleLabel = user.role === 'usuario' ? 'Usuario' : user.role.toUpperCase();
@@ -863,7 +994,7 @@
     }
 
     async function logout() {
-      await fetch('/auth/logout', { method: 'POST' }).catch(() => {});
+      await fetch('/auth/logout', { method: 'POST' }).catch(() => { });
       window.location.href = '/login';
     }
 
@@ -888,17 +1019,6 @@
       const ready = Boolean(whatsapp.ready);
       els.whatsappState.innerHTML = `<span class="badge ${ready ? 'good' : 'bad'}">${escapeHtml(whatsapp.state || 'UNKNOWN')}</span>`;
       els.whatsappDetail.textContent = whatsapp.lastError || (ready ? 'Conectado' : 'Sin conexion');
-
-      if (!ready && whatsapp.qrSvg) {
-        els.whatsappQrPanel.hidden = false;
-        els.whatsappQrImage.src = whatsapp.qrSvg;
-        els.whatsappQrText.textContent = whatsapp.qrText || '';
-        els.whatsappQrDetail.textContent = 'Escanea este codigo desde WhatsApp para conectar la sesion.';
-      } else {
-        els.whatsappQrPanel.hidden = true;
-        els.whatsappQrImage.removeAttribute('src');
-        els.whatsappQrText.textContent = '';
-      }
     }
 
     function renderConversationMetrics() {
@@ -1032,6 +1152,7 @@
     async function loadConversations(preserveSelection = true) {
       const data = await fetchJson('/messages/conversations');
       state.conversations = data.conversations || [];
+      detectNewTicketMessages(state.conversations);
 
       if (!preserveSelection || (!state.selectedChatId && state.conversations.length)) {
         state.selectedChatId = state.conversations[0].chat_id;
@@ -1164,6 +1285,8 @@
 
     els.refreshBtn.addEventListener('click', refreshAll);
     els.logoutBtn.addEventListener('click', logout);
+    document.addEventListener('pointerdown', unlockNotificationSound, { once: true });
+    document.addEventListener('keydown', unlockNotificationSound, { once: true });
     els.replyForm.addEventListener('submit', sendReply);
     els.startChatBtn.addEventListener('click', startChatFromPhone);
     els.phoneInput.addEventListener('keydown', event => {
@@ -1187,4 +1310,5 @@
     init();
   </script>
 </body>
+
 </html>

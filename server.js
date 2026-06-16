@@ -612,6 +612,39 @@ function canReadChat(user, chatId) {
     .some(phone => phone && phones.has(phone));
 }
 
+function getIncomingMessagePhones(storedMessage) {
+  const phones = new Set();
+  const candidates = [
+    storedMessage && storedMessage.phone,
+    storedMessage && storedMessage.chat_id,
+    ...listWhatsAppChatPhones(storedMessage && storedMessage.chat_id)
+  ];
+
+  for (const candidate of candidates) {
+    const phone = normalizeChatPhone(candidate);
+
+    if (phone) {
+      phones.add(phone);
+    }
+  }
+
+  return phones;
+}
+
+function incomingMessageMatchesAnyTicket(storedMessage) {
+  const phones = getIncomingMessagePhones(storedMessage);
+
+  if (!phones.size) {
+    return false;
+  }
+
+  return listTickets().some(ticket => {
+    const phone = normalizeChatPhone(ticket && ticket.phone || '');
+
+    return phone && phones.has(phone);
+  });
+}
+
 function createWhatsAppClient() {
   return new Client({
     authStrategy: new LocalAuth({
@@ -949,8 +982,12 @@ async function processIncomingTicketResponse(storedMessage) {
     console.log(
       `Respuesta de ticket ${result.completedAction.ticket_external_id}: ${result.selectedOption.label}`
     );
-  } else if (!result) {
-    await sendNotificationChannelReply(storedMessage);
+  } else if (!result && !incomingMessageMatchesAnyTicket(storedMessage)) {
+    const sent = await sendNotificationChannelReply(storedMessage);
+
+    if (sent) {
+      console.log(`Aviso de canal enviado a chat sin ticket: ${storedMessage.chat_id}`);
+    }
   }
 
   return result;

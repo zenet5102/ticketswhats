@@ -1,4 +1,8 @@
+require('./config');
+
 const crypto = require('crypto');
+const fs = require('fs');
+const path = require('path');
 const {
   authenticateUser: authenticateStoredUser,
   getPublicUserByUsername
@@ -7,7 +11,8 @@ const {
 const cookieName = process.env.AUTH_COOKIE_NAME || 'wwebjs_session';
 const sessionHours = parsePositiveInteger(process.env.AUTH_SESSION_HOURS, 12);
 const activeUserMinutes = parsePositiveInteger(process.env.AUTH_ACTIVE_USER_MINUTES, 5);
-const sessionSecret = process.env.AUTH_SESSION_SECRET || crypto.randomBytes(32).toString('hex');
+const sessionSecretPath = path.join(__dirname, 'data', 'auth-session-secret.key');
+const sessionSecret = getSessionSecret();
 const adminRoles = new Set(['admin']);
 const privilegedRoles = new Set(['admin', 'usuario']);
 const activeUsers = new Map();
@@ -17,8 +22,54 @@ function parsePositiveInteger(value, fallback) {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
-if (!process.env.AUTH_SESSION_SECRET) {
-  console.warn('AUTH_SESSION_SECRET no esta definido. Las sesiones se invalidan al reiniciar.');
+function readStoredSessionSecret() {
+  try {
+    if (!fs.existsSync(sessionSecretPath)) {
+      return '';
+    }
+
+    return fs.readFileSync(sessionSecretPath, 'utf8').trim();
+  } catch (error) {
+    return '';
+  }
+}
+
+function getSessionSecret() {
+  const configuredSecret = String(process.env.AUTH_SESSION_SECRET || '').trim();
+
+  if (configuredSecret) {
+    return configuredSecret;
+  }
+
+  const storedSecret = readStoredSessionSecret();
+
+  if (storedSecret) {
+    console.warn('AUTH_SESSION_SECRET no esta definido. Se usa un secreto local persistente.');
+    return storedSecret;
+  }
+
+  try {
+    fs.mkdirSync(path.dirname(sessionSecretPath), { recursive: true });
+
+    const generatedSecret = crypto.randomBytes(32).toString('hex');
+    fs.writeFileSync(sessionSecretPath, `${generatedSecret}\n`, {
+      encoding: 'utf8',
+      flag: 'wx'
+    });
+
+    console.warn('AUTH_SESSION_SECRET no esta definido. Se genero un secreto local persistente.');
+    return generatedSecret;
+  } catch (error) {
+    const retrySecret = readStoredSessionSecret();
+
+    if (retrySecret) {
+      console.warn('AUTH_SESSION_SECRET no esta definido. Se usa un secreto local persistente.');
+      return retrySecret;
+    }
+
+    console.warn(`AUTH_SESSION_SECRET no esta definido y no se pudo guardar uno local. Las sesiones se invalidan al reiniciar. ${error.message}`);
+    return crypto.randomBytes(32).toString('hex');
+  }
 }
 
 function safeCompare(leftValue, rightValue) {
