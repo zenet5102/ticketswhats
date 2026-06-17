@@ -500,6 +500,28 @@
       max-width: 360px;
     }
 
+    .toast {
+      position: fixed;
+      right: 16px;
+      bottom: 16px;
+      max-width: min(430px, calc(100% - 32px));
+      background: var(--text);
+      color: #ffffff;
+      border-radius: 8px;
+      padding: 12px 14px;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.18);
+      opacity: 0;
+      transform: translateY(10px);
+      pointer-events: none;
+      transition: opacity 160ms ease, transform 160ms ease;
+      z-index: 10;
+    }
+
+    .toast.visible {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
     @media (max-width: 860px) {
       .topbar-inner {
         align-items: stretch;
@@ -647,6 +669,8 @@
     </section>
   </main>
 
+  <div class="toast" id="toast"></div>
+
   <script>
     const state = {
       conversations: [],
@@ -680,6 +704,7 @@
       sendError: document.getElementById('sendError'),
       sessionBadge: document.getElementById('sessionBadge'),
       startChatBtn: document.getElementById('startChatBtn'),
+      toast: document.getElementById('toast'),
       whatsappDetail: document.getElementById('whatsappDetail'),
       whatsappState: document.getElementById('whatsappState')
     };
@@ -888,19 +913,65 @@
 
       const play = () => {
         const start = context.currentTime;
-        const oscillator = context.createOscillator();
-        const gain = context.createGain();
+        const playTone = (offset, frequency, duration, peak, type = 'sine') => {
+          const oscillator = context.createOscillator();
+          const gain = context.createGain();
+          const toneStart = start + offset;
 
-        oscillator.type = 'sine';
-        oscillator.frequency.setValueAtTime(880, start);
-        oscillator.frequency.setValueAtTime(1175, start + 0.12);
-        gain.gain.setValueAtTime(0.001, start);
-        gain.gain.exponentialRampToValueAtTime(0.12, start + 0.03);
-        gain.gain.exponentialRampToValueAtTime(0.001, start + 0.32);
-        oscillator.connect(gain);
-        gain.connect(context.destination);
-        oscillator.start(start);
-        oscillator.stop(start + 0.34);
+          oscillator.type = type;
+          oscillator.frequency.setValueAtTime(frequency, toneStart);
+          oscillator.frequency.exponentialRampToValueAtTime(frequency * 0.985, toneStart + duration);
+          gain.gain.setValueAtTime(0.001, toneStart);
+          gain.gain.exponentialRampToValueAtTime(peak, toneStart + 0.012);
+          gain.gain.exponentialRampToValueAtTime(0.001, toneStart + duration);
+          oscillator.connect(gain);
+          gain.connect(context.destination);
+          oscillator.start(toneStart);
+          oscillator.stop(toneStart + duration + 0.03);
+        };
+
+        playTone(0, 987.77, 0.16, 0.28);
+        playTone(0.1, 1318.51, 0.32, 0.36);
+        playTone(0.12, 2637.02, 0.2, 0.08, 'triangle');
+      };
+
+      if (context.state === 'suspended') {
+        context.resume().then(play).catch(() => { });
+      } else {
+        play();
+      }
+    }
+
+    function playUrgentMessageNotificationSound() {
+      const context = getNotificationAudioContext();
+
+      if (!context) {
+        return;
+      }
+
+      const play = () => {
+        const start = context.currentTime;
+        const playTone = (offset, frequency, duration, peak, type = 'triangle') => {
+          const oscillator = context.createOscillator();
+          const gain = context.createGain();
+          const toneStart = start + offset;
+
+          oscillator.type = type;
+          oscillator.frequency.setValueAtTime(frequency, toneStart);
+          oscillator.frequency.exponentialRampToValueAtTime(frequency * 1.03, toneStart + duration);
+          gain.gain.setValueAtTime(0.001, toneStart);
+          gain.gain.exponentialRampToValueAtTime(peak, toneStart + 0.008);
+          gain.gain.exponentialRampToValueAtTime(0.001, toneStart + duration);
+          oscillator.connect(gain);
+          gain.connect(context.destination);
+          oscillator.start(toneStart);
+          oscillator.stop(toneStart + duration + 0.03);
+        };
+
+        playTone(0, 880, 0.12, 0.42, 'sawtooth');
+        playTone(0.1, 1318.51, 0.2, 0.48);
+        playTone(0.32, 880, 0.12, 0.42, 'sawtooth');
+        playTone(0.42, 1568, 0.28, 0.52);
       };
 
       if (context.state === 'suspended') {
@@ -928,9 +999,56 @@
       return true;
     }
 
+    function shouldPlayUrgentMessageNotificationSound() {
+      const now = Date.now();
+
+      try {
+        const lastSoundAt = Number(window.localStorage.getItem('ticketUrgentMessageNotificationSoundAt') || 0);
+
+        if (now - lastSoundAt < 1200) {
+          return false;
+        }
+
+        window.localStorage.setItem('ticketUrgentMessageNotificationSoundAt', String(now));
+      } catch (error) {
+        return true;
+      }
+
+      return true;
+    }
+
+    function normalizeNotificationText(value) {
+      return String(value || '')
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .trim()
+        .toLowerCase();
+    }
+
+    function isRescheduleResponse(conversation) {
+      const body = normalizeNotificationText(conversation && conversation.body);
+
+      return Boolean(
+        body === '2' ||
+        body.startsWith('2.') ||
+        body.startsWith('2 ') ||
+        body.includes('reprogramar')
+      );
+    }
+
+    function showToast(message) {
+      els.toast.textContent = message;
+      els.toast.classList.add('visible');
+      clearTimeout(showToast.timer);
+      showToast.timer = setTimeout(() => {
+        els.toast.classList.remove('visible');
+      }, 3200);
+    }
+
     function detectNewTicketMessages(conversations) {
       const shouldNotify = state.messageNotificationReady;
       let hasNewMessage = false;
+      let hasUrgentMessage = false;
 
       for (const conversation of conversations) {
         const chatId = String(conversation && conversation.chat_id || '').trim();
@@ -950,6 +1068,10 @@
           ((hadPrevious && timestamp > previousTimestamp) || isNewConversationMessage)
         ) {
           hasNewMessage = true;
+
+          if (isRescheduleResponse(conversation)) {
+            hasUrgentMessage = true;
+          }
         }
 
         state.lastIncomingByChat.set(chatId, Math.max(previousTimestamp, timestamp));
@@ -961,8 +1083,14 @@
         return;
       }
 
-      if (hasNewMessage && shouldPlayMessageNotificationSound()) {
-        playMessageNotificationSound();
+      if (hasNewMessage) {
+        showToast('Mensaje nuevo');
+
+        if (hasUrgentMessage && shouldPlayUrgentMessageNotificationSound()) {
+          playUrgentMessageNotificationSound();
+        } else if (shouldPlayMessageNotificationSound()) {
+          playMessageNotificationSound();
+        }
       }
     }
 

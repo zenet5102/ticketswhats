@@ -1,7 +1,10 @@
 const {
   completeTicketResponseAction,
+  getTicket,
   getPendingTicketResponseActionByChat
 } = require('./db');
+const { config } = require('./config');
+const { postTicketNote } = require('./ticketApi');
 
 function normalizeText(value) {
   return String(value || '')
@@ -42,6 +45,95 @@ function findOptionByText(options, text) {
   }) || null;
 }
 
+function getByPath(source, path) {
+  if (!source || !path) {
+    return undefined;
+  }
+
+  return String(path)
+    .split('.')
+    .reduce((value, key) => (value && value[key] !== undefined ? value[key] : undefined), source);
+}
+
+function parseTicketPayload(ticket) {
+  try {
+    return JSON.parse(ticket && ticket.payload_json || '{}') || {};
+  } catch (error) {
+    return {};
+  }
+}
+
+function getTicketIda(ticket) {
+  const payload = parseTicketPayload(ticket);
+  const candidates = [
+    getByPath(payload, config.clientLookupTicketField),
+    payload.IDA,
+    payload.ida,
+    payload.Ida,
+    payload.IDAbonado,
+    payload.idAbonado,
+    payload.id_abonado,
+    getByPath(payload, 'cliente.IDA'),
+    getByPath(payload, 'cliente.ida')
+  ];
+
+  const value = candidates.find(candidate => (
+    candidate !== undefined &&
+    candidate !== null &&
+    String(candidate).trim() !== ''
+  ));
+
+  return String(value || '').trim();
+}
+
+function buildVisitConfirmationDetail(ticket) {
+  const hour = String(ticket && ticket.start_time || '').trim();
+  const externalId = String(ticket && ticket.external_id || '').trim();
+  const hourText = hour ? ` ${hour}` : '';
+  const ticketText = externalId ? ` y numero de ticket ${externalId}` : '';
+
+  return `Cliente confirma visita${hourText}${ticketText}`.trim();
+}
+
+async function postVisitConfirmationNote(ticket, result, context = {}) {
+  const ida = getTicketIda(ticket);
+
+  if (!ida) {
+    result.notePosted = false;
+    result.noteError = 'No se encontro IDA del ticket';
+    return;
+  }
+
+  const note = {
+    id: ida,
+    asunto: 'Confirmacion de visita',
+    detalle: buildVisitConfirmationDetail(ticket)
+  };
+
+  try {
+    result.noteRequest = note;
+    result.noteResponse = await postTicketNote(note);
+    result.notePosted = true;
+
+    if (context.logger) {
+      context.logger('Nota de confirmacion enviada', {
+        ticketExternalId: ticket.external_id,
+        id: ida
+      });
+    }
+  } catch (error) {
+    result.notePosted = false;
+    result.noteError = error.message;
+
+    if (context.logger) {
+      context.logger('No se pudo enviar nota de confirmacion', {
+        ticketExternalId: ticket && ticket.external_id,
+        error: error.message
+      });
+    }
+  }
+}
+
 async function executeResponseAction(pendingAction, selectedOption, context = {}) {
   const result = {
     action: selectedOption.action,
@@ -51,6 +143,7 @@ async function executeResponseAction(pendingAction, selectedOption, context = {}
 
   if (selectedOption.action === 'confirm_visit') {
     result.message = 'Cliente confirmo la visita';
+    await postVisitConfirmationNote(getTicket(pendingAction.ticket_external_id), result, context);
   } else if (selectedOption.action === 'request_reschedule') {
     result.message = 'Cliente solicito reprogramar';
   } else if (selectedOption.action === 'cancel_visit') {

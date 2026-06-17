@@ -48,8 +48,7 @@ function getTicketResponseQuestion() {
     ? configured.options
     : [
         { key: '1', label: 'Si, confirmo', action: 'confirm_visit' },
-        { key: '2', label: 'Necesito reprogramar', action: 'request_reschedule' },
-        { key: '3', label: 'No puedo recibir al tecnico', action: 'cancel_visit' }
+        { key: '2', label: 'Necesito reprogramar', action: 'request_reschedule' }
       ];
 
   return {
@@ -61,6 +60,7 @@ function getTicketResponseQuestion() {
         label: String(option.label || '').trim(),
         action: String(option.action || '').trim()
       }))
+      .filter(option => option.key !== '3' && option.action !== 'cancel_visit')
       .filter(option => option.key && option.label && option.action)
       .slice(0, 10)
   };

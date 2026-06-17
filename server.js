@@ -38,6 +38,7 @@ const {
   formatQuestionText,
   handleIncomingTextResponse
 } = require('./ticketResponseFlow');
+const { runResponseNotificationTest } = require('./notificationTest');
 const {
   allowedRoles,
   createUser,
@@ -533,7 +534,11 @@ function getTicketInfo(ticket) {
     ticket_razon_social: ticket.razon_social || '',
     ticket_delegacion: ticket.delegacion || '',
     ticket_start: ticket.start || '',
-    ticket_start_time: ticket.start_time || ''
+    ticket_start_time: ticket.start_time || '',
+    ticket_response_action: ticket.response_action || '',
+    ticket_response_label: ticket.response_label || '',
+    ticket_response_body: ticket.response_body || '',
+    ticket_response_received_at: ticket.response_received_at || ''
   };
 }
 
@@ -1215,6 +1220,32 @@ app.post('/send', requirePrivileged, async (req, res) => {
     });
   }
 });
+
+async function handleResponseNotificationTest(req, res) {
+  try {
+    const body = req.body || {};
+    const result = await runResponseNotificationTest(body, {
+      visibleTickets: listVisibleTicketsForUser(req.user, body.date),
+      processIncomingTicketResponse
+    });
+
+    res.json({ success: true, result });
+  } catch (error) {
+    const status = error.statusCode || 500;
+
+    if (status >= 500) {
+      console.error('Error ejecutando prueba de notificacion:', error);
+    }
+
+    res.status(status).json({
+      success: false,
+      error: error.message
+    });
+  }
+}
+
+app.post('/notifications/test', requirePrivileged, handleResponseNotificationTest);
+app.post('/notifications/test-response', requirePrivileged, handleResponseNotificationTest);
 
 app.get('/messages/conversations', requireLoggedIn, (req, res) => {
   try {

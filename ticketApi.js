@@ -782,6 +782,21 @@ async function fetchTicketStatus(externalId) {
   return normalizeStatus(firstValue(record, config.fieldMap.status, ticketFieldCandidates.status));
 }
 
+async function postTicketNote(data = {}) {
+  if (!config.ticketsApiUrl) {
+    throw new Error('TICKETS_API_URL no configurado');
+  }
+
+  return fetchJson(config.ticketsApiUrl, {
+    method: 'POST',
+    bodyFormat: config.ticketsApiBodyFormat,
+    body: {
+      [config.apiActionField]: 'note',
+      data
+    }
+  });
+}
+
 module.exports = {
   fetchClientInfo,
   fetchClientPhone,
@@ -791,5 +806,6 @@ module.exports = {
   getTodayDateString,
   isInProcessStatus,
   isResolvedStatus,
-  normalizeStatusForCompare
+  normalizeStatusForCompare,
+  postTicketNote
 };
