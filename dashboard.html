@@ -1300,6 +1300,12 @@
         job.lastResult.statuses.notificationHalted
       ) {
         els.lastRun.textContent += ' | Avisos detenidos: ' + (job.lastResult.statuses.notificationHaltReason || 'error de envio');
+      } else if (
+        job.lastResult &&
+        job.lastResult.statuses &&
+        job.lastResult.statuses.notificationWaiting
+      ) {
+        els.lastRun.textContent += ' | Esperando WhatsApp: ' + (job.lastResult.statuses.skippedWithoutWhatsApp || 0) + ' avisos pendientes';
       }
 
     }

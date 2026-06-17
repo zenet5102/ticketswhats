@@ -32,7 +32,8 @@ const schedulerState = {
   lastResult: null,
   lastError: null,
   runCount: 0,
-  notificationErrorLog: []
+  notificationErrorLog: [],
+  pendingNotificationTriggers: []
 };
 
 function nowIso() {
@@ -70,6 +71,11 @@ function getTicketLabel(ticket) {
   return String(ticket && (ticket.razon_social || ticket.external_id) || '').trim();
 }
 
+function getTicketStartTs(ticket) {
+  const startTs = Number(ticket && ticket.start_ts || 0);
+  return Number.isFinite(startTs) && startTs > 0 ? startTs : 0;
+}
+
 function recordNotificationError(entry = {}) {
   const nextTicket = entry.nextTicket || {};
   const currentTicket = entry.currentTicket || {};
@@ -88,6 +94,25 @@ function recordNotificationError(entry = {}) {
   });
 
   schedulerState.notificationErrorLog = schedulerState.notificationErrorLog.slice(0, 50);
+}
+
+function queuePendingNotificationTrigger(ticket) {
+  const externalId = String(ticket && ticket.external_id || '').trim();
+
+  if (!externalId) {
+    return;
+  }
+
+  if (schedulerState.pendingNotificationTriggers.some(item => item.external_id === externalId)) {
+    return;
+  }
+
+  schedulerState.pendingNotificationTriggers.push({ ...ticket });
+  schedulerState.pendingNotificationTriggers.sort((left, right) => {
+    return getTicketStartTs(left) - getTicketStartTs(right) ||
+      String(left.external_id || '').localeCompare(String(right.external_id || ''));
+  });
+  schedulerState.pendingNotificationTriggers = schedulerState.pendingNotificationTriggers.slice(0, 100);
 }
 
 function getTicketGroup(ticket) {
@@ -136,7 +161,10 @@ async function notifyNextTicket(currentTicket, options = {}) {
     return { sent: false, reason: 'Envio automatico de recordatorios deshabilitado' };
   }
 
-  const nextTicket = getNextTicket(currentTicket);
+  const minimumStartTs = Number.isFinite(Number(options.minimumStartTs))
+    ? Number(options.minimumStartTs)
+    : getTicketStartTs(currentTicket);
+  const nextTicket = getNextTicket(currentTicket, minimumStartTs);
 
   if (!nextTicket) {
     return { sent: false, reason: 'No hay ticket siguiente con horario futuro' };
@@ -220,6 +248,8 @@ async function notifyNextTicket(currentTicket, options = {}) {
 
     return {
       sent: false,
+      error: true,
+      haltNotifications: false,
       reason: 'El ticket siguiente esta resuelto',
       nextTicket
     };
@@ -234,7 +264,13 @@ async function notifyNextTicket(currentTicket, options = {}) {
       nextTicket
     });
 
-    return { sent: false, reason: 'El ticket siguiente no tiene telefono', nextTicket };
+    return {
+      sent: false,
+      error: true,
+      haltNotifications: false,
+      reason: 'El ticket siguiente no tiene telefono',
+      nextTicket
+    };
   }
 
   if (!options.sendWhatsApp) {
@@ -256,18 +292,9 @@ async function notifyNextTicket(currentTicket, options = {}) {
   }
 
   if (options.isWhatsAppReady && !options.isWhatsAppReady()) {
-    recordNotificationError({
-      stage: 'send',
-      reason: 'WhatsApp no esta conectado',
-      currentTicket,
-      nextTicket,
-      halted: true
-    });
-
     return {
       sent: false,
-      error: true,
-      haltNotifications: true,
+      waiting: true,
       reason: 'WhatsApp no esta conectado',
       nextTicket
     };
@@ -318,6 +345,10 @@ async function refreshTicketStatuses(options = {}) {
 
   const date = options.date || getTodayDateString();
   const tickets = listTickets(date);
+  const notificationsEnabled = isAutomaticReminderEnabled();
+  const whatsappReadyForNotifications = !notificationsEnabled ||
+    !options.isWhatsAppReady ||
+    options.isWhatsAppReady();
   let checked = 0;
   let notifications = 0;
   let notificationErrors = 0;
@@ -325,6 +356,7 @@ async function refreshTicketStatuses(options = {}) {
   const notificationAttemptedGroups = new Set();
   let skippedGroupNotifications = 0;
   let skippedAfterHalt = 0;
+  let skippedWithoutWhatsApp = 0;
   let notificationHalted = false;
   let notificationHaltReason = '';
 
@@ -339,6 +371,15 @@ async function refreshTicketStatuses(options = {}) {
     updateTicketStatus(ticket.external_id, status);
 
     if (isInProcessStatus(status)) {
+      if (!whatsappReadyForNotifications) {
+        queuePendingNotificationTrigger({
+          ...ticket,
+          status
+        });
+        skippedWithoutWhatsApp += 1;
+        continue;
+      }
+
       if (notificationHalted) {
         skippedAfterHalt += 1;
         continue;
@@ -375,6 +416,10 @@ async function refreshTicketStatuses(options = {}) {
     }
   }
 
+  if (!whatsappReadyForNotifications && skippedWithoutWhatsApp) {
+    console.log(`Estados actualizados: ${checked}. Avisos pendientes: ${skippedWithoutWhatsApp}. WhatsApp no esta conectado.`);
+  }
+
   console.log(`Estados actualizados: ${checked}. Avisos enviados: ${notifications}. Fallos de envio: ${notificationErrors}. Avisos omitidos por grupo: ${skippedGroupNotifications}. Avisos omitidos por corte: ${skippedAfterHalt}`);
   return {
     skipped: false,
@@ -383,9 +428,108 @@ async function refreshTicketStatuses(options = {}) {
     notificationErrors,
     notificationHalted,
     notificationHaltReason,
+    notificationWaiting: !whatsappReadyForNotifications,
+    notificationWaitReason: !whatsappReadyForNotifications ? 'WhatsApp no esta conectado' : '',
     skippedAfterHalt,
+    skippedWithoutWhatsApp,
     skippedGroupNotifications
   };
+}
+
+async function retryPendingNotifications(options = {}) {
+  if (!isAutomaticReminderEnabled()) {
+    return {
+      skipped: true,
+      reason: 'Envio automatico de recordatorios deshabilitado',
+      pending: schedulerState.pendingNotificationTriggers.length
+    };
+  }
+
+  if (options.isWhatsAppReady && !options.isWhatsAppReady()) {
+    return {
+      skipped: true,
+      waiting: true,
+      reason: 'WhatsApp no esta conectado',
+      pending: schedulerState.pendingNotificationTriggers.length
+    };
+  }
+
+  if (!schedulerState.pendingNotificationTriggers.length) {
+    const cycleResult = await runTicketCycle(options);
+
+    return {
+      skipped: false,
+      fallbackCycle: true,
+      pending: 0,
+      cycle: cycleResult
+    };
+  }
+
+  const pending = schedulerState.pendingNotificationTriggers.slice();
+  schedulerState.pendingNotificationTriggers = [];
+  const notificationAttemptedIds = new Set();
+  let notifications = 0;
+  let notificationErrors = 0;
+  let retried = 0;
+  let requeued = 0;
+  let halted = false;
+  let stoppedOnError = false;
+  let haltReason = '';
+
+  for (const trigger of pending) {
+    retried += 1;
+
+    const result = await notifyNextTicket(trigger, {
+      ...options,
+      minimumStartTs: getTicketStartTs(trigger),
+      notificationAttemptedIds
+    });
+
+    if (result.sent) {
+      notifications += 1;
+      continue;
+    }
+
+    if (result.waiting) {
+      queuePendingNotificationTrigger(trigger);
+      requeued += 1;
+      continue;
+    }
+
+    if (result.error) {
+      notificationErrors += 1;
+      halted = Boolean(result.haltNotifications);
+      stoppedOnError = true;
+      haltReason = result.reason || 'Avisos detenidos por error de envio';
+
+      for (const remaining of pending.slice(retried)) {
+        queuePendingNotificationTrigger(remaining);
+        requeued += 1;
+      }
+
+      break;
+    }
+  }
+
+  const result = {
+    skipped: false,
+    retried,
+    notifications,
+    notificationErrors,
+    requeued,
+    pending: schedulerState.pendingNotificationTriggers.length,
+    notificationHalted: halted,
+    stoppedOnError,
+    notificationHaltReason: haltReason
+  };
+
+  schedulerState.lastResult = {
+    ...(schedulerState.lastResult || {}),
+    retry: result
+  };
+  schedulerState.lastError = null;
+
+  return result;
 }
 
 function getClientIdFromStoredTicket(ticket) {
@@ -571,6 +715,7 @@ if (require.main === module) {
 
 module.exports = {
   getTicketJobStatus,
+  retryPendingNotifications,
   refreshTicketStatuses,
   refreshTicketPhones,
   runTicketCycle,

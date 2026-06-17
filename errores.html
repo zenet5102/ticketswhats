@@ -328,6 +328,10 @@
           <span aria-hidden="true">&#8635;</span>
           Actualizar
         </button>
+        <button id="retryBtn" type="button" title="Reintentar envios automaticos pendientes">
+          <span aria-hidden="true">&#9658;</span>
+          Reintentar
+        </button>
         <span id="sessionBadge" class="session-chip">Sesion</span>
         <button id="logoutBtn" type="button" title="Cerrar sesion">
           <span aria-hidden="true">&#9211;</span>
@@ -387,6 +391,7 @@
       refreshBtn: document.getElementById('refreshBtn'),
       reminderDetail: document.getElementById('reminderDetail'),
       reminderState: document.getElementById('reminderState'),
+      retryBtn: document.getElementById('retryBtn'),
       sessionBadge: document.getElementById('sessionBadge'),
       toast: document.getElementById('toast')
     };
@@ -495,6 +500,7 @@
       const errors = Array.isArray(job.notificationErrorLog) ? job.notificationErrorLog : [];
       const cfg = job.config || {};
       const lastStatuses = job.lastResult && job.lastResult.statuses || {};
+      const cycleRunning = Boolean(job.cycleRunning);
 
       els.errorCount.textContent = String(errors.length);
       els.errorCountDetail.textContent = errors.length
@@ -505,10 +511,20 @@
       els.reminderDetail.textContent = job.active
         ? 'Scheduler activo cada ' + (cfg.syncIntervalMinutes || '--') + ' min'
         : 'Scheduler inactivo';
-      els.cycleState.innerHTML = job.cycleRunning ? badge('Corriendo', 'warn') : badge('Libre', 'good');
+      state.retryDisabled = cycleRunning;
+      els.retryBtn.disabled = state.loading || state.retryDisabled;
+      els.retryBtn.title = (job.pendingNotificationTriggers && job.pendingNotificationTriggers.length)
+        ? 'Reintentar ' + job.pendingNotificationTriggers.length + ' envios pendientes'
+        : 'Sin pendientes: ejecuta un ciclo para retomar avisos';
+      els.cycleState.innerHTML = cycleRunning ? badge('Corriendo', 'warn') : badge('Libre', 'good');
       els.cycleDetail.textContent =
         'Ultima: ' + formatDateTime(job.lastRunFinishedAt) +
-        ' | Fallos ultimo ciclo: ' + (lastStatuses.notificationErrors || 0);
+        ' | Fallos ultimo ciclo: ' + (lastStatuses.notificationErrors || 0) +
+        ' | Pendientes: ' + ((job.pendingNotificationTriggers && job.pendingNotificationTriggers.length) || 0);
+
+      if (lastStatuses.notificationWaiting) {
+        els.cycleDetail.textContent += ' | Esperando WhatsApp';
+      }
     }
 
     function renderLog(errors) {
@@ -551,6 +567,7 @@
 
       state.loading = true;
       els.refreshBtn.disabled = true;
+      els.retryBtn.disabled = true;
 
       try {
         const data = await fetchJson('/tickets/job-status');
@@ -566,10 +583,52 @@
       } finally {
         state.loading = false;
         els.refreshBtn.disabled = false;
+        els.retryBtn.disabled = Boolean(state.retryDisabled);
+      }
+    }
+
+    async function retryNotifications() {
+      if (state.loading) {
+        return;
+      }
+
+      state.loading = true;
+      els.refreshBtn.disabled = true;
+      els.retryBtn.disabled = true;
+
+      try {
+        const data = await fetchJson('/tickets/retry-notifications', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({})
+        });
+        const result = data.result || {};
+
+        if (result.waiting) {
+          showToast(result.reason || 'WhatsApp no esta conectado');
+        } else if (result.fallbackCycle) {
+          showToast('Ciclo ejecutado para retomar avisos');
+        } else if (result.stoppedOnError) {
+          showToast('Reintento detenido por error: ' + (result.notificationHaltReason || 'revisar log'));
+        } else {
+          showToast('Reintento listo: ' + (result.notifications || 0) + ' enviados');
+        }
+
+        state.loading = false;
+        await loadErrors();
+      } catch (error) {
+        showToast(error.message);
+      } finally {
+        state.loading = false;
+        els.refreshBtn.disabled = false;
+        els.retryBtn.disabled = Boolean(state.retryDisabled);
       }
     }
 
     els.refreshBtn.addEventListener('click', loadErrors);
+    els.retryBtn.addEventListener('click', retryNotifications);
     els.logoutBtn.addEventListener('click', logout);
 
     async function init() {

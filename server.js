@@ -52,6 +52,7 @@ const {
   getTicketJobStatus,
   refreshTicketStatuses,
   refreshTicketPhones,
+  retryPendingNotifications,
   runTicketCycle,
   startTicketScheduler,
   syncTickets
@@ -1486,6 +1487,22 @@ app.post('/tickets/phones', requirePrivileged, async (req, res) => {
 app.post('/tickets/run', requirePrivileged, async (req, res) => {
   try {
     const result = await runTicketCycle({
+      date: req.body && req.body.date,
+      isWhatsAppReady,
+      sendWhatsApp
+    });
+    res.json({ success: true, result });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+app.post('/tickets/retry-notifications', requirePrivileged, async (req, res) => {
+  try {
+    const result = await retryPendingNotifications({
       date: req.body && req.body.date,
       isWhatsAppReady,
       sendWhatsApp
