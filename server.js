@@ -285,6 +285,10 @@ app.get('/mensajes', requireLoggedIn, (req, res) => {
   sendHtmlFile(res, 'messages.html');
 });
 
+app.get('/errores', requireLoggedIn, (req, res) => {
+  sendHtmlFile(res, 'errores.html');
+});
+
 app.get('/test', requirePrivileged, (req, res) => {
   sendHtmlFile(res, 'enviar.html');
 });
@@ -1413,7 +1417,7 @@ app.get('/settings/message-template', requireLoggedIn, (req, res) => {
 app.post('/settings/message-template', requirePrivileged, (req, res) => {
   try {
     const template = setMessageTemplate(req.body.template);
-    const automaticReminderEnabled = req.body.automaticReminderEnabled === undefined
+    const automaticReminderEnabled = req.body.automaticReminderEnabled === undefined || !(req.user && req.user.isAdmin)
       ? isAutomaticReminderEnabled()
       : setAutomaticReminderEnabled(req.body.automaticReminderEnabled);
 
@@ -1426,7 +1430,7 @@ app.post('/settings/message-template', requirePrivileged, (req, res) => {
   }
 });
 
-app.post('/settings/automatic-reminder', requirePrivileged, (req, res) => {
+app.post('/settings/automatic-reminder', requireAdmin, (req, res) => {
   try {
     const automaticReminderEnabled = setAutomaticReminderEnabled(req.body && req.body.enabled);
     res.json({ success: true, automaticReminderEnabled });

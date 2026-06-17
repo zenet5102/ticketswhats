@@ -917,6 +917,11 @@
             <span aria-hidden="true">&#9993;</span>
             Mensajes
           </button>
+          <button class="nav-tab" type="button" title="Ver errores de envio automatico"
+            onclick="window.location.href='/errores'">
+            <span aria-hidden="true">&#9888;</span>
+            Errores
+          </button>
           <button id="transferBtn" class="nav-tab" type="button" title="Transferir grupos temporalmente" hidden>
             <span aria-hidden="true">&#8646;</span>
             Transferir
@@ -1296,6 +1301,7 @@
       ) {
         els.lastRun.textContent += ' | Avisos detenidos: ' + (job.lastResult.statuses.notificationHaltReason || 'error de envio');
       }
+
     }
 
     function renderMessageSettings(settings) {
@@ -1673,6 +1679,10 @@
       return Boolean(state.auth);
     }
 
+    function canManageAutomaticReminder() {
+      return Boolean(state.auth && state.auth.role === 'admin');
+    }
+
     function getIncomingTimestamp(conversation) {
       const timestamp = Number(conversation && conversation.last_incoming_ts || 0);
       return Number.isFinite(timestamp) && timestamp > 0 ? timestamp : 0;
@@ -1915,7 +1925,10 @@
       });
       els.usersBtn.hidden = user.role !== 'admin';
       els.transferBtn.hidden = !fullAccess;
-      els.autoReminderSwitch.disabled = !fullAccess;
+      els.autoReminderSwitch.disabled = !canManageAutomaticReminder();
+      els.autoReminderSwitch.title = canManageAutomaticReminder()
+        ? 'Habilitar o pausar recordatorios automaticos'
+        : 'Solo admin puede pausar recordatorios automaticos';
       els.messageTemplate.disabled = !fullAccess;
 
       if (!fullAccess) {
@@ -1994,7 +2007,7 @@
       els.syncBtn.disabled = disabled || !fullAccess;
       els.phonesBtn.disabled = disabled || !fullAccess;
       els.saveMessageBtn.disabled = disabled || !fullAccess;
-      els.autoReminderSwitch.disabled = disabled || !fullAccess;
+      els.autoReminderSwitch.disabled = disabled || !canManageAutomaticReminder();
       els.whatsappReconnectBtn.disabled = disabled || !fullAccess;
       els.whatsappResetAuthBtn.disabled = disabled || !fullAccess;
       els.messageTemplate.disabled = disabled || !fullAccess;
@@ -2115,7 +2128,9 @@
       }
     });
     els.autoReminderSwitch.addEventListener('change', () => {
-      if (!hasFullAccess()) {
+      if (!canManageAutomaticReminder()) {
+        showToast('Solo admin puede pausar recordatorios automaticos');
+        setAutoReminderState(!els.autoReminderSwitch.checked);
         return;
       }
 
@@ -2141,22 +2156,27 @@
           showToast(error.message);
         })
         .finally(() => {
-          els.autoReminderSwitch.disabled = !hasFullAccess();
+          els.autoReminderSwitch.disabled = !canManageAutomaticReminder();
         });
     });
     els.saveMessageBtn.addEventListener('click', async () => {
       setButtons(true);
 
       try {
+        const body = {
+          template: els.messageTemplate.value
+        };
+
+        if (canManageAutomaticReminder()) {
+          body.automaticReminderEnabled = els.autoReminderSwitch.checked;
+        }
+
         const data = await fetchJson('/settings/message-template', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json'
           },
-          body: JSON.stringify({
-            template: els.messageTemplate.value,
-            automaticReminderEnabled: els.autoReminderSwitch.checked
-          })
+          body: JSON.stringify(body)
         });
         els.messageStatus.textContent = 'Guardado';
         renderMessageSettings(data);

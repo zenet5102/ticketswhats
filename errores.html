@@ -1,0 +1,590 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Errores de envio automatico</title>
+  <style>
+    :root {
+      --bg: #f6f7f9;
+      --panel: #ffffff;
+      --line: #d9dee7;
+      --text: #17202a;
+      --muted: #657386;
+      --accent: #2563eb;
+      --good: #11845b;
+      --warn: #b76e00;
+      --bad: #bd2c2c;
+      --soft-good: #e7f7ef;
+      --soft-warn: #fff3d8;
+      --soft-bad: #fde8e8;
+      --soft-blue: #eaf1ff;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: Arial, Helvetica, sans-serif;
+      font-size: 15px;
+    }
+
+    .topbar {
+      border-bottom: 1px solid var(--line);
+      background: var(--panel);
+    }
+
+    .topbar-inner,
+    .content {
+      width: min(1180px, calc(100% - 32px));
+      margin: 0 auto;
+    }
+
+    .topbar-inner {
+      min-height: 68px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 24px;
+      font-weight: 700;
+      letter-spacing: 0;
+    }
+
+    .subtitle {
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .actions {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      gap: 8px;
+    }
+
+    button,
+    .button-link {
+      min-height: 38px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      color: var(--text);
+      padding: 0 12px;
+      font: inherit;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      white-space: nowrap;
+      text-decoration: none;
+    }
+
+    button.primary,
+    .button-link.primary {
+      border-color: var(--accent);
+      background: var(--accent);
+      color: #ffffff;
+    }
+
+    button:disabled {
+      cursor: progress;
+      opacity: 0.7;
+    }
+
+    .session-chip {
+      min-height: 38px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #f8fafc;
+      color: var(--muted);
+      padding: 0 12px;
+      display: inline-flex;
+      align-items: center;
+      white-space: nowrap;
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .content {
+      padding: 18px 0 32px;
+    }
+
+    .status-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+      margin-bottom: 18px;
+    }
+
+    .metric {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 14px;
+      min-height: 94px;
+    }
+
+    .metric-label {
+      color: var(--muted);
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0;
+      margin-bottom: 8px;
+    }
+
+    .metric-value {
+      font-size: 22px;
+      font-weight: 700;
+      word-break: break-word;
+    }
+
+    .metric-detail {
+      margin-top: 7px;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.35;
+    }
+
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+
+    .panel-head {
+      min-height: 54px;
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--line);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .panel-title {
+      font-size: 16px;
+      font-weight: 700;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      min-height: 24px;
+      border-radius: 999px;
+      padding: 0 9px;
+      font-size: 12px;
+      font-weight: 700;
+      border: 1px solid transparent;
+      white-space: nowrap;
+    }
+
+    .badge.good {
+      background: var(--soft-good);
+      border-color: #bfe8d4;
+      color: var(--good);
+    }
+
+    .badge.warn {
+      background: var(--soft-warn);
+      border-color: #f3d088;
+      color: var(--warn);
+    }
+
+    .badge.bad {
+      background: var(--soft-bad);
+      border-color: #f4b7b7;
+      color: var(--bad);
+    }
+
+    .badge.blue {
+      background: var(--soft-blue);
+      border-color: #c8d9ff;
+      color: var(--accent);
+    }
+
+    .log-list {
+      display: grid;
+    }
+
+    .log-row {
+      padding: 12px 14px;
+      border-top: 1px solid var(--line);
+      display: grid;
+      gap: 7px;
+    }
+
+    .log-row:first-child {
+      border-top: 0;
+    }
+
+    .log-main {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .log-title {
+      min-width: 0;
+      font-weight: 700;
+      word-break: break-word;
+    }
+
+    .log-meta,
+    .log-detail {
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.35;
+      word-break: break-word;
+    }
+
+    .log-detail {
+      color: var(--bad);
+    }
+
+    .empty {
+      padding: 34px 16px;
+      color: var(--muted);
+      text-align: center;
+    }
+
+    .toast {
+      position: fixed;
+      right: 16px;
+      bottom: 16px;
+      max-width: min(430px, calc(100% - 32px));
+      background: var(--text);
+      color: #ffffff;
+      border-radius: 8px;
+      padding: 12px 14px;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.18);
+      opacity: 0;
+      transform: translateY(10px);
+      pointer-events: none;
+      transition: opacity 160ms ease, transform 160ms ease;
+      z-index: 10;
+    }
+
+    .toast.visible {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    @media (max-width: 760px) {
+      .topbar-inner {
+        align-items: stretch;
+        flex-direction: column;
+        padding: 14px 0;
+      }
+
+      .actions {
+        justify-content: stretch;
+      }
+
+      .actions button,
+      .actions .button-link {
+        flex: 1 1 calc(50% - 8px);
+      }
+
+      .status-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <div>
+        <h1>Errores de envio automatico</h1>
+        <div class="subtitle" id="lastRefresh">Cargando...</div>
+      </div>
+      <div class="actions">
+        <a class="button-link" href="/dashboard" title="Volver al monitor">
+          <span aria-hidden="true">&#9638;</span>
+          Tickets
+        </a>
+        <a class="button-link" href="/mensajes" title="Ver mensajes">
+          <span aria-hidden="true">&#9993;</span>
+          Mensajes
+        </a>
+        <button id="refreshBtn" class="primary" type="button" title="Actualizar errores">
+          <span aria-hidden="true">&#8635;</span>
+          Actualizar
+        </button>
+        <span id="sessionBadge" class="session-chip">Sesion</span>
+        <button id="logoutBtn" type="button" title="Cerrar sesion">
+          <span aria-hidden="true">&#9211;</span>
+          Salir
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <main class="content">
+    <section class="status-grid" aria-label="Resumen de errores">
+      <div class="metric">
+        <div class="metric-label">Errores visibles</div>
+        <div class="metric-value" id="errorCount">0</div>
+        <div class="metric-detail" id="errorCountDetail">Sin errores registrados</div>
+      </div>
+      <div class="metric">
+        <div class="metric-label">Avisos automaticos</div>
+        <div class="metric-value" id="reminderState">--</div>
+        <div class="metric-detail" id="reminderDetail">--</div>
+      </div>
+      <div class="metric">
+        <div class="metric-label">Ultimo ciclo</div>
+        <div class="metric-value" id="cycleState">--</div>
+        <div class="metric-detail" id="cycleDetail">--</div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head">
+        <div class="panel-title">Log de errores</div>
+        <span class="badge bad" id="logBadge">0</span>
+      </div>
+      <div id="logList" class="log-list">
+        <div class="empty">Cargando errores...</div>
+      </div>
+    </section>
+  </main>
+
+  <div class="toast" id="toast"></div>
+
+  <script>
+    const state = {
+      auth: null,
+      loading: false
+    };
+
+    const els = {
+      cycleDetail: document.getElementById('cycleDetail'),
+      cycleState: document.getElementById('cycleState'),
+      errorCount: document.getElementById('errorCount'),
+      errorCountDetail: document.getElementById('errorCountDetail'),
+      lastRefresh: document.getElementById('lastRefresh'),
+      logBadge: document.getElementById('logBadge'),
+      logList: document.getElementById('logList'),
+      logoutBtn: document.getElementById('logoutBtn'),
+      refreshBtn: document.getElementById('refreshBtn'),
+      reminderDetail: document.getElementById('reminderDetail'),
+      reminderState: document.getElementById('reminderState'),
+      sessionBadge: document.getElementById('sessionBadge'),
+      toast: document.getElementById('toast')
+    };
+
+    function escapeHtml(value) {
+      return String(value || '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
+
+    function badge(text, tone) {
+      return '<span class="badge ' + escapeHtml(tone || 'warn') + '">' + escapeHtml(text) + '</span>';
+    }
+
+    function formatDateTime(value) {
+      if (!value) {
+        return '--';
+      }
+
+      const date = new Date(value);
+
+      if (Number.isNaN(date.getTime())) {
+        return '--';
+      }
+
+      return new Intl.DateTimeFormat('es-AR', {
+        day: '2-digit',
+        month: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit'
+      }).format(date);
+    }
+
+    function showToast(message) {
+      els.toast.textContent = message;
+      els.toast.classList.add('visible');
+      clearTimeout(showToast.timer);
+      showToast.timer = setTimeout(() => {
+        els.toast.classList.remove('visible');
+      }, 3200);
+    }
+
+    function applySession(user) {
+      state.auth = user;
+      const roleLabel = user.role === 'usuario' ? 'Usuario' : user.role.toUpperCase();
+      els.sessionBadge.textContent = user.name + ' | ' + roleLabel;
+    }
+
+    async function loadSession() {
+      const response = await fetch('/auth/me');
+      const data = await response.json().catch(() => ({}));
+
+      if (!response.ok || !data.success) {
+        window.location.href = '/login?next=' + encodeURIComponent(window.location.pathname + window.location.search);
+        return null;
+      }
+
+      applySession(data.user);
+      return data.user;
+    }
+
+    async function logout() {
+      await fetch('/auth/logout', { method: 'POST' }).catch(() => { });
+      window.location.href = '/login';
+    }
+
+    async function fetchJson(url, options) {
+      const response = await fetch(url, options);
+      const data = await response.json().catch(() => ({}));
+
+      if (response.status === 401) {
+        window.location.href = '/login?next=' + encodeURIComponent(window.location.pathname + window.location.search);
+        return null;
+      }
+
+      if (!response.ok || !data.success) {
+        throw new Error(data.error || 'Error HTTP ' + response.status);
+      }
+
+      return data;
+    }
+
+    function stageLabel(value) {
+      const clean = String(value || '').toLowerCase();
+
+      if (clean === 'status-check') {
+        return 'Estado';
+      }
+
+      if (clean === 'validation') {
+        return 'Validacion';
+      }
+
+      if (clean === 'send') {
+        return 'Envio';
+      }
+
+      return value || '--';
+    }
+
+    function renderSummary(job) {
+      const errors = Array.isArray(job.notificationErrorLog) ? job.notificationErrorLog : [];
+      const cfg = job.config || {};
+      const lastStatuses = job.lastResult && job.lastResult.statuses || {};
+
+      els.errorCount.textContent = String(errors.length);
+      els.errorCountDetail.textContent = errors.length
+        ? 'Ultimo: ' + formatDateTime(errors[0].at)
+        : 'Sin errores registrados';
+      els.logBadge.textContent = String(errors.length);
+      els.reminderState.innerHTML = cfg.automaticReminderEnabled ? badge('Activos', 'good') : badge('Pausados', 'warn');
+      els.reminderDetail.textContent = job.active
+        ? 'Scheduler activo cada ' + (cfg.syncIntervalMinutes || '--') + ' min'
+        : 'Scheduler inactivo';
+      els.cycleState.innerHTML = job.cycleRunning ? badge('Corriendo', 'warn') : badge('Libre', 'good');
+      els.cycleDetail.textContent =
+        'Ultima: ' + formatDateTime(job.lastRunFinishedAt) +
+        ' | Fallos ultimo ciclo: ' + (lastStatuses.notificationErrors || 0);
+    }
+
+    function renderLog(errors) {
+      if (!errors.length) {
+        els.logList.innerHTML = '<div class="empty">Sin errores de envio automatico registrados.</div>';
+        return;
+      }
+
+      els.logList.innerHTML = errors.map(error => {
+        const ticket = error.ticketExternalId || '--';
+        const label = error.ticketLabel && error.ticketLabel !== ticket
+          ? ' | ' + error.ticketLabel
+          : '';
+        const phone = error.ticketPhone ? ' | Movil: ' + error.ticketPhone : '';
+        const start = error.ticketStartTime ? ' | Hora: ' + error.ticketStartTime : '';
+        const current = error.currentTicketExternalId
+          ? ' | Disparado por: ' + error.currentTicketExternalId
+          : '';
+        const stateBadge = error.halted ? badge('Detuvo avisos', 'bad') : badge('Registrado', 'warn');
+
+        return '<div class="log-row">' +
+          '<div class="log-main">' +
+          '<div class="log-title">Ticket ' + escapeHtml(ticket + label) + '</div>' +
+          '<div>' + stateBadge + '</div>' +
+          '</div>' +
+          '<div class="log-meta">' +
+          escapeHtml(formatDateTime(error.at)) +
+          ' | Etapa: ' + escapeHtml(stageLabel(error.stage)) +
+          escapeHtml(phone + start + current) +
+          '</div>' +
+          '<div class="log-detail">' + escapeHtml(error.reason || 'Error enviando mensaje automatico') + '</div>' +
+          '</div>';
+      }).join('');
+    }
+
+    async function loadErrors() {
+      if (state.loading) {
+        return;
+      }
+
+      state.loading = true;
+      els.refreshBtn.disabled = true;
+
+      try {
+        const data = await fetchJson('/tickets/job-status');
+        const job = data.job || {};
+        const errors = Array.isArray(job.notificationErrorLog) ? job.notificationErrorLog : [];
+
+        renderSummary(job);
+        renderLog(errors);
+        els.lastRefresh.textContent = 'Actualizado: ' + new Date().toLocaleTimeString('es-AR');
+      } catch (error) {
+        showToast(error.message);
+        els.lastRefresh.textContent = 'Error: ' + error.message;
+      } finally {
+        state.loading = false;
+        els.refreshBtn.disabled = false;
+      }
+    }
+
+    els.refreshBtn.addEventListener('click', loadErrors);
+    els.logoutBtn.addEventListener('click', logout);
+
+    async function init() {
+      const user = await loadSession();
+
+      if (!user) {
+        return;
+      }
+
+      loadErrors();
+      setInterval(loadErrors, 5000);
+    }
+
+    init();
+  </script>
+</body>
+
+</html>

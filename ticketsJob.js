@@ -31,7 +31,8 @@ const schedulerState = {
   nextRunAt: null,
   lastResult: null,
   lastError: null,
-  runCount: 0
+  runCount: 0,
+  notificationErrorLog: []
 };
 
 function nowIso() {
@@ -63,6 +64,30 @@ function renderMessage(template, nextTicket, currentTicket) {
 function isTicketSpecificSendError(error) {
   const message = String(error && error.message || error || '').toLowerCase();
   return message.includes('el numero no existe') || message.includes('faltan phone o message');
+}
+
+function getTicketLabel(ticket) {
+  return String(ticket && (ticket.razon_social || ticket.external_id) || '').trim();
+}
+
+function recordNotificationError(entry = {}) {
+  const nextTicket = entry.nextTicket || {};
+  const currentTicket = entry.currentTicket || {};
+
+  schedulerState.notificationErrorLog.unshift({
+    at: nowIso(),
+    stage: String(entry.stage || 'send').trim(),
+    reason: String(entry.reason || 'Error enviando mensaje automatico').trim(),
+    halted: Boolean(entry.halted),
+    ticketExternalId: String(nextTicket.external_id || '').trim(),
+    ticketLabel: getTicketLabel(nextTicket),
+    ticketPhone: String(nextTicket.phone || '').trim(),
+    ticketStartTime: String(nextTicket.start_time || '').trim(),
+    currentTicketExternalId: String(currentTicket.external_id || '').trim(),
+    currentTicketStartTime: String(currentTicket.start_time || '').trim()
+  });
+
+  schedulerState.notificationErrorLog = schedulerState.notificationErrorLog.slice(0, 50);
 }
 
 function getTicketGroup(ticket) {
@@ -138,6 +163,14 @@ async function notifyNextTicket(currentTicket, options = {}) {
   try {
     latestNextStatus = await fetchTicketStatus(nextTicket.external_id);
   } catch (error) {
+    recordNotificationError({
+      stage: 'status-check',
+      reason: `No se pudo verificar estado del ticket siguiente: ${error.message}`,
+      currentTicket,
+      nextTicket,
+      halted: true
+    });
+
     return {
       sent: false,
       error: true,
@@ -148,6 +181,14 @@ async function notifyNextTicket(currentTicket, options = {}) {
   }
 
   if (!latestNextStatus) {
+    recordNotificationError({
+      stage: 'status-check',
+      reason: 'No se pudo verificar estado del ticket siguiente',
+      currentTicket,
+      nextTicket,
+      halted: true
+    });
+
     return {
       sent: false,
       error: true,
@@ -170,6 +211,13 @@ async function notifyNextTicket(currentTicket, options = {}) {
 
   if (isResolvedStatus(latestNextStatus)) {
     markMessageError(nextTicket.external_id, 'No se envia mensaje a tickets resueltos');
+    recordNotificationError({
+      stage: 'validation',
+      reason: 'No se envia mensaje a tickets resueltos',
+      currentTicket,
+      nextTicket
+    });
+
     return {
       sent: false,
       reason: 'El ticket siguiente esta resuelto',
@@ -179,10 +227,25 @@ async function notifyNextTicket(currentTicket, options = {}) {
 
   if (!nextTicket.phone) {
     markMessageError(nextTicket.external_id, 'El ticket no tiene telefono');
+    recordNotificationError({
+      stage: 'validation',
+      reason: 'El ticket no tiene telefono',
+      currentTicket,
+      nextTicket
+    });
+
     return { sent: false, reason: 'El ticket siguiente no tiene telefono', nextTicket };
   }
 
   if (!options.sendWhatsApp) {
+    recordNotificationError({
+      stage: 'send',
+      reason: 'No hay funcion de envio de WhatsApp',
+      currentTicket,
+      nextTicket,
+      halted: true
+    });
+
     return {
       sent: false,
       error: true,
@@ -193,6 +256,14 @@ async function notifyNextTicket(currentTicket, options = {}) {
   }
 
   if (options.isWhatsAppReady && !options.isWhatsAppReady()) {
+    recordNotificationError({
+      stage: 'send',
+      reason: 'WhatsApp no esta conectado',
+      currentTicket,
+      nextTicket,
+      halted: true
+    });
+
     return {
       sent: false,
       error: true,
@@ -219,6 +290,14 @@ async function notifyNextTicket(currentTicket, options = {}) {
     if (ticketSpecificError) {
       markMessageError(nextTicket.external_id, error.message);
     }
+
+    recordNotificationError({
+      stage: 'send',
+      reason: error.message,
+      currentTicket,
+      nextTicket,
+      halted: !ticketSpecificError
+    });
 
     console.warn(`No se pudo enviar aviso al ticket ${nextTicket.external_id}: ${error.message}`);
     return {
