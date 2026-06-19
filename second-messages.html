@@ -1,0 +1,1161 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WhatsApp 2</title>
+  <style>
+    :root {
+      --bg: #f5f7fb;
+      --panel: #ffffff;
+      --line: #d7deea;
+      --text: #17202a;
+      --muted: #66758a;
+      --accent: #2563eb;
+      --accent-soft: #e8f0ff;
+      --good: #11845b;
+      --good-soft: #e6f6ee;
+      --warn: #a16207;
+      --warn-soft: #fff4d6;
+      --bad: #bd2c2c;
+      --bad-soft: #fde8e8;
+      --bubble-in: #ffffff;
+      --bubble-out: #e7f0ff;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: Arial, Helvetica, sans-serif;
+      font-size: 15px;
+    }
+
+    .topbar {
+      border-bottom: 1px solid var(--line);
+      background: var(--panel);
+    }
+
+    .topbar-inner,
+    .content {
+      width: min(1240px, calc(100% - 32px));
+      margin: 0 auto;
+    }
+
+    .topbar-inner {
+      min-height: 68px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 24px;
+      letter-spacing: 0;
+    }
+
+    .subtitle {
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .actions {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      gap: 8px;
+    }
+
+    button,
+    .button-like {
+      min-height: 38px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      color: var(--text);
+      padding: 0 12px;
+      font: inherit;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      white-space: nowrap;
+    }
+
+    button.primary {
+      border-color: var(--accent);
+      background: var(--accent);
+      color: #ffffff;
+      font-weight: 700;
+    }
+
+    button.danger {
+      border-color: #f0b5b5;
+      color: var(--bad);
+    }
+
+    button:disabled {
+      cursor: progress;
+      opacity: 0.7;
+    }
+
+    input,
+    textarea {
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 10px 12px;
+      color: var(--text);
+      font: inherit;
+      line-height: 1.35;
+      background: #ffffff;
+    }
+
+    input:focus,
+    textarea:focus {
+      outline: 2px solid #bfdbfe;
+      border-color: var(--accent);
+    }
+
+    textarea {
+      min-height: 78px;
+      max-height: 180px;
+      resize: vertical;
+    }
+
+    .content {
+      padding: 18px 0 32px;
+    }
+
+    .status-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+
+    .metric,
+    .panel,
+    .qr-panel {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+    }
+
+    .metric {
+      min-height: 88px;
+      padding: 14px;
+    }
+
+    .metric-label {
+      color: var(--muted);
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0;
+      margin-bottom: 8px;
+    }
+
+    .metric-value {
+      font-size: 20px;
+      font-weight: 700;
+      word-break: break-word;
+    }
+
+    .metric-detail {
+      margin-top: 7px;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.35;
+      word-break: break-word;
+    }
+
+    .qr-panel {
+      padding: 14px;
+      margin-bottom: 16px;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+
+    .qr-panel[hidden] {
+      display: none;
+    }
+
+    .qr-panel img {
+      width: 220px;
+      height: 220px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #ffffff;
+      padding: 8px;
+    }
+
+    .qr-title {
+      font-size: 16px;
+      font-weight: 700;
+      margin-bottom: 6px;
+    }
+
+    .qr-detail {
+      color: var(--muted);
+      line-height: 1.45;
+      max-width: 560px;
+    }
+
+    .layout {
+      display: grid;
+      grid-template-columns: 330px minmax(0, 1fr);
+      gap: 14px;
+      align-items: start;
+    }
+
+    .panel-head {
+      min-height: 54px;
+      border-bottom: 1px solid var(--line);
+      padding: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+    }
+
+    .panel-title {
+      font-weight: 700;
+    }
+
+    .badge {
+      min-height: 26px;
+      border-radius: 8px;
+      padding: 4px 8px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--muted);
+      background: #f1f5f9;
+      border: 1px solid var(--line);
+      white-space: nowrap;
+    }
+
+    .badge.good {
+      color: var(--good);
+      background: var(--good-soft);
+      border-color: #b9e4ce;
+    }
+
+    .badge.warn {
+      color: var(--warn);
+      background: var(--warn-soft);
+      border-color: #f0d28a;
+    }
+
+    .badge.bad {
+      color: var(--bad);
+      background: var(--bad-soft);
+      border-color: #f0b5b5;
+    }
+
+    .new-chat {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 8px;
+      padding: 12px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .chat-list {
+      height: 590px;
+      overflow: auto;
+    }
+
+    .chat-item {
+      width: 100%;
+      min-height: 74px;
+      border: 0;
+      border-bottom: 1px solid var(--line);
+      border-radius: 0;
+      background: transparent;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr);
+      align-items: stretch;
+      gap: 3px;
+      padding: 10px 12px;
+      text-align: left;
+    }
+
+    .chat-item:hover,
+    .chat-item.active {
+      background: var(--accent-soft);
+    }
+
+    .chat-top {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      min-width: 0;
+    }
+
+    .chat-name {
+      font-weight: 700;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .chat-time {
+      flex: 0 0 auto;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .chat-preview,
+    .chat-meta {
+      color: var(--muted);
+      font-size: 13px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .chat-head {
+      min-height: 64px;
+      border-bottom: 1px solid var(--line);
+      padding: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .chat-title {
+      font-size: 18px;
+      font-weight: 700;
+      overflow-wrap: anywhere;
+    }
+
+    .messages {
+      height: 456px;
+      overflow: auto;
+      padding: 16px;
+      background: #eef1f5;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .message-row {
+      display: flex;
+      width: 100%;
+    }
+
+    .message-row.outgoing {
+      justify-content: flex-end;
+    }
+
+    .bubble {
+      max-width: min(74%, 580px);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 9px 10px;
+      background: var(--bubble-in);
+      box-shadow: 0 1px 1px rgba(15, 23, 42, 0.05);
+      overflow-wrap: anywhere;
+    }
+
+    .message-row.outgoing .bubble {
+      background: var(--bubble-out);
+      border-color: #c8d9ff;
+    }
+
+    .message-person {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+      margin-bottom: 6px;
+      overflow-wrap: anywhere;
+    }
+
+    .message-text {
+      white-space: pre-wrap;
+      line-height: 1.38;
+    }
+
+    .message-image,
+    .message-video {
+      display: block;
+      width: min(100%, 380px);
+      max-height: 360px;
+      object-fit: contain;
+      border-radius: 8px;
+      border: 1px solid #c8d9ff;
+      background: #ffffff;
+      margin-bottom: 8px;
+    }
+
+    .message-audio {
+      display: block;
+      width: min(100%, 340px);
+      margin-bottom: 8px;
+    }
+
+    .media-chip {
+      display: inline-flex;
+      align-items: center;
+      max-width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #ffffff;
+      color: var(--muted);
+      padding: 8px 10px;
+      margin-bottom: 8px;
+      overflow-wrap: anywhere;
+      text-decoration: none;
+    }
+
+    .message-time {
+      margin-top: 6px;
+      color: var(--muted);
+      font-size: 12px;
+      text-align: right;
+    }
+
+    .composer {
+      border-top: 1px solid var(--line);
+      padding: 12px;
+      display: grid;
+      gap: 10px;
+      background: #ffffff;
+    }
+
+    .composer-bottom {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .file-wrap {
+      min-width: min(100%, 330px);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .file-wrap input {
+      width: min(100%, 260px);
+      padding: 8px;
+      font-size: 13px;
+    }
+
+    .error-text {
+      color: var(--bad);
+      font-size: 13px;
+      min-height: 18px;
+      overflow-wrap: anywhere;
+    }
+
+    .empty {
+      margin: auto;
+      color: var(--muted);
+      text-align: center;
+      line-height: 1.4;
+      max-width: 360px;
+    }
+
+    @media (max-width: 900px) {
+      .topbar-inner {
+        align-items: stretch;
+        flex-direction: column;
+        padding: 14px 0;
+      }
+
+      .actions {
+        justify-content: stretch;
+      }
+
+      .actions button,
+      .actions .button-like {
+        flex: 1 1 calc(50% - 8px);
+      }
+
+      .status-grid,
+      .layout {
+        grid-template-columns: 1fr;
+      }
+
+      .chat-list {
+        height: 300px;
+      }
+
+      .messages {
+        height: 420px;
+      }
+    }
+
+    @media (max-width: 520px) {
+
+      .topbar-inner,
+      .content {
+        width: min(100% - 20px, 1240px);
+      }
+
+      .new-chat {
+        grid-template-columns: 1fr;
+      }
+
+      .bubble {
+        max-width: 90%;
+      }
+
+      .qr-panel img {
+        width: 100%;
+        max-width: 260px;
+        height: auto;
+      }
+
+      .composer-bottom button,
+      .file-wrap,
+      .file-wrap input {
+        width: 100%;
+      }
+    }
+  </style>
+</head>
+
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <div>
+        <h1>WhatsApp 2</h1>
+        <div class="subtitle" id="lastRefresh">Cargando...</div>
+      </div>
+      <div class="actions">
+        <span id="sessionBadge" class="button-like">Sesion</span>
+        <button id="refreshBtn" type="button">Actualizar</button>
+        <button id="reconnectBtn" type="button">Reconectar</button>
+        <button id="resetAuthBtn" class="danger" type="button">Reset QR</button>
+        <button id="logoutBtn" type="button">Salir</button>
+      </div>
+    </div>
+  </header>
+
+  <main class="content">
+    <section class="status-grid" aria-label="Estado">
+      <div class="metric">
+        <div class="metric-label">WhatsApp</div>
+        <div class="metric-value" id="whatsappState">--</div>
+        <div class="metric-detail" id="whatsappDetail">--</div>
+      </div>
+      <div class="metric">
+        <div class="metric-label">MySQL</div>
+        <div class="metric-value" id="mysqlState">--</div>
+        <div class="metric-detail" id="mysqlDetail">--</div>
+      </div>
+      <div class="metric">
+        <div class="metric-label">Chats</div>
+        <div class="metric-value" id="chatCount">0</div>
+        <div class="metric-detail" id="chatDetail">Sin actividad</div>
+      </div>
+    </section>
+
+    <section id="qrPanel" class="qr-panel" hidden>
+      <img id="qrImage" alt="QR WhatsApp">
+      <div>
+        <div class="qr-title">Escanea el QR</div>
+        <div class="qr-detail">Abre WhatsApp en el telefono secundario y vincula esta sesion.</div>
+      </div>
+    </section>
+
+    <section class="layout" aria-label="Bandeja">
+      <aside class="panel">
+        <div class="panel-head">
+          <div class="panel-title">Chats</div>
+          <span id="loadedBadge" class="badge">0</span>
+        </div>
+        <div class="new-chat">
+          <input id="phoneInput" type="tel" inputmode="tel" placeholder="5491123456789" autocomplete="off">
+          <button id="startChatBtn" type="button">Nuevo</button>
+        </div>
+        <div id="chatList" class="chat-list">
+          <div class="empty">Cargando chats...</div>
+        </div>
+      </aside>
+
+      <section class="panel">
+        <div class="chat-head">
+          <div style="min-width: 0;">
+            <div class="chat-title" id="chatTitle">Selecciona un chat</div>
+            <div class="chat-meta" id="chatMeta">--</div>
+          </div>
+          <span class="badge warn" id="chatBadge">Sin chat</span>
+        </div>
+        <div id="messageList" class="messages">
+          <div class="empty">Sin mensajes seleccionados.</div>
+        </div>
+        <form id="replyForm" class="composer">
+          <textarea id="replyMessage" placeholder="Mensaje" disabled></textarea>
+          <div class="composer-bottom">
+            <div class="file-wrap">
+              <input id="mediaInput" type="file" disabled>
+              <button id="clearFileBtn" type="button" disabled>Quitar</button>
+            </div>
+            <button id="sendBtn" class="primary" type="submit" disabled>Enviar</button>
+          </div>
+          <div id="sendError" class="error-text"></div>
+        </form>
+      </section>
+    </section>
+  </main>
+
+  <script>
+    const state = {
+      auth: null,
+      conversations: [],
+      selectedChatId: '',
+      draftPhone: '',
+      mediaLimitBytes: 15 * 1024 * 1024,
+      loading: false
+    };
+
+    const els = {
+      chatBadge: document.getElementById('chatBadge'),
+      chatCount: document.getElementById('chatCount'),
+      chatDetail: document.getElementById('chatDetail'),
+      chatList: document.getElementById('chatList'),
+      chatMeta: document.getElementById('chatMeta'),
+      chatTitle: document.getElementById('chatTitle'),
+      clearFileBtn: document.getElementById('clearFileBtn'),
+      lastRefresh: document.getElementById('lastRefresh'),
+      loadedBadge: document.getElementById('loadedBadge'),
+      logoutBtn: document.getElementById('logoutBtn'),
+      mediaInput: document.getElementById('mediaInput'),
+      messageList: document.getElementById('messageList'),
+      mysqlDetail: document.getElementById('mysqlDetail'),
+      mysqlState: document.getElementById('mysqlState'),
+      phoneInput: document.getElementById('phoneInput'),
+      qrImage: document.getElementById('qrImage'),
+      qrPanel: document.getElementById('qrPanel'),
+      reconnectBtn: document.getElementById('reconnectBtn'),
+      refreshBtn: document.getElementById('refreshBtn'),
+      replyForm: document.getElementById('replyForm'),
+      replyMessage: document.getElementById('replyMessage'),
+      resetAuthBtn: document.getElementById('resetAuthBtn'),
+      sendBtn: document.getElementById('sendBtn'),
+      sendError: document.getElementById('sendError'),
+      sessionBadge: document.getElementById('sessionBadge'),
+      startChatBtn: document.getElementById('startChatBtn'),
+      whatsappDetail: document.getElementById('whatsappDetail'),
+      whatsappState: document.getElementById('whatsappState')
+    };
+
+    function escapeHtml(value) {
+      return String(value || '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
+
+    function cleanPhone(value) {
+      return String(value || '').replace(/\D/g, '');
+    }
+
+    function formatDateTime(value) {
+      if (!value) {
+        return '--';
+      }
+
+      const date = new Date(Number(value) || value);
+
+      if (Number.isNaN(date.getTime())) {
+        return '--';
+      }
+
+      return new Intl.DateTimeFormat('es-AR', {
+        day: '2-digit',
+        month: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit'
+      }).format(date);
+    }
+
+    function setBadge(element, text, tone) {
+      element.className = `badge ${tone || ''}`.trim();
+      element.textContent = text;
+    }
+
+    function getConversationName(conversation) {
+      return conversation && (conversation.contact_name || conversation.phone || conversation.chat_id) || '--';
+    }
+
+    function getConversationMeta(conversation) {
+      if (!conversation) {
+        return '--';
+      }
+
+      const phone = conversation.phone || '';
+      const chatId = conversation.chat_id || '';
+
+      if (phone && chatId && !chatId.startsWith(phone)) {
+        return `${phone} | ${chatId}`;
+      }
+
+      return phone || chatId || '--';
+    }
+
+    function getSelectedConversation() {
+      return state.conversations.find(item => item.chat_id === state.selectedChatId) || null;
+    }
+
+    async function fetchJson(url, options = {}) {
+      const response = await fetch(url, options);
+
+      if (response.status === 401) {
+        window.location.href = '/login?next=' + encodeURIComponent(window.location.pathname + window.location.search);
+        return new Promise(() => {});
+      }
+
+      const data = await response.json().catch(() => ({}));
+
+      if (!response.ok || !data.success) {
+        throw new Error(data.error || 'Error de API');
+      }
+
+      return data;
+    }
+
+    function getMediaLabelFromMime(mime) {
+      if (String(mime || '').startsWith('image/')) {
+        return 'Imagen';
+      }
+
+      if (String(mime || '').startsWith('video/')) {
+        return 'Video';
+      }
+
+      if (String(mime || '').startsWith('audio/')) {
+        return 'Audio';
+      }
+
+      return 'Archivo';
+    }
+
+    function isMediaPlaceholder(value) {
+      return /^\[[^\]]+ sin texto\]$/.test(String(value || '').trim());
+    }
+
+    function renderMessageMedia(message) {
+      const mime = String(message.media_mime || '');
+      const data = String(message.media_data || '');
+      const filename = String(message.media_filename || '').trim();
+      const body = String(message.body || '').trim();
+      const safeMime = escapeHtml(mime.replace(/\s*;\s*/g, ';'));
+      const safeFilename = escapeHtml(filename || getMediaLabelFromMime(mime));
+
+      if (mime.startsWith('image/') && data) {
+        return `<img class="message-image" src="data:${safeMime};base64,${escapeHtml(data)}" alt="Imagen de WhatsApp">`;
+      }
+
+      if (mime.startsWith('video/') && data) {
+        return `<video class="message-video" controls preload="metadata" src="data:${safeMime};base64,${escapeHtml(data)}"></video>`;
+      }
+
+      if (mime.startsWith('audio/') && data) {
+        return `<audio class="message-audio" controls preload="metadata" src="data:${safeMime};base64,${escapeHtml(data)}"></audio>`;
+      }
+
+      if (mime && data) {
+        return `<a class="media-chip" download="${safeFilename}" href="data:${safeMime};base64,${escapeHtml(data)}">${safeFilename}</a>`;
+      }
+
+      if (mime) {
+        const label = filename ? `${getMediaLabelFromMime(mime)}: ${filename}` : getMediaLabelFromMime(mime);
+        return `<div class="media-chip">${escapeHtml(label)} no disponible</div>`;
+      }
+
+      if (isMediaPlaceholder(body)) {
+        return '<div class="media-chip">Media no disponible</div>';
+      }
+
+      return '';
+    }
+
+    function renderStatus(data) {
+      const whatsapp = data.whatsapp || {};
+      const mysql = data.mysql || {};
+      state.mediaLimitBytes = Number(data.mediaLimitBytes || state.mediaLimitBytes);
+
+      els.whatsappState.textContent = whatsapp.ready ? 'Conectado' : (whatsapp.state || 'Sin estado');
+      els.whatsappDetail.textContent = whatsapp.lastError || `Sesion ${whatsapp.clientId || 'bot-2'} | ${formatDateTime(whatsapp.lastEventAt)}`;
+      els.mysqlState.textContent = mysql.ready ? 'Conectado' : 'Sin conexion';
+      els.mysqlDetail.textContent = mysql.ready
+        ? `${mysql.database}.${mysql.table}`
+        : (mysql.lastError || `${mysql.host || '--'}:${mysql.port || '--'}`);
+
+      if (!whatsapp.ready && whatsapp.qrSvg) {
+        els.qrImage.src = whatsapp.qrSvg;
+        els.qrPanel.hidden = false;
+      } else {
+        els.qrPanel.hidden = true;
+        els.qrImage.removeAttribute('src');
+      }
+    }
+
+    function renderConversationMetrics() {
+      const count = state.conversations.length;
+      const lastIncoming = state.conversations
+        .map(item => Number(item.last_incoming_ts || 0))
+        .filter(Boolean)
+        .sort((left, right) => right - left)[0];
+
+      els.chatCount.textContent = String(count);
+      els.loadedBadge.textContent = String(count);
+      els.chatDetail.textContent = lastIncoming ? `Ultima entrada ${formatDateTime(lastIncoming)}` : 'Sin entradas';
+    }
+
+    function renderConversations() {
+      renderConversationMetrics();
+
+      if (!state.conversations.length) {
+        els.chatList.innerHTML = '<div class="empty">Sin chats guardados en MySQL.</div>';
+        return;
+      }
+
+      els.chatList.innerHTML = state.conversations.map(conversation => {
+        const active = conversation.chat_id === state.selectedChatId ? ' active' : '';
+        const preview = conversation.media_mime && isMediaPlaceholder(conversation.body)
+          ? getMediaLabelFromMime(conversation.media_mime)
+          : conversation.body;
+
+        return `
+          <button class="chat-item${active}" type="button" data-chat-id="${escapeHtml(conversation.chat_id)}">
+            <div class="chat-top">
+              <div class="chat-name">${escapeHtml(getConversationName(conversation))}</div>
+              <div class="chat-time">${escapeHtml(formatDateTime(conversation.timestamp_ts))}</div>
+            </div>
+            <div class="chat-preview">${escapeHtml(preview || '--')}</div>
+            <div class="chat-meta">${escapeHtml(getConversationMeta(conversation))}</div>
+          </button>
+        `;
+      }).join('');
+
+      for (const button of els.chatList.querySelectorAll('.chat-item')) {
+        button.addEventListener('click', () => {
+          state.selectedChatId = button.dataset.chatId || '';
+          state.draftPhone = '';
+          renderConversations();
+          renderChatHeader();
+          loadMessages();
+        });
+      }
+    }
+
+    function renderChatHeader() {
+      const conversation = getSelectedConversation();
+
+      if (conversation) {
+        els.chatTitle.textContent = getConversationName(conversation);
+        els.chatMeta.textContent = getConversationMeta(conversation);
+        setBadge(els.chatBadge, conversation.direction === 'incoming' ? 'Entrada' : 'Salida', conversation.direction === 'incoming' ? 'good' : 'warn');
+      } else if (state.draftPhone) {
+        els.chatTitle.textContent = state.draftPhone;
+        els.chatMeta.textContent = 'Chat nuevo';
+        setBadge(els.chatBadge, 'Nuevo', 'warn');
+      } else {
+        els.chatTitle.textContent = 'Selecciona un chat';
+        els.chatMeta.textContent = '--';
+        setBadge(els.chatBadge, 'Sin chat', 'warn');
+      }
+
+      const canCompose = Boolean(conversation || state.draftPhone);
+      els.replyMessage.disabled = !canCompose;
+      els.mediaInput.disabled = !canCompose;
+      els.clearFileBtn.disabled = !canCompose || !els.mediaInput.files.length;
+      els.sendBtn.disabled = !canCompose;
+    }
+
+    function getMessagePerson(message, conversation) {
+      const name = message.contact_name || conversation && conversation.contact_name || '';
+      const number = message.phone || conversation && conversation.phone || message.chat_id || '';
+
+      if (name && number && name !== number) {
+        return `${name} | ${number}`;
+      }
+
+      return name || number || '--';
+    }
+
+    function renderMessages(messages) {
+      if (!messages.length) {
+        els.messageList.innerHTML = '<div class="empty">Sin mensajes para este chat.</div>';
+        return;
+      }
+
+      const conversation = getSelectedConversation();
+      els.messageList.innerHTML = messages.map(message => {
+        const outgoing = message.direction === 'outgoing' || Number(message.from_me) === 1;
+        const media = renderMessageMedia(message);
+        const body = isMediaPlaceholder(message.body) && media ? '' : message.body;
+
+        return `
+          <div class="message-row ${outgoing ? 'outgoing' : 'incoming'}">
+            <div class="bubble">
+              ${outgoing ? '' : `<div class="message-person">${escapeHtml(getMessagePerson(message, conversation))}</div>`}
+              ${media}
+              ${body ? `<div class="message-text">${escapeHtml(body)}</div>` : ''}
+              <div class="message-time">${escapeHtml(formatDateTime(message.timestamp_ts))}</div>
+            </div>
+          </div>
+        `;
+      }).join('');
+
+      els.messageList.scrollTop = els.messageList.scrollHeight;
+    }
+
+    async function loadSession() {
+      const data = await fetchJson('/auth/me');
+      state.auth = data.user;
+      els.sessionBadge.textContent = `${data.user.name} | ${String(data.user.role || '').toUpperCase()}`;
+    }
+
+    async function loadStatus() {
+      try {
+        const data = await fetchJson('/api/status');
+        renderStatus(data);
+      } catch (error) {
+        els.whatsappState.textContent = 'Error';
+        els.whatsappDetail.textContent = error.message;
+      }
+    }
+
+    async function loadConversations(options = {}) {
+      try {
+        const data = await fetchJson('/api/chats');
+        state.conversations = data.conversations || [];
+
+        if (!options.preserveSelection && !state.selectedChatId && !state.draftPhone && state.conversations.length) {
+          state.selectedChatId = state.conversations[0].chat_id;
+        }
+
+        if (state.selectedChatId && !state.conversations.some(item => item.chat_id === state.selectedChatId)) {
+          state.selectedChatId = state.conversations[0] ? state.conversations[0].chat_id : '';
+        }
+
+        renderConversations();
+        renderChatHeader();
+
+        if (state.selectedChatId) {
+          await loadMessages();
+        }
+      } catch (error) {
+        els.chatList.innerHTML = `<div class="empty">${escapeHtml(error.message)}</div>`;
+      }
+    }
+
+    async function loadMessages() {
+      if (!state.selectedChatId) {
+        renderMessages([]);
+        return;
+      }
+
+      try {
+        const data = await fetchJson('/api/messages?chatId=' + encodeURIComponent(state.selectedChatId));
+        renderMessages(data.messages || []);
+      } catch (error) {
+        els.messageList.innerHTML = `<div class="empty">${escapeHtml(error.message)}</div>`;
+      }
+    }
+
+    async function refreshAll(options = {}) {
+      if (state.loading) {
+        return;
+      }
+
+      state.loading = true;
+      els.lastRefresh.textContent = 'Actualizando...';
+
+      try {
+        await loadStatus();
+        await loadConversations({ preserveSelection: options.preserveSelection !== false });
+        els.lastRefresh.textContent = 'Actualizado ' + formatDateTime(Date.now());
+      } finally {
+        state.loading = false;
+      }
+    }
+
+    function readFileAsBase64(file) {
+      return new Promise((resolve, reject) => {
+        if (!file) {
+          resolve(null);
+          return;
+        }
+
+        const reader = new FileReader();
+
+        reader.onload = () => {
+          const result = String(reader.result || '');
+          const commaIndex = result.indexOf(',');
+          resolve(commaIndex === -1 ? result : result.slice(commaIndex + 1));
+        };
+        reader.onerror = () => reject(reader.error || new Error('No se pudo leer el archivo'));
+        reader.readAsDataURL(file);
+      });
+    }
+
+    async function sendReply(event) {
+      event.preventDefault();
+
+      const conversation = getSelectedConversation();
+      const targetChatId = conversation && conversation.chat_id || '';
+      const targetPhone = state.draftPhone || conversation && conversation.phone || '';
+      const message = els.replyMessage.value.trim();
+      const file = els.mediaInput.files[0] || null;
+
+      if (!targetChatId && !targetPhone) {
+        els.sendError.textContent = 'Falta chat o telefono';
+        return;
+      }
+
+      if (!message && !file) {
+        els.sendError.textContent = 'Falta mensaje o archivo';
+        return;
+      }
+
+      if (file && file.size > state.mediaLimitBytes) {
+        els.sendError.textContent = 'El archivo supera el limite configurado';
+        return;
+      }
+
+      els.sendBtn.disabled = true;
+      els.sendError.textContent = 'Enviando...';
+
+      try {
+        const media = file ? {
+          filename: file.name,
+          mimetype: file.type || 'application/octet-stream',
+          data: await readFileAsBase64(file)
+        } : null;
+        const data = await fetchJson('/api/messages/send', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            chatId: targetChatId,
+            phone: targetChatId ? '' : targetPhone,
+            message,
+            media
+          })
+        });
+
+        state.selectedChatId = data.chatId || targetChatId;
+        state.draftPhone = '';
+        els.replyMessage.value = '';
+        els.mediaInput.value = '';
+        els.sendError.textContent = 'Enviado';
+        await loadConversations({ preserveSelection: true });
+        await loadMessages();
+      } catch (error) {
+        els.sendError.textContent = error.message;
+      } finally {
+        els.sendBtn.disabled = false;
+        renderChatHeader();
+      }
+    }
+
+    els.refreshBtn.addEventListener('click', () => refreshAll({ preserveSelection: true }));
+    els.replyForm.addEventListener('submit', sendReply);
+
+    els.startChatBtn.addEventListener('click', () => {
+      const phone = cleanPhone(els.phoneInput.value);
+
+      if (!phone) {
+        els.sendError.textContent = 'Falta telefono';
+        return;
+      }
+
+      state.selectedChatId = '';
+      state.draftPhone = phone;
+      els.phoneInput.value = '';
+      els.sendError.textContent = '';
+      renderConversations();
+      renderChatHeader();
+      renderMessages([]);
+      els.replyMessage.focus();
+    });
+
+    els.mediaInput.addEventListener('change', () => {
+      const file = els.mediaInput.files[0];
+      els.clearFileBtn.disabled = !file;
+      els.sendError.textContent = file ? file.name : '';
+    });
+
+    els.clearFileBtn.addEventListener('click', () => {
+      els.mediaInput.value = '';
+      els.clearFileBtn.disabled = true;
+      els.sendError.textContent = '';
+    });
+
+    els.logoutBtn.addEventListener('click', async () => {
+      await fetch('/auth/logout', { method: 'POST' }).catch(() => {});
+      window.location.href = '/login';
+    });
+
+    els.reconnectBtn.addEventListener('click', async () => {
+      els.reconnectBtn.disabled = true;
+
+      try {
+        await fetchJson('/api/whatsapp/reconnect', { method: 'POST' });
+        await loadStatus();
+      } catch (error) {
+        els.whatsappDetail.textContent = error.message;
+      } finally {
+        els.reconnectBtn.disabled = false;
+      }
+    });
+
+    els.resetAuthBtn.addEventListener('click', async () => {
+      if (!window.confirm('Resetear la sesion secundaria de WhatsApp?')) {
+        return;
+      }
+
+      els.resetAuthBtn.disabled = true;
+
+      try {
+        await fetchJson('/api/whatsapp/reset-auth', { method: 'POST' });
+        await loadStatus();
+      } catch (error) {
+        els.whatsappDetail.textContent = error.message;
+      } finally {
+        els.resetAuthBtn.disabled = false;
+      }
+    });
+
+    (async function boot() {
+      try {
+        await loadSession();
+        await refreshAll({ preserveSelection: false });
+        setInterval(() => refreshAll({ preserveSelection: true }), 6000);
+      } catch (error) {
+        els.lastRefresh.textContent = error.message;
+      }
+    })();
+  </script>
+</body>
+
+</html>

@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Ingresar | WhatsApp 2</title>
+  <style>
+    :root {
+      --bg: #f5f7fb;
+      --panel: #ffffff;
+      --line: #d7deea;
+      --text: #17202a;
+      --muted: #66758a;
+      --accent: #2563eb;
+      --accent-soft: #e8f0ff;
+      --bad: #bd2c2c;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      min-height: 100vh;
+      margin: 0;
+      display: grid;
+      place-items: center;
+      background: var(--bg);
+      color: var(--text);
+      font-family: Arial, Helvetica, sans-serif;
+      font-size: 15px;
+      padding: 24px;
+    }
+
+    .login-panel {
+      width: min(420px, 100%);
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 28px;
+      box-shadow: 0 18px 45px rgba(23, 32, 42, 0.12);
+    }
+
+    .brand {
+      width: 48px;
+      height: 48px;
+      border-radius: 8px;
+      display: grid;
+      place-items: center;
+      background: var(--accent-soft);
+      color: var(--accent);
+      font-weight: 700;
+      margin-bottom: 18px;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 24px;
+      letter-spacing: 0;
+    }
+
+    .subtitle {
+      margin: 6px 0 22px;
+      color: var(--muted);
+      line-height: 1.4;
+    }
+
+    label {
+      display: block;
+      margin: 14px 0 6px;
+      font-size: 13px;
+      color: var(--muted);
+      font-weight: 700;
+    }
+
+    input {
+      width: 100%;
+      min-height: 42px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 10px 12px;
+      color: var(--text);
+      font: inherit;
+      background: #ffffff;
+    }
+
+    input:focus {
+      outline: 2px solid #bfdbfe;
+      border-color: var(--accent);
+    }
+
+    button {
+      width: 100%;
+      min-height: 42px;
+      margin-top: 20px;
+      border: 1px solid var(--accent);
+      border-radius: 8px;
+      background: var(--accent);
+      color: #ffffff;
+      font: inherit;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    button:disabled {
+      cursor: progress;
+      opacity: 0.7;
+    }
+
+    .error {
+      min-height: 22px;
+      margin-top: 14px;
+      color: var(--bad);
+      font-size: 14px;
+      line-height: 1.35;
+    }
+  </style>
+</head>
+<body>
+  <main class="login-panel">
+    <div class="brand">W2</div>
+    <h1>Ingresar</h1>
+    <p class="subtitle">Sesion secundaria de mensajes WhatsApp</p>
+
+    <form id="loginForm">
+      <label for="username">Usuario</label>
+      <input id="username" name="username" autocomplete="username" autofocus required>
+
+      <label for="password">Contrasena</label>
+      <input id="password" name="password" type="password" autocomplete="current-password" required>
+
+      <button id="submitBtn" type="submit">Entrar</button>
+      <div id="error" class="error" role="alert"></div>
+    </form>
+  </main>
+
+  <script>
+    const form = document.getElementById('loginForm');
+    const submitBtn = document.getElementById('submitBtn');
+    const errorBox = document.getElementById('error');
+    const params = new URLSearchParams(window.location.search);
+    const next = params.get('next') || '/dashboard';
+
+    form.addEventListener('submit', async event => {
+      event.preventDefault();
+      errorBox.textContent = '';
+      submitBtn.disabled = true;
+
+      try {
+        const response = await fetch('/auth/login', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            username: form.username.value.trim(),
+            password: form.password.value,
+            next
+          })
+        });
+        const data = await response.json().catch(() => ({}));
+
+        if (!response.ok || !data.success) {
+          throw new Error(data.error || 'No se pudo iniciar sesion');
+        }
+
+        window.location.href = data.redirect || '/dashboard';
+      } catch (error) {
+        errorBox.textContent = error.message;
+      } finally {
+        submitBtn.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>

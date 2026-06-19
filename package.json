@@ -4,8 +4,10 @@
   "main": "server.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "start": "node server.js",
+    "start": "node index.js",
     "dev": "nodemon server.js",
+    "dev:second": "nodemon secondServer.js",
+    "start:second": "node secondServer.js",
     "tickets:run": "node ticketsJob.js"
   },
   "keywords": [],
@@ -15,6 +17,7 @@
   "dependencies": {
     "cors": "^2.8.6",
     "express": "^5.2.1",
+    "mysql2": "^3.22.5",
     "qrcode-terminal": "^0.12.0",
     "whatsapp-web.js": "^1.34.7"
   },
