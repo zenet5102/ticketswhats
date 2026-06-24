@@ -1,0 +1,1357 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Phantom</title>
+  <style>
+    :root {
+      --bg: #f5f7fb;
+      --panel: #ffffff;
+      --line: #d7deea;
+      --text: #17202a;
+      --muted: #66758a;
+      --accent: #2563eb;
+      --accent-soft: #e8f0ff;
+      --good: #11845b;
+      --good-soft: #e6f6ee;
+      --bad: #bd2c2c;
+      --bad-soft: #fde8e8;
+      --warn: #a16207;
+      --warn-soft: #fff4d6;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: Arial, Helvetica, sans-serif;
+      font-size: 15px;
+    }
+
+    .topbar {
+      border-bottom: 1px solid var(--line);
+      background: var(--panel);
+    }
+
+    .topbar-inner,
+    .content {
+      width: min(1240px, calc(100% - 32px));
+      margin: 0 auto;
+    }
+
+    .topbar-inner {
+      min-height: 68px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 24px;
+      letter-spacing: 0;
+    }
+
+    .subtitle {
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .actions {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      gap: 8px;
+    }
+
+    button,
+    .button-link,
+    .session-chip {
+      min-height: 38px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      color: var(--text);
+      padding: 0 12px;
+      font: inherit;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      white-space: nowrap;
+      text-decoration: none;
+    }
+
+    .session-chip {
+      color: var(--muted);
+      cursor: default;
+      background: #f8fafc;
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    button.primary {
+      border-color: var(--accent);
+      background: var(--accent);
+      color: #ffffff;
+      font-weight: 700;
+    }
+
+    button.danger {
+      border-color: #f0b5b5;
+      color: var(--bad);
+    }
+
+    button:disabled {
+      cursor: progress;
+      opacity: 0.7;
+    }
+
+    .content {
+      padding: 18px 0 32px;
+    }
+
+    .status-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+
+    .metric,
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+    }
+
+    .metric {
+      min-height: 88px;
+      padding: 14px;
+    }
+
+    .metric-label {
+      color: var(--muted);
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0;
+      margin-bottom: 8px;
+    }
+
+    .metric-value {
+      font-size: 20px;
+      font-weight: 700;
+      word-break: break-word;
+    }
+
+    .metric-detail {
+      margin-top: 7px;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.35;
+      word-break: break-word;
+    }
+
+    .error-text {
+      color: var(--bad);
+      font-size: 13px;
+      min-height: 18px;
+      overflow-wrap: anywhere;
+      margin-bottom: 12px;
+    }
+
+    .table-panel {
+      overflow: hidden;
+    }
+
+    .message-panel {
+      margin-bottom: 16px;
+    }
+
+    .message-form {
+      padding: 12px;
+      display: grid;
+      gap: 10px;
+    }
+
+    input,
+    textarea {
+      width: 100%;
+      resize: vertical;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 10px;
+      color: var(--text);
+      font: inherit;
+      line-height: 1.4;
+    }
+
+    input {
+      min-height: 38px;
+      resize: none;
+    }
+
+    textarea {
+      min-height: 112px;
+    }
+
+    .placeholder-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+
+    .template-list {
+      display: grid;
+      gap: 6px;
+      max-height: 180px;
+      overflow: auto;
+    }
+
+    .template-item {
+      width: 100%;
+      min-height: 42px;
+      justify-content: space-between;
+      text-align: left;
+      white-space: normal;
+    }
+
+    .template-item.active {
+      border-color: var(--accent);
+      background: var(--accent-soft);
+    }
+
+    .message-footer {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .template-actions {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .queue-list {
+      display: none;
+      gap: 6px;
+      max-height: 180px;
+      overflow: auto;
+      border-top: 1px solid var(--line);
+      padding-top: 8px;
+    }
+
+    .queue-item {
+      display: grid;
+      grid-template-columns: minmax(90px, 1fr) auto;
+      gap: 8px;
+      align-items: start;
+      font-size: 13px;
+    }
+
+    .queue-item-detail {
+      color: var(--muted);
+      overflow-wrap: anywhere;
+    }
+
+    .table-head {
+      min-height: 52px;
+      border-bottom: 1px solid var(--line);
+      padding: 12px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .panel-title {
+      font-weight: 700;
+    }
+
+    .table-controls {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .page-size {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      color: var(--muted);
+      font-size: 13px;
+      white-space: nowrap;
+    }
+
+    select {
+      min-height: 38px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      color: var(--text);
+      padding: 0 10px;
+      font: inherit;
+      cursor: pointer;
+    }
+
+    select:disabled {
+      cursor: progress;
+      opacity: 0.7;
+    }
+
+    .badge {
+      min-height: 26px;
+      border-radius: 8px;
+      padding: 4px 8px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--muted);
+      background: #f1f5f9;
+      border: 1px solid var(--line);
+      white-space: nowrap;
+    }
+
+    .badge.good {
+      color: var(--good);
+      background: var(--good-soft);
+      border-color: #b9e4ce;
+    }
+
+    .badge.warn {
+      color: var(--warn);
+      background: var(--warn-soft);
+      border-color: #f0d28a;
+    }
+
+    .badge.bad {
+      color: var(--bad);
+      background: var(--bad-soft);
+      border-color: #f0b5b5;
+    }
+
+    .table-wrap {
+      max-height: 540px;
+      overflow: auto;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      min-width: 720px;
+    }
+
+    th,
+    td {
+      border-bottom: 1px solid var(--line);
+      padding: 9px 10px;
+      text-align: left;
+      vertical-align: top;
+      overflow-wrap: anywhere;
+    }
+
+    th {
+      position: sticky;
+      top: 0;
+      background: #f8fafc;
+      color: var(--muted);
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0;
+      z-index: 1;
+    }
+
+    .sort-button {
+      width: 100%;
+      min-height: auto;
+      border: 0;
+      border-radius: 0;
+      background: transparent;
+      color: inherit;
+      padding: 0;
+      display: inline-flex;
+      justify-content: flex-start;
+      gap: 6px;
+      font: inherit;
+      font-weight: 700;
+      text-align: left;
+      text-transform: inherit;
+      white-space: normal;
+    }
+
+    .sort-button:disabled {
+      cursor: default;
+      opacity: 1;
+    }
+
+    .sort-indicator {
+      color: var(--accent);
+      flex: 0 0 auto;
+    }
+
+    td {
+      background: #ffffff;
+      font-size: 13px;
+    }
+
+    .empty {
+      padding: 34px 16px;
+      color: var(--muted);
+      text-align: center;
+      line-height: 1.4;
+    }
+
+    @media (max-width: 860px) {
+      .topbar-inner {
+        align-items: stretch;
+        flex-direction: column;
+        padding: 14px 0;
+      }
+
+      .actions {
+        justify-content: stretch;
+      }
+
+      .actions button,
+      .actions .button-link,
+      .actions .session-chip {
+        flex: 1 1 calc(50% - 8px);
+      }
+
+      .status-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .table-head {
+        align-items: stretch;
+        flex-direction: column;
+      }
+
+      .table-controls {
+        justify-content: stretch;
+      }
+
+      .table-controls button,
+      .table-controls select,
+      .template-actions button,
+      .table-controls .badge {
+        flex: 1 1 auto;
+      }
+    }
+  </style>
+</head>
+
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <div>
+        <h1>Phantom</h1>
+        <div class="subtitle" id="lastRefresh">Cargando...</div>
+      </div>
+      <div class="actions">
+        <a class="button-link" href="/mensajes">Mensajes</a>
+        <a id="usersLink" class="button-link" href="/usuarios" hidden>Usuarios</a>
+        <span id="sessionBadge" class="session-chip">Sesion</span>
+        <button id="refreshBtn" class="primary" type="button">Actualizar</button>
+        <button id="logoutBtn" type="button">Salir</button>
+      </div>
+    </div>
+  </header>
+
+  <main class="content">
+    <section class="status-grid" aria-label="Estado">
+      <div class="metric">
+        <div class="metric-label">Estado</div>
+        <div class="metric-value" id="statusValue">--</div>
+        <div class="metric-detail" id="statusDetail">--</div>
+      </div>
+      <div class="metric">
+        <div class="metric-label">Registros</div>
+        <div class="metric-value" id="rowCount">0</div>
+        <div class="metric-detail" id="rowDetail">Sin datos</div>
+      </div>
+      <div class="metric">
+        <div class="metric-label">Actualizacion</div>
+        <div class="metric-value" id="lastRunValue">--</div>
+        <div class="metric-detail">Consulta masiva</div>
+      </div>
+    </section>
+
+    <div id="errorText" class="error-text"></div>
+
+    <section class="panel message-panel">
+      <div class="table-head">
+        <div class="panel-title">Mensaje</div>
+        <span id="templateStatus" class="badge">Cargando</span>
+      </div>
+      <div class="message-form">
+        <input id="templateName" type="text" maxlength="120" placeholder="Nombre del template">
+        <textarea id="messageTemplate" spellcheck="true"></textarea>
+        <div class="placeholder-list" id="templatePlaceholders"></div>
+        <div class="template-list" id="templateList"></div>
+        <div class="message-footer">
+          <span class="muted" id="queueStatus">Sin cola</span>
+          <div class="template-actions">
+            <button id="newTemplateBtn" type="button">Nuevo</button>
+            <button id="deleteTemplateBtn" class="danger" type="button">Eliminar</button>
+            <button id="saveTemplateBtn" class="primary" type="button">Guardar</button>
+          </div>
+        </div>
+        <div class="queue-list" id="queueList"></div>
+      </div>
+    </section>
+
+    <section class="panel table-panel">
+      <div class="table-head">
+        <div class="panel-title">Resultado</div>
+        <div class="table-controls">
+          <label class="page-size" for="pageSize">
+            <span>Filas</span>
+            <select id="pageSize">
+              <option value="10">10</option>
+              <option value="25">25</option>
+              <option value="50">50</option>
+              <option value="100">100</option>
+            </select>
+          </label>
+          <button id="prevPageBtn" type="button">Anterior</button>
+          <span id="pageBadge" class="badge">Pagina 1</span>
+          <button id="nextPageBtn" type="button">Siguiente</button>
+          <button id="enqueueBtn" class="primary" type="button">Encolar</button>
+          <span id="resultBadge" class="badge">Esperando</span>
+        </div>
+      </div>
+      <div id="resultWrap" class="table-wrap">
+        <div class="empty">Sin consulta ejecutada.</div>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const state = {
+      user: null,
+      rows: [],
+      limit: 10,
+      offset: 0,
+      loading: false,
+      queueByKey: new Map(),
+      queueItems: [],
+      templates: [],
+      selectedTemplateId: '',
+      sortIndex: -1,
+      sortDirection: 'asc'
+    };
+
+    const MAX_FETCH_ROWS = 500;
+
+    const els = {
+      deleteTemplateBtn: document.getElementById('deleteTemplateBtn'),
+      enqueueBtn: document.getElementById('enqueueBtn'),
+      errorText: document.getElementById('errorText'),
+      lastRunValue: document.getElementById('lastRunValue'),
+      lastRefresh: document.getElementById('lastRefresh'),
+      logoutBtn: document.getElementById('logoutBtn'),
+      messageTemplate: document.getElementById('messageTemplate'),
+      newTemplateBtn: document.getElementById('newTemplateBtn'),
+      nextPageBtn: document.getElementById('nextPageBtn'),
+      pageBadge: document.getElementById('pageBadge'),
+      pageSize: document.getElementById('pageSize'),
+      prevPageBtn: document.getElementById('prevPageBtn'),
+      queueList: document.getElementById('queueList'),
+      queueStatus: document.getElementById('queueStatus'),
+      refreshBtn: document.getElementById('refreshBtn'),
+      resultBadge: document.getElementById('resultBadge'),
+      resultWrap: document.getElementById('resultWrap'),
+      rowCount: document.getElementById('rowCount'),
+      rowDetail: document.getElementById('rowDetail'),
+      saveTemplateBtn: document.getElementById('saveTemplateBtn'),
+      sessionBadge: document.getElementById('sessionBadge'),
+      statusDetail: document.getElementById('statusDetail'),
+      statusValue: document.getElementById('statusValue'),
+      templateList: document.getElementById('templateList'),
+      templateName: document.getElementById('templateName'),
+      templatePlaceholders: document.getElementById('templatePlaceholders'),
+      templateStatus: document.getElementById('templateStatus'),
+      usersLink: document.getElementById('usersLink')
+    };
+
+    const TABLE_COLUMNS = [
+      {
+        label: 'ID',
+        keys: ['id', 'ID', 'Id', 'IDA', 'ida', 'ClienteID', 'Cliente_Id', 'Codigo', 'CodigoCliente']
+      },
+      {
+        label: 'Razon social',
+        keys: ['razonSocial', 'RS', 'RazonSocial', 'Razon_Social', 'Razon Social', 'Razon', 'razon_social'],
+        fallback: row => [row.Apellido, row.Nombre].filter(Boolean).join(' ')
+      },
+      {
+        label: 'Deuda',
+        keys: ['deuda', 'balance', 'Balance_CC', 'Balance', 'Saldo', 'SaldoCC', 'SaldoCuentaCorriente']
+      },
+      {
+        label: 'Estado',
+        keys: ['estado', 'Estado']
+      },
+      {
+        label: 'Movil',
+        keys: ['movil', 'Movil', 'Móvil', 'Celular', 'celular', 'Mobile', 'TelefonoMovil', 'TelMovil', 'Movi', 'movi']
+      },
+      {
+        label: 'Telefono',
+        keys: ['telefono', 'Telefono', 'Teléfono', 'Tel', 'tel', 'Telefono1', 'Telefono_1']
+      },
+      {
+        label: 'Comprobantes adeudados',
+        keys: ['comprobantesAdeudados', 'C_Comprobantes_Adeudados', 'Fecha_Ultimo_Mov', 'ComprobantesAdeudados', 'Comprobantes_Adeudados', 'compAdeudados', 'comp_adeudados', 'Adeudados']
+      },
+      {
+        label: 'Cola',
+        keys: [],
+        value: row => getQueueStatusText(row),
+        render: row => renderQueueStatus(row)
+      },
+      {
+        label: 'Chat',
+        keys: [],
+        value: row => getRowChatPhone(row),
+        render: row => renderChatLink(row)
+      }
+    ];
+
+    function escapeHtml(value) {
+      return String(value === undefined || value === null ? '' : value)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
+
+    function formatDateTime(value) {
+      const date = new Date(Number(value) || value || Date.now());
+
+      return new Intl.DateTimeFormat('es-AR', {
+        day: '2-digit',
+        month: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit'
+      }).format(date);
+    }
+
+    function setBadge(text, tone) {
+      els.resultBadge.className = `badge ${tone || ''}`.trim();
+      els.resultBadge.textContent = text;
+    }
+
+    function getPageNumber() {
+      return Math.floor(state.offset / state.limit) + 1;
+    }
+
+    function getSortedRows() {
+      const rows = state.rows.slice();
+      const column = TABLE_COLUMNS[state.sortIndex];
+
+      if (!column) {
+        return rows;
+      }
+
+      const direction = state.sortDirection === 'desc' ? -1 : 1;
+
+      return rows.sort((left, right) => {
+        return compareSortValues(getFieldValue(left, column), getFieldValue(right, column)) * direction;
+      });
+    }
+
+    function getVisibleRows() {
+      return getSortedRows().slice(state.offset, state.offset + state.limit);
+    }
+
+    function renderPagination() {
+      const total = state.rows.length;
+      const page = getPageNumber();
+      els.pageBadge.textContent = 'Pagina ' + page;
+      els.prevPageBtn.disabled = state.loading || state.offset <= 0;
+      els.nextPageBtn.disabled = state.loading || state.offset + state.limit >= total;
+      els.pageSize.disabled = state.loading;
+      els.pageSize.value = String(state.limit);
+    }
+
+    function setLoading(loading) {
+      state.loading = loading;
+      els.refreshBtn.disabled = loading;
+      els.enqueueBtn.disabled = loading;
+      renderPagination();
+    }
+
+    async function fetchJson(url, options = {}) {
+      const response = await fetch(url, options);
+
+      if (response.status === 401) {
+        window.location.href = '/login?next=' + encodeURIComponent(window.location.pathname + window.location.search);
+        return new Promise(() => { });
+      }
+
+      const data = await response.json().catch(() => ({}));
+
+      if (!response.ok || !data.success) {
+        throw new Error(data.error || 'Error de API');
+      }
+
+      return data;
+    }
+
+    function getFieldValue(row, column) {
+      if (!row || typeof row !== 'object' || Array.isArray(row)) {
+        return '';
+      }
+
+      if (typeof column.value === 'function') {
+        return column.value(row);
+      }
+
+      for (const key of column.keys) {
+        if (row[key] !== undefined && row[key] !== null && row[key] !== '') {
+          return row[key];
+        }
+      }
+
+      return typeof column.fallback === 'function' ? column.fallback(row) : '';
+    }
+
+    function formatCell(value) {
+      if (value === undefined || value === null) {
+        return '';
+      }
+
+      if (typeof value === 'object') {
+        return JSON.stringify(value);
+      }
+
+      return String(value);
+    }
+    function getFirstPhoneFromValue(value) {
+      return String(value || '')
+        .split(';')[0]
+        .replace(/\D/g, '')
+        .trim();
+    }
+
+    function normalizeClientMobile(value) {
+      let phone = getFirstPhoneFromValue(value);
+
+      if (!phone) {
+        return '';
+      }
+
+      // Si viene como 15xxxxxxx, quitar el 15 y usar 11xxxxxxx
+      if (phone.startsWith('15')) {
+        phone = '11' + phone.slice(2);
+      }
+
+      // Validar CABA/AMBA: debe empezar con 11
+      if (!phone.startsWith('11')) {
+        return '';
+      }
+
+      // Si viene local 11..., agregar prefijo Argentina celular
+      if (!phone.startsWith('549')) {
+        phone = '549' + phone;
+      }
+
+      return phone;
+    }
+
+    function getRowChatPhone(row) {
+      const movilColumn = TABLE_COLUMNS.find(column => column.label === 'Movil');
+      return normalizeClientMobile(getFieldValue(row, movilColumn));
+    }
+
+    function renderChatLink(row) {
+      const phone = getRowChatPhone(row);
+
+      if (!phone) {
+        return '<span class="badge bad">Sin movil valido</span>';
+      }
+
+      return '<a class="button-link" href="/mensajes?tel=' + encodeURIComponent(phone) + '">Chat</a>';
+    }
+
+    function getRowQueueKey(row) {
+      const id = String(getFieldValue(row, TABLE_COLUMNS[0]) || '').trim();
+
+      if (id) {
+        return 'phantom:' + id;
+      }
+
+      return '';
+    }
+
+    function queueTone(status) {
+      if (status === 'sent') {
+        return 'good';
+      }
+
+      if (status === 'error') {
+        return 'bad';
+      }
+
+      if (status === 'pending' || status === 'sending') {
+        return 'warn';
+      }
+
+      return '';
+    }
+
+    function queueLabel(status) {
+      const labels = {
+        pending: 'Pendiente',
+        sending: 'Enviando',
+        sent: 'Enviado OK',
+        error: 'Fallo'
+      };
+
+      return labels[status] || 'Sin cola';
+    }
+
+    function getQueueItemForRow(row) {
+      const key = getRowQueueKey(row);
+      return key ? state.queueByKey.get(key) : null;
+    }
+
+    function getQueueStatusText(row) {
+      const item = getQueueItemForRow(row);
+      return queueLabel(item && item.status);
+    }
+
+    function renderQueueStatus(row) {
+      const item = getQueueItemForRow(row);
+
+      if (!item) {
+        return '<span class="badge">Sin cola</span>';
+      }
+
+      const detail = item.status === 'error' && item.last_error
+        ? '<div class="queue-item-detail">' + escapeHtml(item.last_error) + '</div>'
+        : item.sent_at
+          ? '<div class="queue-item-detail">' + escapeHtml(formatDateTime(item.sent_at)) + '</div>'
+          : '';
+
+      return '<span class="badge ' + queueTone(item.status) + '">' + escapeHtml(queueLabel(item.status)) + '</span>' + detail;
+    }
+
+    function toComparableNumber(value) {
+      if (typeof value === 'number') {
+        return Number.isFinite(value) ? value : null;
+      }
+
+      const text = String(value === undefined || value === null ? '' : value).trim();
+
+      if (!text) {
+        return null;
+      }
+
+      const clean = text.replace(/\s/g, '').replace(/[$%]/g, '');
+
+      if (/^-?\d{1,3}(\.\d{3})*(,\d+)?$/.test(clean)) {
+        return Number(clean.replace(/\./g, '').replace(',', '.'));
+      }
+
+      if (/^-?\d+([.,]\d+)?$/.test(clean)) {
+        return Number(clean.replace(',', '.'));
+      }
+
+      return null;
+    }
+
+    function compareSortValues(left, right) {
+      const leftText = formatCell(left).trim();
+      const rightText = formatCell(right).trim();
+
+      if (!leftText && !rightText) {
+        return 0;
+      }
+
+      if (!leftText) {
+        return 1;
+      }
+
+      if (!rightText) {
+        return -1;
+      }
+
+      const leftNumber = toComparableNumber(left);
+      const rightNumber = toComparableNumber(right);
+
+      if (leftNumber !== null && rightNumber !== null) {
+        return leftNumber - rightNumber;
+      }
+
+      return leftText.localeCompare(rightText, 'es', {
+        numeric: true,
+        sensitivity: 'base'
+      });
+    }
+
+    function renderTable(rows) {
+      if (!rows.length) {
+        els.resultWrap.innerHTML = '<div class="empty">La consulta no devolvio registros.</div>';
+        return;
+      }
+
+      const head = TABLE_COLUMNS.map((column, index) => {
+        const active = index === state.sortIndex;
+        const indicator = active
+          ? '<span class="sort-indicator">' + (state.sortDirection === 'asc' ? '🔺' : '🔻') + '</span>'
+          : '';
+        const ariaSort = active
+          ? (state.sortDirection === 'asc' ? 'ascending' : 'descending')
+          : 'none';
+
+        return '<th aria-sort="' + ariaSort + '">' +
+          '<button class="sort-button" type="button" data-sort-index="' + index + '">' +
+          '<span>' + escapeHtml(column.label) + '</span>' +
+          indicator +
+          '</button>' +
+          '</th>';
+      }).join('');
+      const body = rows.map(row => {
+        const cells = TABLE_COLUMNS.map(column => {
+          if (typeof column.render === 'function') {
+            return '<td>' + column.render(row) + '</td>';
+          }
+
+          const value = formatCell(getFieldValue(row, column));
+          return '<td>' + escapeHtml(value === '' ? '--' : value) + '</td>';
+        }).join('');
+
+        return '<tr>' + cells + '</tr>';
+      }).join('');
+
+      els.resultWrap.innerHTML = `
+        <table>
+          <thead>
+            <tr>${head}</tr>
+          </thead>
+          <tbody>${body}</tbody>
+        </table>
+      `;
+
+      els.resultWrap.querySelectorAll('button[data-sort-index]').forEach(button => {
+        button.addEventListener('click', () => {
+          const index = Number.parseInt(button.dataset.sortIndex, 10);
+
+          if (!Number.isFinite(index)) {
+            return;
+          }
+
+          if (state.sortIndex === index) {
+            state.sortDirection = state.sortDirection === 'asc' ? 'desc' : 'asc';
+          } else {
+            state.sortIndex = index;
+            state.sortDirection = 'asc';
+          }
+
+          state.offset = 0;
+          renderCurrentPage();
+        });
+      });
+    }
+
+    function clampOffset() {
+      if (!state.rows.length) {
+        state.offset = 0;
+        return;
+      }
+
+      if (state.offset >= state.rows.length) {
+        state.offset = Math.floor((state.rows.length - 1) / state.limit) * state.limit;
+      }
+    }
+
+    function renderCurrentPage() {
+      clampOffset();
+
+      const visibleRows = getVisibleRows();
+      const total = state.rows.length;
+      const page = getPageNumber();
+      const rangeStart = visibleRows.length ? state.offset + 1 : 0;
+      const rangeEnd = state.offset + visibleRows.length;
+
+      els.rowCount.textContent = String(total);
+      els.rowDetail.textContent = visibleRows.length
+        ? `Pagina ${page} | ${rangeStart}-${rangeEnd} de ${total}`
+        : 'Sin registros';
+
+      renderTable(visibleRows);
+      renderPagination();
+    }
+
+    async function loadSession() {
+      const data = await fetchJson('/auth/me');
+      state.user = data.user;
+      els.sessionBadge.textContent = `${data.user.name} | ${String(data.user.role || '').toUpperCase()}`;
+      els.usersLink.hidden = data.user.role !== 'admin';
+      applyTemplatePermissions();
+    }
+
+    function canManageTemplates() {
+      return Boolean(state.user && state.user.role === 'admin');
+    }
+
+    function applyTemplatePermissions() {
+      const canManage = canManageTemplates();
+      els.templateName.disabled = !canManage;
+      els.messageTemplate.disabled = !canManage;
+      els.newTemplateBtn.disabled = !canManage;
+      els.saveTemplateBtn.disabled = !canManage;
+      els.deleteTemplateBtn.disabled = !canManage || !state.selectedTemplateId || state.templates.length <= 1;
+    }
+
+    function normalizeTemplateItems(data) {
+      if (Array.isArray(data.messageTemplates)) {
+        return data.messageTemplates;
+      }
+
+      return (data.templates || []).map((body, index) => ({
+        id: 'tpl_' + (index + 1),
+        name: 'Template ' + (index + 1),
+        body
+      }));
+    }
+
+    function getSelectedTemplate() {
+      return state.templates.find(template => template.id === state.selectedTemplateId) || null;
+    }
+
+    function renderTemplateEditor() {
+      const template = getSelectedTemplate();
+
+      if (!template) {
+        els.templateName.value = '';
+        els.messageTemplate.value = '';
+        els.templateStatus.textContent = 'Nuevo';
+        applyTemplatePermissions();
+        return;
+      }
+
+      if (document.activeElement !== els.templateName) {
+        els.templateName.value = template.name || '';
+      }
+
+      if (document.activeElement !== els.messageTemplate) {
+        els.messageTemplate.value = template.body || '';
+      }
+
+      els.templateStatus.textContent = state.templates.length === 1
+        ? '1 template'
+        : `${state.templates.length} templates`;
+      applyTemplatePermissions();
+    }
+
+    function selectTemplate(id) {
+      state.selectedTemplateId = id || '';
+      renderTemplateList();
+      renderTemplateEditor();
+    }
+
+    function renderTemplateList() {
+      if (!state.templates.length) {
+        els.templateList.innerHTML = '<div class="queue-item-detail">Sin templates.</div>';
+        return;
+      }
+
+      els.templateList.innerHTML = state.templates.map((template, index) => {
+        const active = template.id === state.selectedTemplateId ? ' active' : '';
+        return '<button class="template-item' + active + '" type="button" data-template-id="' + escapeHtml(template.id) + '">' +
+          '<span>' + escapeHtml(template.name || ('Template ' + (index + 1))) + '</span>' +
+          '<span class="badge">' + String(index + 1) + '</span>' +
+          '</button>';
+      }).join('');
+
+      els.templateList.querySelectorAll('button[data-template-id]').forEach(button => {
+        button.addEventListener('click', () => selectTemplate(button.dataset.templateId));
+      });
+    }
+
+    function renderTemplates(data, preferredTemplateId) {
+      const selectedTemplate = data.selectedTemplate && data.selectedTemplate.id
+        ? data.selectedTemplate
+        : null;
+
+      state.templates = normalizeTemplateItems(data);
+      const selectedTemplateId = selectedTemplate &&
+        state.templates.some(template => template.id === selectedTemplate.id)
+        ? selectedTemplate.id
+        : '';
+      const nextId = preferredTemplateId ||
+        selectedTemplateId ||
+        (state.templates.some(template => template.id === state.selectedTemplateId) ? state.selectedTemplateId : '') ||
+        (state.templates[0] && state.templates[0].id) ||
+        '';
+      state.selectedTemplateId = nextId;
+
+      els.templatePlaceholders.innerHTML = (data.placeholders || []).map(name => {
+        return '<span class="badge">' + escapeHtml('{' + name + '}') + '</span>';
+      }).join('');
+
+      renderTemplateList();
+      renderTemplateEditor();
+    }
+
+    async function loadTemplates() {
+      const data = await fetchJson('/api/message-templates');
+      renderTemplates(data);
+    }
+
+    function startNewTemplate() {
+      state.selectedTemplateId = '';
+      renderTemplateList();
+      els.templateName.value = '';
+      els.messageTemplate.value = '';
+      els.templateStatus.textContent = 'Nuevo';
+      applyTemplatePermissions();
+      els.templateName.focus();
+    }
+
+    function renderQueue(data) {
+      const items = data.items || [];
+      const stats = data.stats || {};
+      state.queueItems = items;
+      state.queueByKey = new Map(items
+        .filter(item => item.queue_key)
+        .map(item => [String(item.queue_key), item]));
+
+      els.queueStatus.textContent =
+        `Cola: ${stats.pending || 0} pendientes | ${stats.sent || 0} enviados | ${stats.error || 0} fallidos`;
+
+      const relevantItems = items
+        .filter(item => item.status === 'error' || item.status === 'sent' || item.status === 'pending' || item.status === 'sending')
+        .slice(0, 12);
+
+      els.queueList.innerHTML = relevantItems.length
+        ? relevantItems.map(item => {
+          const detail = item.status === 'error'
+            ? item.last_error || ''
+            : item.rendered_body || item.target || '';
+
+          return '<div class="queue-item">' +
+            '<div>' +
+            '<strong>' + escapeHtml(item.queue_key || item.target || String(item.id || '')) + '</strong>' +
+            '<div class="queue-item-detail">' + escapeHtml(detail) + '</div>' +
+            '</div>' +
+            '<span class="badge ' + queueTone(item.status) + '">' + escapeHtml(queueLabel(item.status)) + '</span>' +
+            '</div>';
+        }).join('')
+        : '<div class="queue-item-detail">Sin mensajes en cola.</div>';
+
+      renderCurrentPage();
+    }
+
+    async function loadQueueStatus() {
+      const data = await fetchJson('/api/message-queue?limit=200');
+      renderQueue(data);
+    }
+
+    async function saveTemplates() {
+      if (!canManageTemplates()) {
+        els.queueStatus.textContent = 'Solo admin puede modificar templates';
+        return;
+      }
+
+      els.saveTemplateBtn.disabled = true;
+      els.templateStatus.textContent = 'Guardando';
+
+      try {
+        const selectedId = state.selectedTemplateId;
+        const data = await fetchJson(selectedId
+          ? '/api/message-templates/' + encodeURIComponent(selectedId)
+          : '/api/message-templates', {
+          method: selectedId ? 'PUT' : 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            name: els.templateName.value.trim(),
+            body: els.messageTemplate.value
+          })
+        });
+        renderTemplates(data, data.selectedTemplate && data.selectedTemplate.id);
+        els.queueStatus.textContent = 'Template guardado';
+      } finally {
+        applyTemplatePermissions();
+      }
+    }
+
+    async function deleteTemplate() {
+      if (!canManageTemplates()) {
+        els.queueStatus.textContent = 'Solo admin puede eliminar templates';
+        return;
+      }
+
+      const template = getSelectedTemplate();
+
+      if (!template) {
+        return;
+      }
+
+      if (!window.confirm('Eliminar template ' + (template.name || template.id) + '?')) {
+        return;
+      }
+
+      els.deleteTemplateBtn.disabled = true;
+      els.templateStatus.textContent = 'Eliminando';
+
+      try {
+        const data = await fetchJson('/api/message-templates/' + encodeURIComponent(template.id), {
+          method: 'DELETE'
+        });
+        state.selectedTemplateId = '';
+        renderTemplates(data);
+        els.queueStatus.textContent = 'Template eliminado';
+      } finally {
+        applyTemplatePermissions();
+      }
+    }
+
+    async function loadData() {
+      els.errorText.textContent = '';
+      setLoading(true);
+      els.statusValue.textContent = 'Consultando';
+      els.statusDetail.textContent = 'Autenticando...';
+      setBadge('Cargando', 'warn');
+
+      try {
+        const params = new URLSearchParams({
+          limit: String(MAX_FETCH_ROWS),
+          offset: '0'
+        });
+        const data = await fetchJson('/api/phantom/consulta-masiva?' + params.toString(), {
+          method: 'GET'
+        });
+
+        state.rows = data.rows || [];
+        state.offset = 0;
+        els.statusValue.textContent = 'OK';
+        els.statusDetail.textContent = 'Consulta completada';
+        const refreshText = formatDateTime(data.receivedAt || Date.now());
+        els.lastRunValue.textContent = refreshText;
+        els.lastRefresh.textContent = 'Actualizado ' + refreshText;
+        setBadge('Completado', 'good');
+        renderCurrentPage();
+      } catch (error) {
+        els.statusValue.textContent = 'Error';
+        els.statusDetail.textContent = error.message;
+        els.errorText.textContent = error.message;
+        setBadge('Error', 'bad');
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    async function enqueueRows() {
+      if (!state.rows.length) {
+        els.queueStatus.textContent = 'Sin registros';
+        return;
+      }
+
+      els.enqueueBtn.disabled = true;
+      els.queueStatus.textContent = 'Encolando...';
+
+      try {
+        const data = await fetchJson('/api/message-queue', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            rows: state.rows
+          })
+        });
+        await loadQueueStatus().catch(() => renderQueue(data));
+        els.queueStatus.textContent = `${data.queued || 0} en cola | ${data.skipped || 0} omitidos`;
+      } catch (error) {
+        els.queueStatus.textContent = error.message;
+      } finally {
+        els.enqueueBtn.disabled = false;
+      }
+    }
+
+    els.refreshBtn.addEventListener('click', loadData);
+    els.enqueueBtn.addEventListener('click', enqueueRows);
+    els.newTemplateBtn.addEventListener('click', startNewTemplate);
+    els.deleteTemplateBtn.addEventListener('click', () => {
+      deleteTemplate().catch(error => {
+        els.templateStatus.textContent = 'Error';
+        els.queueStatus.textContent = error.message;
+      });
+    });
+    els.saveTemplateBtn.addEventListener('click', () => {
+      saveTemplates().catch(error => {
+        els.templateStatus.textContent = 'Error';
+        els.queueStatus.textContent = error.message;
+      });
+    });
+
+    els.prevPageBtn.addEventListener('click', () => {
+      if (state.loading || state.offset <= 0) {
+        return;
+      }
+
+      state.offset = Math.max(0, state.offset - state.limit);
+      renderCurrentPage();
+    });
+
+    els.nextPageBtn.addEventListener('click', () => {
+      if (state.loading || state.offset + state.limit >= state.rows.length) {
+        return;
+      }
+
+      state.offset += state.limit;
+      renderCurrentPage();
+    });
+
+    els.pageSize.addEventListener('change', () => {
+      const nextLimit = Number.parseInt(els.pageSize.value, 10);
+      state.limit = Number.isFinite(nextLimit) && nextLimit > 0 ? nextLimit : 10;
+      state.offset = 0;
+      renderCurrentPage();
+    });
+
+    els.logoutBtn.addEventListener('click', async () => {
+      await fetch('/auth/logout', { method: 'POST' }).catch(() => { });
+      window.location.href = '/login';
+    });
+
+    (async function boot() {
+      try {
+        renderPagination();
+        await loadSession();
+        await loadTemplates();
+        await loadQueueStatus().catch(() => { });
+        await loadData();
+        setInterval(() => loadQueueStatus().catch(() => { }), 15000);
+      } catch (error) {
+        els.lastRefresh.textContent = error.message;
+      }
+    })();
+  </script>
+</body>
+
+</html>

@@ -533,6 +533,30 @@
         width: 100%;
       }
     }
+
+    .modal {
+      display: none;
+      position: fixed;
+      z-index: 9999;
+      inset: 0;
+      background: rgba(0, 0, 0, .9);
+    }
+
+    .modal-content {
+      display: block;
+      max-width: 90%;
+      max-height: 90%;
+      margin: 3% auto;
+    }
+
+    .close {
+      position: absolute;
+      top: 20px;
+      right: 30px;
+      color: white;
+      font-size: 40px;
+      cursor: pointer;
+    }
   </style>
 </head>
 
@@ -545,6 +569,8 @@
       </div>
       <div class="actions">
         <span id="sessionBadge" class="button-like">Sesion</span>
+        <a id="usersLink" class="button-like" href="/usuarios" hidden>Usuarios</a>
+        <a class="button-like" href="/phantom">Phantom</a>
         <button id="refreshBtn" type="button">Actualizar</button>
         <button id="reconnectBtn" type="button">Reconectar</button>
         <button id="resetAuthBtn" class="danger" type="button">Reset QR</button>
@@ -620,8 +646,19 @@
       </section>
     </section>
   </main>
-
+  <div id="imageModal" class="modal">
+    <span class="close" onclick="closeImageModal()">&times;</span>
+    <img id="modalImage" class="modal-content">
+  </div>
   <script>
+    function openImageModal(src) {
+      document.getElementById('modalImage').src = src;
+      document.getElementById('imageModal').style.display = 'block';
+    }
+
+    function closeImageModal() {
+      document.getElementById('imageModal').style.display = 'none';
+    }
     const state = {
       auth: null,
       conversations: [],
@@ -658,6 +695,7 @@
       sendError: document.getElementById('sendError'),
       sessionBadge: document.getElementById('sessionBadge'),
       startChatBtn: document.getElementById('startChatBtn'),
+      usersLink: document.getElementById('usersLink'),
       whatsappDetail: document.getElementById('whatsappDetail'),
       whatsappState: document.getElementById('whatsappState')
     };
@@ -727,7 +765,7 @@
 
       if (response.status === 401) {
         window.location.href = '/login?next=' + encodeURIComponent(window.location.pathname + window.location.search);
-        return new Promise(() => {});
+        return new Promise(() => { });
       }
 
       const data = await response.json().catch(() => ({}));
@@ -768,7 +806,15 @@
       const safeFilename = escapeHtml(filename || getMediaLabelFromMime(mime));
 
       if (mime.startsWith('image/') && data) {
-        return `<img class="message-image" src="data:${safeMime};base64,${escapeHtml(data)}" alt="Imagen de WhatsApp">`;
+        return `
+    <img
+      class="message-image"
+      src="data:${safeMime};base64,${escapeHtml(data)}"
+      alt="Imagen de WhatsApp"
+      onclick="openImageModal(this.src)"
+      style="cursor:pointer;"
+    >
+  `;
       }
 
       if (mime.startsWith('video/') && data) {
@@ -931,6 +977,7 @@
       const data = await fetchJson('/auth/me');
       state.auth = data.user;
       els.sessionBadge.textContent = `${data.user.name} | ${String(data.user.role || '').toUpperCase()}`;
+      els.usersLink.hidden = data.user.role !== 'admin';
     }
 
     async function loadStatus() {
@@ -1112,7 +1159,7 @@
     });
 
     els.logoutBtn.addEventListener('click', async () => {
-      await fetch('/auth/logout', { method: 'POST' }).catch(() => {});
+      await fetch('/auth/logout', { method: 'POST' }).catch(() => { });
       window.location.href = '/login';
     });
 
@@ -1145,11 +1192,31 @@
         els.resetAuthBtn.disabled = false;
       }
     });
+    function openPhoneFromQuery() {
+      const params = new URLSearchParams(window.location.search);
+      const phone = cleanPhone(params.get('tel'));
+
+      if (!phone) {
+        return;
+      }
+
+      state.selectedChatId = '';
+      state.draftPhone = phone;
+
+      renderConversations();
+      renderChatHeader();
+      renderMessages([]);
+
+      setTimeout(() => els.replyMessage.focus(), 100);
+    }
 
     (async function boot() {
       try {
         await loadSession();
         await refreshAll({ preserveSelection: false });
+
+        openPhoneFromQuery();
+
         setInterval(() => refreshAll({ preserveSelection: true }), 6000);
       } catch (error) {
         els.lastRefresh.textContent = error.message;

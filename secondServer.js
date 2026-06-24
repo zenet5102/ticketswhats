@@ -4,6 +4,7 @@ const qrcode = require('qrcode-terminal');
 const QRCode = require('qrcode-terminal/vendor/QRCode');
 const QRErrorCorrectLevel = require('qrcode-terminal/vendor/QRCode/QRErrorCorrectLevel');
 const cors = require('cors');
+const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const { config } = require('./config');
@@ -18,11 +19,26 @@ const {
   requireAuth
 } = require('./auth');
 const {
+  allowedRoles,
+  createUser,
+  deleteUser,
+  listAssignedUserGroups,
+  listUsers: listAppUsers,
+  updateUser
+} = require('./users');
+const {
+  claimPendingMessageQueue,
+  enqueueMessageQueueItems,
+  getMessageQueueStats,
   getMysqlSettings,
+  listMessageQueueItems,
   listWhatsAppConversations,
   listWhatsAppMessages,
+  markMessageQueueError,
+  markMessageQueueSent,
   normalizeChatPhone,
   pingDatabase,
+  releaseMessageQueueItem,
   saveWhatsAppMessage
 } = require('./secondMessageDb');
 
@@ -36,6 +52,9 @@ const whatsappAuthRoot = path.resolve(__dirname, '.wwebjs_auth');
 const whatsappAuthSessionDir = path.resolve(whatsappAuthRoot, `session-${whatsappClientId}`);
 const maxStoredMediaBytes = parsePositiveInteger(process.env.SECOND_APP_MAX_STORED_MEDIA_MB, 15) * 1024 * 1024;
 const maxRequestBodyMb = parsePositiveInteger(process.env.SECOND_APP_JSON_LIMIT_MB, 25);
+const messageQueueIntervalMinutes = parsePositiveInteger(process.env.SECOND_MESSAGE_QUEUE_INTERVAL_MINUTES, 10);
+const messageQueueBatchSize = parsePositiveInteger(process.env.SECOND_MESSAGE_QUEUE_BATCH_SIZE, 20);
+const secondMessageSettingsPath = path.join(__dirname, 'data', 'second-message-settings.json');
 
 let whatsappReady = false;
 let whatsappState = 'starting';
@@ -46,16 +65,336 @@ let whatsappQrText = null;
 let whatsappQrSvg = null;
 let whatsappRestarting = false;
 let client = null;
+let messageQueueRunning = false;
+const messageQueueState = {
+  active: false,
+  intervalMinutes: messageQueueIntervalMinutes,
+  batchSize: messageQueueBatchSize,
+  startedAt: null,
+  lastRunStartedAt: null,
+  lastRunFinishedAt: null,
+  nextRunAt: null,
+  lastResult: null,
+  lastError: null,
+  runCount: 0
+};
 
 app.use(cors());
 app.use(express.json({ limit: `${maxRequestBodyMb}mb` }));
 
 const requireLoggedIn = requireAuth();
 const requirePrivileged = requireLoggedIn;
+const requireAdmin = requireAuth(['admin']);
 
 function parsePositiveInteger(value, fallback) {
   const parsed = Number.parseInt(value, 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function parseNonNegativeInteger(value, fallback) {
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
+}
+
+function nowIso() {
+  return new Date().toISOString();
+}
+
+function readSecondMessageSettings() {
+  if (!fs.existsSync(secondMessageSettingsPath)) {
+    return {};
+  }
+
+  try {
+    return JSON.parse(fs.readFileSync(secondMessageSettingsPath, 'utf8')) || {};
+  } catch (error) {
+    console.warn('No se pudo leer data/second-message-settings.json. Se usan valores por defecto.');
+    return {};
+  }
+}
+
+function writeSecondMessageSettings(settings) {
+  fs.mkdirSync(path.dirname(secondMessageSettingsPath), { recursive: true });
+  fs.writeFileSync(secondMessageSettingsPath, JSON.stringify(settings, null, 2), 'utf8');
+}
+
+function parseSecondMessageTemplates(value) {
+  const source = Array.isArray(value)
+    ? value
+    : String(value || '').split(/^\s*---+\s*$/m);
+
+  return source
+    .map(template => {
+      if (template && typeof template === 'object' && !Array.isArray(template)) {
+        return String(template.body ?? template.template ?? template.text ?? '').trim();
+      }
+
+      return String(template || '').trim();
+    })
+    .filter(Boolean);
+}
+
+const secondMessageTemplatePlaceholders = [
+  'id',
+  'razon_social',
+  'cliente',
+  'deuda',
+  'estado',
+  'movil',
+  'telefono',
+  'comprobantes_adeudados'
+];
+
+function getDefaultSecondMessageTemplate() {
+  return String(
+    process.env.SECOND_MESSAGE_TEMPLATE ||
+    'Hola {razon_social}, registramos deuda pendiente por {deuda}. Por favor comunicate con administracion para regularizarla.'
+  ).trim();
+}
+
+function normalizeSecondMessageTemplateName(value, fallback) {
+  return String(value || fallback || 'Template').trim().slice(0, 120) || 'Template';
+}
+
+function isValidSecondMessageTemplateId(value) {
+  return /^[a-zA-Z0-9_-]{1,80}$/.test(String(value || '').trim());
+}
+
+function createSecondMessageTemplateId() {
+  return `tpl_${Date.now().toString(36)}_${crypto.randomBytes(3).toString('hex')}`;
+}
+
+function createFallbackSecondMessageTemplateId(index, usedIds) {
+  let id = `tpl_${index + 1}`;
+  let suffix = 2;
+
+  while (usedIds.has(id)) {
+    id = `tpl_${index + 1}_${suffix}`;
+    suffix += 1;
+  }
+
+  return id;
+}
+
+function normalizeSecondMessageTemplateRecords(value) {
+  const source = Array.isArray(value)
+    ? value
+    : parseSecondMessageTemplates(value).map(body => ({ body }));
+  const usedIds = new Set();
+  const records = [];
+  const now = nowIso();
+
+  source.forEach((item, index) => {
+    const record = item && typeof item === 'object' && !Array.isArray(item)
+      ? item
+      : { body: item };
+    const body = String(record.body ?? record.template ?? record.text ?? '').trim();
+
+    if (!body) {
+      return;
+    }
+
+    let id = String(record.id || '').trim();
+
+    if (!isValidSecondMessageTemplateId(id) || usedIds.has(id)) {
+      id = createFallbackSecondMessageTemplateId(index, usedIds);
+    }
+
+    usedIds.add(id);
+    records.push({
+      id,
+      name: normalizeSecondMessageTemplateName(record.name ?? record.title, `Template ${records.length + 1}`),
+      body,
+      createdAt: String(record.createdAt || record.created_at || now),
+      updatedAt: String(record.updatedAt || record.updated_at || now)
+    });
+  });
+
+  return records;
+}
+
+function getSecondMessageTemplateSource(settings = readSecondMessageSettings()) {
+  if (Array.isArray(settings.messageTemplates)) {
+    return settings.messageTemplates;
+  }
+
+  if (Array.isArray(settings.templates)) {
+    return settings.templates;
+  }
+
+  return settings.template || getDefaultSecondMessageTemplate();
+}
+
+function getSecondMessageTemplateRecords(settings = readSecondMessageSettings()) {
+  const configured = normalizeSecondMessageTemplateRecords(getSecondMessageTemplateSource(settings));
+
+  if (configured.length) {
+    return configured;
+  }
+
+  return normalizeSecondMessageTemplateRecords([{
+    id: 'tpl_default',
+    name: 'Mensaje principal',
+    body: getDefaultSecondMessageTemplate()
+  }]);
+}
+
+function persistSecondMessageTemplateRecords(records, settings = readSecondMessageSettings()) {
+  const cleanRecords = normalizeSecondMessageTemplateRecords(records);
+
+  if (!cleanRecords.length) {
+    throw new Error('Debe quedar al menos un template');
+  }
+
+  const cursor = Number.isFinite(Number(settings.cursor))
+    ? Number(settings.cursor) % cleanRecords.length
+    : 0;
+
+  settings.template = cleanRecords[0].body;
+  settings.templates = cleanRecords.map(record => record.body);
+  settings.messageTemplates = cleanRecords;
+  settings.cursor = cursor;
+  settings.updatedAt = nowIso();
+  writeSecondMessageSettings(settings);
+
+  return cleanRecords;
+}
+
+function getSecondMessageTemplates(settings = readSecondMessageSettings()) {
+  return getSecondMessageTemplateRecords(settings).map(record => record.body);
+}
+
+function getSecondMessageTemplateText() {
+  return getSecondMessageTemplates().join('\n---\n');
+}
+
+function setSecondMessageTemplates(value) {
+  const templates = normalizeSecondMessageTemplateRecords(value);
+
+  if (!templates.length) {
+    throw new Error('El mensaje no puede estar vacio');
+  }
+
+  return persistSecondMessageTemplateRecords(templates).map(record => record.body);
+}
+
+function findSecondMessageTemplate(id, records = getSecondMessageTemplateRecords()) {
+  const cleanId = String(id || '').trim();
+  return records.find(record => record.id === cleanId) || null;
+}
+
+function normalizeSecondMessageTemplateInput(input = {}, fallback = {}) {
+  const hasBody = Object.prototype.hasOwnProperty.call(input, 'body') ||
+    Object.prototype.hasOwnProperty.call(input, 'template') ||
+    Object.prototype.hasOwnProperty.call(input, 'text');
+  const body = hasBody
+    ? String(input.body ?? input.template ?? input.text ?? '').trim()
+    : String(fallback.body || '').trim();
+  const name = Object.prototype.hasOwnProperty.call(input, 'name') ||
+    Object.prototype.hasOwnProperty.call(input, 'title')
+    ? normalizeSecondMessageTemplateName(input.name ?? input.title, fallback.name)
+    : normalizeSecondMessageTemplateName(fallback.name, 'Template');
+
+  if (!body) {
+    throw new Error('El mensaje no puede estar vacio');
+  }
+
+  return {
+    name,
+    body
+  };
+}
+
+function createSecondMessageTemplate(input = {}) {
+  const settings = readSecondMessageSettings();
+  const records = getSecondMessageTemplateRecords(settings);
+  const now = nowIso();
+  const data = normalizeSecondMessageTemplateInput(input, {
+    name: `Template ${records.length + 1}`
+  });
+  const nextRecord = {
+    id: createSecondMessageTemplateId(),
+    name: data.name,
+    body: data.body,
+    createdAt: now,
+    updatedAt: now
+  };
+
+  persistSecondMessageTemplateRecords([...records, nextRecord], settings);
+  return nextRecord;
+}
+
+function updateSecondMessageTemplate(id, input = {}) {
+  const settings = readSecondMessageSettings();
+  const records = getSecondMessageTemplateRecords(settings);
+  const index = records.findIndex(record => record.id === String(id || '').trim());
+
+  if (index === -1) {
+    throw new Error('Template no encontrado');
+  }
+
+  const currentRecord = records[index];
+  const data = normalizeSecondMessageTemplateInput(input, currentRecord);
+  const nextRecord = {
+    ...currentRecord,
+    name: data.name,
+    body: data.body,
+    updatedAt: nowIso()
+  };
+  const nextRecords = records.slice();
+  nextRecords[index] = nextRecord;
+
+  persistSecondMessageTemplateRecords(nextRecords, settings);
+  return nextRecord;
+}
+
+function deleteSecondMessageTemplate(id) {
+  const settings = readSecondMessageSettings();
+  const records = getSecondMessageTemplateRecords(settings);
+  const cleanId = String(id || '').trim();
+  const template = records.find(record => record.id === cleanId);
+
+  if (!template) {
+    throw new Error('Template no encontrado');
+  }
+
+  if (records.length === 1) {
+    throw new Error('Debe quedar al menos un template');
+  }
+
+  persistSecondMessageTemplateRecords(records.filter(record => record.id !== cleanId), settings);
+  return template;
+}
+
+function getNextSecondMessageTemplate() {
+  const settings = readSecondMessageSettings();
+  const records = getSecondMessageTemplateRecords(settings);
+  const safeTemplates = records.length ? records : getSecondMessageTemplateRecords({});
+  const cursor = Number.isFinite(Number(settings.cursor)) ? Number(settings.cursor) : 0;
+  const index = cursor % safeTemplates.length;
+  const template = safeTemplates[index];
+
+  settings.template = safeTemplates[0].body;
+  settings.templates = safeTemplates.map(record => record.body);
+  settings.messageTemplates = safeTemplates;
+  settings.cursor = (index + 1) % safeTemplates.length;
+  settings.updatedAt = nowIso();
+  writeSecondMessageSettings(settings);
+
+  return {
+    id: template.id,
+    name: template.name,
+    template: template.body,
+    index,
+    total: safeTemplates.length
+  };
+}
+
+function renderStringTemplate(template, variables = {}) {
+  return String(template || '').replace(/\{([a-zA-Z0-9_]+)\}/g, (match, key) => {
+    const value = variables[key];
+    return value === undefined || value === null ? match : String(value);
+  });
 }
 
 function markWhatsAppState(state, ready = state === 'CONNECTED') {
@@ -424,7 +763,7 @@ async function restartWhatsAppClient(reason = 'manual', options = {}) {
       console.log('Sesion local secundaria de WhatsApp eliminada');
     }
 
-    initializeWhatsAppClient().catch(() => {});
+    initializeWhatsAppClient().catch(() => { });
     return getWhatsAppStatus();
   } finally {
     whatsappRestarting = false;
@@ -575,6 +914,7 @@ async function getDatabaseStatus() {
       port: mysqlSettings.port,
       database: mysqlSettings.database,
       table: mysqlSettings.messagesTable,
+      queueTable: mysqlSettings.queueTable,
       lastError: null
     };
   } catch (error) {
@@ -584,8 +924,751 @@ async function getDatabaseStatus() {
       port: mysqlSettings.port,
       database: mysqlSettings.database,
       table: mysqlSettings.messagesTable,
+      queueTable: mysqlSettings.queueTable,
       lastError: error.message
     };
+  }
+}
+
+function getNextMessageQueueRunIso() {
+  return new Date(Date.now() + messageQueueIntervalMinutes * 60 * 1000).toISOString();
+}
+
+async function processSecondMessageQueue() {
+  if (messageQueueRunning) {
+    return { skipped: true, reason: 'queue-running' };
+  }
+
+  messageQueueRunning = true;
+  messageQueueState.runCount += 1;
+  messageQueueState.lastRunStartedAt = nowIso();
+
+  try {
+    await getWhatsAppStatus();
+
+    if (!client || !whatsappReady) {
+      const result = {
+        skipped: true,
+        waiting: true,
+        reason: `WhatsApp secundario no conectado (${whatsappState})`,
+        stats: await getMessageQueueStats().catch(() => null)
+      };
+      messageQueueState.lastResult = result;
+      messageQueueState.lastError = null;
+      return result;
+    }
+
+    const items = await claimPendingMessageQueue(messageQueueBatchSize);
+    let sent = 0;
+    let errors = 0;
+
+    for (let index = 0; index < items.length; index += 1) {
+      const item = items[index];
+      const template = getNextSecondMessageTemplate();
+      const body = renderStringTemplate(template.template, item.variables || {}).trim();
+
+      if (!body) {
+        await markMessageQueueError(item.id, 'El template genero un mensaje vacio');
+        errors += 1;
+        continue;
+      }
+
+      try {
+        const target = normalizeSecondQueuePhone(item.target) || item.target;
+        await sendWhatsApp(target, body, null, item.source || 'second-queue');
+        await markMessageQueueSent(item.id, body, template.index);
+        sent += 1;
+      } catch (error) {
+        if (String(error.message || '').includes('todavia no esta conectado')) {
+          await releaseMessageQueueItem(item.id, error.message);
+
+          for (const remaining of items.slice(index + 1)) {
+            await releaseMessageQueueItem(remaining.id, error.message);
+          }
+
+          break;
+        }
+
+        await markMessageQueueError(item.id, error.message);
+        errors += 1;
+      }
+    }
+
+    const result = {
+      skipped: false,
+      claimed: items.length,
+      sent,
+      errors,
+      stats: await getMessageQueueStats().catch(() => null)
+    };
+    messageQueueState.lastResult = result;
+    messageQueueState.lastError = null;
+    return result;
+  } catch (error) {
+    messageQueueState.lastError = {
+      message: error.message,
+      at: nowIso()
+    };
+    throw error;
+  } finally {
+    messageQueueState.lastRunFinishedAt = nowIso();
+    messageQueueState.nextRunAt = getNextMessageQueueRunIso();
+    messageQueueRunning = false;
+  }
+}
+
+function startSecondMessageQueueScheduler() {
+  messageQueueState.active = true;
+  messageQueueState.startedAt = nowIso();
+  messageQueueState.nextRunAt = getNextMessageQueueRunIso();
+
+  const timer = setInterval(() => {
+    messageQueueState.nextRunAt = getNextMessageQueueRunIso();
+    processSecondMessageQueue().catch(error => {
+      console.error('Error en cola de mensajes secundaria:', error);
+    });
+  }, messageQueueIntervalMinutes * 60 * 1000);
+
+  console.log(`Cola de mensajes secundaria activa cada ${messageQueueIntervalMinutes} minutos.`);
+  return timer;
+}
+
+function buildPhantomUrl(baseUrl, params = {}) {
+  const url = new URL(baseUrl);
+
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined && value !== null && value !== '') {
+      url.searchParams.set(key, String(value));
+    }
+  }
+
+  return url.toString();
+}
+
+function normalizePhantomQueryValue(value) {
+  const text = String(value === undefined || value === null ? '' : value).trim();
+
+  if (!/%[0-9a-f]{2}/i.test(text)) {
+    return text;
+  }
+
+  try {
+    return decodeURIComponent(text);
+  } catch (error) {
+    return text;
+  }
+}
+
+function getPhantomHeaders(extraHeaders = {}) {
+  let configuredHeaders = {};
+
+  if (process.env.PHANTOM_API_HEADERS) {
+    try {
+      const parsed = JSON.parse(process.env.PHANTOM_API_HEADERS);
+      configuredHeaders = parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+        ? parsed
+        : {};
+    } catch (error) {
+      console.warn('PHANTOM_API_HEADERS no es JSON valido. Se ignora.');
+    }
+  }
+
+  return {
+    ...configuredHeaders,
+    ...extraHeaders
+  };
+}
+
+function stripPhantomBom(value) {
+  return String(value === undefined || value === null ? '' : value)
+    .replace(/^(?:\uFEFF|\u00EF\u00BB\u00BF|\u00C3\u00AF\u00C2\u00BB\u00C2\u00BF)/, '')
+    .trim();
+}
+
+function parsePhantomPayload(text) {
+  const cleanText = stripPhantomBom(text);
+
+  if (!cleanText) {
+    return null;
+  }
+
+  try {
+    let parsed = JSON.parse(cleanText);
+
+    for (let index = 0; index < 2 && typeof parsed === 'string'; index += 1) {
+      const nested = stripPhantomBom(parsed);
+
+      if (!nested || !/^[\[{]/.test(nested)) {
+        break;
+      }
+
+      parsed = JSON.parse(nested);
+    }
+
+    return parsed;
+  } catch (error) {
+    return cleanText;
+  }
+}
+
+function extractPhantomToken(text) {
+  const cleanText = stripPhantomBom(text);
+
+  if (!cleanText) {
+    return '';
+  }
+
+  const parsed = parsePhantomPayload(cleanText);
+
+  if (typeof parsed === 'string') {
+    return stripPhantomBom(parsed.replace(/^"|"$/g, ''));
+  }
+
+  if (parsed && typeof parsed === 'object') {
+    const candidates = [
+      parsed.token,
+      parsed.Token,
+      parsed.access_token,
+      parsed.accessToken,
+      parsed.data && parsed.data.token,
+      parsed.data && parsed.data.Token,
+      parsed.result && parsed.result.token,
+      parsed.resultado && parsed.resultado.token
+    ];
+    const token = candidates.find(value => value !== undefined && value !== null && String(value).trim() !== '');
+    return token === undefined ? '' : stripPhantomBom(token);
+  }
+
+  return cleanText;
+}
+
+function extractPhantomTokenFromHeaders(headers) {
+  if (!headers || typeof headers.get !== 'function') {
+    return '';
+  }
+
+  const candidates = [
+    headers.get('token'),
+    headers.get('x-token'),
+    headers.get('x-auth-token'),
+    headers.get('authorization')
+  ];
+
+  for (const candidate of candidates) {
+    const token = extractPhantomToken(String(candidate || '').replace(/^Bearer\s+/i, ''));
+
+    if (token) {
+      return token;
+    }
+  }
+
+  const setCookie = headers.get('set-cookie') || '';
+  const cookieMatch = setCookie.match(/(?:^|[;,\s])(?:token|phantom_token|auth_token)=([^;,\s]+)/i);
+  return cookieMatch ? stripPhantomBom(cookieMatch[1]) : '';
+}
+
+function formatPhantomError(status, text) {
+  const payload = parsePhantomPayload(text);
+  const detail = payload && typeof payload === 'object'
+    ? payload.error || payload.message || payload.msg || JSON.stringify(payload)
+    : String(payload || '').trim();
+
+  return detail ? `HTTP ${status}: ${detail}` : `HTTP ${status}`;
+}
+
+function extractPhantomRows(payload) {
+  if (Array.isArray(payload)) {
+    return payload;
+  }
+
+  if (!payload || typeof payload !== 'object') {
+    return payload === undefined || payload === null ? [] : [{ value: payload }];
+  }
+
+  const candidates = [
+    payload.abonados,
+    payload.Abonados,
+    payload.data,
+    payload.datos,
+    payload.Datos,
+    payload.results,
+    payload.resultados,
+    payload.items,
+    payload.records,
+    payload.list,
+    payload.lista,
+    payload.result,
+    payload.Result,
+    payload.response,
+    payload.respuesta
+  ];
+
+  return candidates.find(Array.isArray) || [payload];
+}
+
+function getFirstPhantomValue(row, keys, fallback = '') {
+  if (!row || typeof row !== 'object' || Array.isArray(row)) {
+    return fallback;
+  }
+
+  for (const key of keys) {
+    if (row[key] !== undefined && row[key] !== null && row[key] !== '') {
+      return row[key];
+    }
+  }
+
+  return fallback;
+}
+
+function invertPhantomSign(value) {
+  if (value === undefined || value === null || value === '') {
+    return '';
+  }
+
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? -value : value;
+  }
+
+  const text = String(value).trim();
+
+  if (!text) {
+    return '';
+  }
+
+  if (/^-?\s*0+(?:[,.]0+)?$/.test(text)) {
+    return text.replace(/^-\s*/, '');
+  }
+
+  if (/^-\s*/.test(text)) {
+    return text.replace(/^-\s*/, '');
+  }
+
+  if (/^\+\s*/.test(text)) {
+    return '-' + text.replace(/^\+\s*/, '');
+  }
+
+  return '-' + text;
+}
+
+function parseDecimalValue(value) {
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? value : 0;
+  }
+
+  const text = String(value === undefined || value === null ? '' : value).trim();
+
+  if (!text) {
+    return 0;
+  }
+
+  const clean = text.replace(/\s/g, '').replace(/[$%]/g, '');
+
+  if (/^-?\d{1,3}(\.\d{3})*(,\d+)?$/.test(clean)) {
+    return Number(clean.replace(/\./g, '').replace(',', '.')) || 0;
+  }
+
+  if (/^-?\d+([.,]\d+)?$/.test(clean)) {
+    return Number(clean.replace(',', '.')) || 0;
+  }
+
+  return Number(clean) || 0;
+}
+
+function hasDebtOrOverdueReceipts(row = {}) {
+  return parseDecimalValue(row.deuda) !== 0 ||
+    parseDecimalValue(row.comprobantesAdeudados) !== 0;
+}
+
+function getFirstPhoneCandidate(value) {
+  return String(value || '')
+    .split(';')
+    .map(item => item.trim())
+    .find(Boolean) || '';
+}
+
+function normalizeSecondQueuePhone(value) {
+  if (isDirectChatId(value)) {
+    return String(value || '').trim();
+  }
+
+  let phone = normalizeChatPhone(getFirstPhoneCandidate(value));
+
+  if (!phone) {
+    return '';
+  }
+
+  phone = phone.replace(/^00+/, '');
+
+  if (phone.startsWith('549')) {
+    return /^549\d{8,12}$/.test(phone) ? phone : '';
+  }
+
+  if (phone.startsWith('54')) {
+    return '549' + phone.slice(2);
+  }
+
+  if (phone.startsWith('0')) {
+    phone = phone.replace(/^0+/, '');
+  }
+
+  if (phone.startsWith('15') && phone.length >= 10) {
+    phone = phone.slice(2);
+  }
+
+  const normalized = '549' + phone;
+
+  return /^549\d{8,12}$/.test(normalized) ? normalized : '';
+}
+
+function isValidSecondQueueTarget(value) {
+  const target = String(value || '').trim();
+  return isDirectChatId(target) || /^549\d{8,12}$/.test(target);
+}
+
+function formatPhantomClientRows(rows) {
+  return rows.map(row => {
+    const razonFallback = [row && row.Apellido, row && row.Nombre].filter(Boolean).join(' ');
+    const balance = getFirstPhantomValue(row, ['Balance_CC', 'BalanceCC', 'Balance', 'balance', 'Saldo', 'SaldoCC', 'SaldoCuentaCorriente']);
+
+    return {
+      id: getFirstPhantomValue(row, ['ID', 'Id', 'id', 'IDA', 'ida', 'ClienteID', 'Cliente_Id', 'Codigo', 'CodigoCliente']),
+      razonSocial: getFirstPhantomValue(row, ['RS', 'RazonSocial', 'Razon_Social', 'Razon Social', 'Razon', 'razon_social'], razonFallback),
+      deuda: invertPhantomSign(balance),
+      estado: getFirstPhantomValue(row, ['Estado', 'estado']),
+      movil: getFirstPhantomValue(row, ['Movil', 'Móvil', 'movil', 'Celular', 'celular', 'Mobile', 'TelefonoMovil', 'TelMovil', 'Movi', 'movi']),
+      telefono: getFirstPhantomValue(row, ['Telefono', 'Teléfono', 'telefono', 'Tel', 'tel', 'Telefono1', 'Telefono_1']),
+      comprobantesAdeudados: getFirstPhantomValue(row, ['C_Comprobantes_Adeudados', 'Fecha_Ultimo_Mov', 'CompAdeudados', 'ComprobantesAdeudados', 'Comprobantes_Adeudados', 'compAdeudados', 'comp_adeudados', 'Adeudados'])
+    };
+  }).filter(hasDebtOrOverdueReceipts);
+}
+
+function createMessageVariablesFromRow(row = {}) {
+  const id = getFirstPhantomValue(row, ['id', 'ID', 'Id', 'IDA', 'ida', 'ClienteID', 'Cliente_Id', 'Codigo', 'CodigoCliente']);
+  const razonSocial = getFirstPhantomValue(row, ['razonSocial', 'razon_social', 'RS', 'RazonSocial', 'Razon_Social', 'Razon Social', 'Razon']);
+  const deuda = getFirstPhantomValue(row, ['deuda', 'balance', 'Balance_CC', 'Balance', 'Saldo']);
+  const estado = getFirstPhantomValue(row, ['estado', 'Estado']);
+  const movil = getFirstPhantomValue(row, ['movil', 'Movil', 'Móvil', 'Celular', 'celular', 'Mobile', 'TelefonoMovil', 'TelMovil', 'Movi', 'movi']);
+  const telefono = getFirstPhantomValue(row, ['telefono', 'Telefono', 'Teléfono', 'Tel', 'tel', 'Telefono1', 'Telefono_1']);
+  const comprobantesAdeudados = getFirstPhantomValue(row, ['comprobantesAdeudados', 'C_Comprobantes_Adeudados', 'Fecha_Ultimo_Mov', 'ComprobantesAdeudados', 'Comprobantes_Adeudados']);
+  const normalizedMovil = normalizeSecondQueuePhone(movil);
+  const normalizedTelefono = normalizeSecondQueuePhone(telefono);
+
+  return {
+    id,
+    razon_social: razonSocial,
+    razonSocial,
+    cliente: razonSocial,
+    deuda,
+    estado,
+    movil: normalizedMovil || movil,
+    movil_raw: movil,
+    telefono: normalizedTelefono || telefono,
+    telefono_raw: telefono,
+    comprobantes_adeudados: comprobantesAdeudados,
+    comprobantesAdeudados
+  };
+}
+
+function getQueueTargetFromVariables(variables = {}) {
+  return String(
+    variables.movil ||
+    variables.telefono ||
+    variables.phone ||
+    variables.target ||
+    ''
+  ).trim();
+}
+
+function createQueueItemFromRow(row = {}) {
+  const variables = createMessageVariablesFromRow(row);
+  const target = normalizeSecondQueuePhone(getQueueTargetFromVariables(variables));
+  const id = String(variables.id || '').trim();
+  const queueKey = id
+    ? `phantom:${id}`
+    : `phantom:${normalizeChatPhone(target) || target}`;
+
+  return {
+    queueKey,
+    target,
+    phone: normalizeChatPhone(target),
+    source: 'second-phantom',
+    variables
+  };
+}
+
+async function handlePhantomConsultaMasiva(req, res) {
+  try {
+    const requestBody = req.body && typeof req.body === 'object' ? req.body : {};
+    const baseUrl = String(process.env.PHANTOM_API_URL || '').trim();
+    const apiUser = normalizePhantomQueryValue(process.env.PHANTOM_API_USER);
+    const apiPass = normalizePhantomQueryValue(process.env.PHANTOM_API_PASS);
+
+    if (!baseUrl || !apiUser || !apiPass) {
+      throw new Error('Faltan PHANTOM_API_URL, PHANTOM_API_USER o PHANTOM_API_PASS');
+    }
+
+    const authUrl = buildPhantomUrl(baseUrl, {
+      action: 'autentificar',
+      api_user: apiUser,
+      api_pass: apiPass
+    });
+    const authResponse = await fetch(authUrl, {
+      method: 'POST',
+      headers: getPhantomHeaders()
+    });
+
+    const authText = await authResponse.text();
+
+    if (!authResponse.ok) {
+      throw new Error(`Error autenticando Phantom: ${formatPhantomError(authResponse.status, authText)}`);
+    }
+
+    const token = extractPhantomToken(authText) || extractPhantomTokenFromHeaders(authResponse.headers);
+
+    if (!token) {
+      const authPreview = stripPhantomBom(authText).slice(0, 180);
+      throw new Error(`Phantom no devolvio token. Auth HTTP ${authResponse.status}; body ${authPreview ? `"${authPreview}"` : 'vacio'}`);
+    }
+
+    const idDesde = parsePositiveInteger(process.env.PHANTOM_CONSULTA_ID_DESDE, 1);
+    const idHasta = parsePositiveInteger(process.env.PHANTOM_CONSULTA_ID_HASTA, 999999999);
+    const desc = parsePositiveInteger(process.env.PHANTOM_CONSULTA_DESC, 1);
+    const defaultLimit = parsePositiveInteger(process.env.PHANTOM_CONSULTA_LIMIT, 10);
+    const requestedLimit = parsePositiveInteger(req.query.limit ?? requestBody.limit, defaultLimit);
+    const limit = Math.min(requestedLimit, 500);
+    const requestedOffset = req.query.offset ?? requestBody.offset;
+    const requestedPage = parsePositiveInteger(req.query.page ?? requestBody.page, 0);
+    const offset = requestedOffset !== undefined
+      ? parseNonNegativeInteger(requestedOffset, 0)
+      : requestedPage
+        ? (requestedPage - 1) * limit
+        : parseNonNegativeInteger(process.env.PHANTOM_CONSULTA_OFFSET, 0);
+    const balanceCC = parsePositiveInteger(process.env.PHANTOM_CONSULTA_BALANCE_CC, 1);
+    const compAdeudados = parsePositiveInteger(process.env.PHANTOM_CONSULTA_COMP_ADEUDADOS, 1);
+    const estado = String(process.env.PHANTOM_CONSULTA_ESTADO || 'Suspendido').trim();
+    const consultaUrl = buildPhantomUrl(baseUrl, {
+      action: 'Consulta_Masiva_Datos',
+      JSON: 1,
+      Desc: desc,
+      Limit: limit,
+      Offset: offset,
+      BalanceCC: balanceCC,
+      CompAdeudados: compAdeudados,
+      Estado: estado
+    });
+    const consultaResponse = await fetch(consultaUrl, {
+      method: 'POST',
+      headers: getPhantomHeaders({
+        Accept: 'application/json',
+        'Content-Type': 'application/json'
+      }),
+      body: JSON.stringify({
+        token,
+        ID_Desde: idDesde,
+        ID_Hasta: idHasta
+      })
+    });
+
+    const consultaText = await consultaResponse.text();
+
+    if (!consultaResponse.ok) {
+      throw new Error(`Error consultando Phantom: ${formatPhantomError(consultaResponse.status, consultaText)}`);
+    }
+
+    const payload = parsePhantomPayload(consultaText);
+    const phantomCode = payload && typeof payload === 'object' ? Number(payload.code) : NaN;
+
+    if (Number.isFinite(phantomCode) && phantomCode >= 400) {
+      throw new Error(`Error consultando Phantom: ${payload.message || payload.error || payload.msg || `code ${payload.code}`}`);
+    }
+
+    const rows = formatPhantomClientRows(extractPhantomRows(payload));
+
+    res.json({
+      success: true,
+      rows,
+      pagination: {
+        limit,
+        offset,
+        page: Math.floor(offset / limit) + 1,
+        returned: rows.length,
+        hasNextPage: rows.length === limit
+      },
+      receivedAt: new Date().toISOString()
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+}
+
+function listAvailableSecondUserGroups() {
+  const seen = new Set();
+  const groups = [];
+
+  for (const group of listAssignedUserGroups()) {
+    const cleanGroup = String(group || '').trim();
+    const key = cleanGroup.toLowerCase();
+
+    if (cleanGroup && !seen.has(key)) {
+      seen.add(key);
+      groups.push(cleanGroup);
+    }
+  }
+
+  return groups.sort((left, right) => left.localeCompare(right));
+}
+
+function handleListUsers(req, res) {
+  res.json({
+    success: true,
+    roles: allowedRoles,
+    groups: listAvailableSecondUserGroups(),
+    users: listAppUsers()
+  });
+}
+
+function handleGetUser(req, res) {
+  const user = listAppUsers().find(item => String(item.id) === String(req.params.id));
+
+  if (!user) {
+    return res.status(404).json({
+      success: false,
+      error: 'Usuario no encontrado'
+    });
+  }
+
+  return res.json({
+    success: true,
+    user
+  });
+}
+
+function handleCreateUser(req, res) {
+  try {
+    res.json({
+      success: true,
+      user: createUser(req.body || {})
+    });
+  } catch (error) {
+    res.status(400).json({
+      success: false,
+      error: error.message
+    });
+  }
+}
+
+function handleUpdateUser(req, res) {
+  try {
+    res.json({
+      success: true,
+      user: updateUser(req.params.id, req.body || {})
+    });
+  } catch (error) {
+    res.status(400).json({
+      success: false,
+      error: error.message
+    });
+  }
+}
+
+function handleDeleteUser(req, res) {
+  try {
+    res.json({
+      success: true,
+      user: deleteUser(req.params.id, req.user && req.user.username)
+    });
+  } catch (error) {
+    res.status(400).json({
+      success: false,
+      error: error.message
+    });
+  }
+}
+
+function getMessageTemplatesPayload(selectedTemplate = null) {
+  const messageTemplates = getSecondMessageTemplateRecords();
+
+  return {
+    success: true,
+    template: messageTemplates.map(record => record.body).join('\n---\n'),
+    templates: messageTemplates.map(record => record.body),
+    messageTemplates,
+    selectedTemplate,
+    placeholders: secondMessageTemplatePlaceholders
+  };
+}
+
+function handleListMessageTemplates(req, res) {
+  res.json(getMessageTemplatesPayload());
+}
+
+function handleGetMessageTemplate(req, res) {
+  const template = findSecondMessageTemplate(req.params.id);
+
+  if (!template) {
+    return res.status(404).json({
+      success: false,
+      error: 'Template no encontrado'
+    });
+  }
+
+  return res.json({
+    success: true,
+    template,
+    placeholders: secondMessageTemplatePlaceholders
+  });
+}
+
+function handleCreateMessageTemplate(req, res) {
+  try {
+    const template = createSecondMessageTemplate(req.body || {});
+    res.status(201).json(getMessageTemplatesPayload(template));
+  } catch (error) {
+    res.status(400).json({
+      success: false,
+      error: error.message
+    });
+  }
+}
+
+function handleReplaceMessageTemplates(req, res) {
+  try {
+    setSecondMessageTemplates(req.body && (req.body.template || req.body.templates));
+    res.json(getMessageTemplatesPayload());
+  } catch (error) {
+    res.status(400).json({
+      success: false,
+      error: error.message
+    });
+  }
+}
+
+function handleUpdateMessageTemplate(req, res) {
+  try {
+    const template = updateSecondMessageTemplate(req.params.id, req.body || {});
+    res.json(getMessageTemplatesPayload(template));
+  } catch (error) {
+    const status = error.message === 'Template no encontrado' ? 404 : 400;
+    res.status(status).json({
+      success: false,
+      error: error.message
+    });
+  }
+}
+
+function handleDeleteMessageTemplate(req, res) {
+  try {
+    const template = deleteSecondMessageTemplate(req.params.id);
+    res.json(getMessageTemplatesPayload(template));
+  } catch (error) {
+    const status = error.message === 'Template no encontrado' ? 404 : 400;
+    res.status(status).json({
+      success: false,
+      error: error.message
+    });
   }
 }
 
@@ -601,6 +1684,22 @@ app.post('/auth/login', handleLogin);
 app.post('/auth/logout', handleLogout);
 app.get('/auth/me', requireLoggedIn, handleMe);
 
+app.get('/usuarios', requireAdmin, (req, res) => {
+  sendHtmlFile(res, 'users.html');
+});
+
+app.get('/users', requireAdmin, handleListUsers);
+app.get('/users/:id', requireAdmin, handleGetUser);
+app.post('/users', requireAdmin, handleCreateUser);
+app.put('/users/:id', requireAdmin, handleUpdateUser);
+app.delete('/users/:id', requireAdmin, handleDeleteUser);
+
+app.get('/api/users', requireAdmin, handleListUsers);
+app.get('/api/users/:id', requireAdmin, handleGetUser);
+app.post('/api/users', requireAdmin, handleCreateUser);
+app.put('/api/users/:id', requireAdmin, handleUpdateUser);
+app.delete('/api/users/:id', requireAdmin, handleDeleteUser);
+
 app.get('/', requireLoggedIn, (req, res) => {
   sendHtmlFile(res, 'second-messages.html');
 });
@@ -613,18 +1712,167 @@ app.get('/mensajes', requireLoggedIn, (req, res) => {
   sendHtmlFile(res, 'second-messages.html');
 });
 
+app.get('/phantom', requireLoggedIn, (req, res) => {
+  sendHtmlFile(res, 'phantom.html');
+});
+
 app.get('/api/status', requireLoggedIn, async (req, res) => {
-  const [whatsapp, mysqlStatus] = await Promise.all([
+  const [whatsapp, mysqlStatus, queueStats] = await Promise.all([
     getWhatsAppStatus(),
-    getDatabaseStatus()
+    getDatabaseStatus(),
+    getMessageQueueStats().catch(() => null)
   ]);
 
   res.json({
     success: true,
     whatsapp,
     mysql: mysqlStatus,
+    messageQueue: {
+      ...messageQueueState,
+      running: messageQueueRunning,
+      stats: queueStats
+    },
     mediaLimitBytes: maxStoredMediaBytes
   });
+});
+
+app.get('/api/message-templates', requireLoggedIn, handleListMessageTemplates);
+
+app.get('/api/message-templates/:id', requireLoggedIn, handleGetMessageTemplate);
+
+app.post('/api/message-templates', requireAdmin, (req, res) => {
+  const body = req.body || {};
+  const isLegacyReplace = Object.prototype.hasOwnProperty.call(body, 'template') ||
+    Object.prototype.hasOwnProperty.call(body, 'templates');
+  const isCreate = Object.prototype.hasOwnProperty.call(body, 'body') ||
+    Object.prototype.hasOwnProperty.call(body, 'text') ||
+    Object.prototype.hasOwnProperty.call(body, 'name') ||
+    Object.prototype.hasOwnProperty.call(body, 'title');
+
+  if (isCreate && !isLegacyReplace) {
+    return handleCreateMessageTemplate(req, res);
+  }
+
+  return handleReplaceMessageTemplates(req, res);
+});
+
+app.put('/api/message-templates/:id', requireAdmin, handleUpdateMessageTemplate);
+app.delete('/api/message-templates/:id', requireAdmin, handleDeleteMessageTemplate);
+
+app.get('/api/message-queue/status', requireLoggedIn, async (req, res) => {
+  try {
+    res.json({
+      success: true,
+      scheduler: {
+        ...messageQueueState,
+        running: messageQueueRunning
+      },
+      stats: await getMessageQueueStats()
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+app.get('/api/message-queue', requireLoggedIn, async (req, res) => {
+  try {
+    res.json({
+      success: true,
+      stats: await getMessageQueueStats(),
+      items: await listMessageQueueItems({
+        limit: req.query.limit,
+        status: req.query.status
+      })
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+app.post('/api/message-queue/run', requirePrivileged, async (req, res) => {
+  try {
+    res.json({
+      success: true,
+      result: await processSecondMessageQueue()
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+app.post('/api/message-queue', requirePrivileged, async (req, res) => {
+  try {
+    const body = req.body || {};
+    const rows = Array.isArray(body.rows) ? body.rows : [];
+    const messages = Array.isArray(body.messages) ? body.messages : [];
+    const items = [];
+
+    for (const row of rows) {
+      items.push(createQueueItemFromRow(row));
+    }
+
+    for (const message of messages) {
+      const variables = message.variables && typeof message.variables === 'object'
+        ? message.variables
+        : {};
+      const rawTarget = String(message.target || message.chatId || message.phone || getQueueTargetFromVariables(variables)).trim();
+      const target = normalizeSecondQueuePhone(rawTarget) || rawTarget;
+
+      items.push({
+        queueKey: String(message.queueKey || '').trim() || null,
+        target,
+        phone: normalizeChatPhone(message.phone || target),
+        source: String(message.source || 'second-queue').trim() || 'second-queue',
+        variables
+      });
+    }
+
+    if (!items.length && (body.target || body.phone || body.chatId)) {
+      const variables = body.variables && typeof body.variables === 'object'
+        ? body.variables
+        : {};
+      const rawTarget = String(body.target || body.chatId || body.phone || getQueueTargetFromVariables(variables)).trim();
+      const target = normalizeSecondQueuePhone(rawTarget) || rawTarget;
+
+      items.push({
+        queueKey: String(body.queueKey || '').trim() || null,
+        target,
+        phone: normalizeChatPhone(body.phone || target),
+        source: String(body.source || 'second-queue').trim() || 'second-queue',
+        variables
+      });
+    }
+
+    const validItems = items.filter(item => item.target && isValidSecondQueueTarget(item.target));
+
+    if (!validItems.length) {
+      throw new Error('No hay mensajes validos para encolar');
+    }
+
+    const queued = await enqueueMessageQueueItems(validItems);
+
+    res.json({
+      success: true,
+      queued: queued.length,
+      skipped: items.length - validItems.length,
+      items: queued,
+      stats: await getMessageQueueStats()
+    });
+  } catch (error) {
+    res.status(400).json({
+      success: false,
+      error: error.message
+    });
+  }
 });
 
 app.get('/api/chats', requireLoggedIn, async (req, res) => {
@@ -684,6 +1932,9 @@ app.post('/api/messages/send', requirePrivileged, async (req, res) => {
   }
 });
 
+app.get('/api/phantom/consulta-masiva', requireLoggedIn, handlePhantomConsultaMasiva);
+app.post('/api/phantom/consulta-masiva', requireLoggedIn, handlePhantomConsultaMasiva);
+
 app.post('/api/whatsapp/reconnect', requirePrivileged, async (req, res) => {
   try {
     res.json({
@@ -725,14 +1976,18 @@ app.use((error, req, res, next) => {
 });
 
 setInterval(() => {
-  getWhatsAppStatus().catch(() => {});
+  getWhatsAppStatus().catch(() => { });
 }, 15000);
 
 pingDatabase().catch(error => {
   console.warn('MySQL de segunda app no esta listo:', error.message);
 });
 
-initializeWhatsAppClient().catch(() => {});
+initializeWhatsAppClient().catch(() => { });
+startSecondMessageQueueScheduler();
+processSecondMessageQueue()
+  .then(result => console.log('[QUEUE] Corrida inicial:', result))
+  .catch(error => console.error('[QUEUE] Error corrida inicial:', error));
 
 app.listen(secondAppPort, () => {
   console.log(`Segunda app WhatsApp disponible en http://localhost:${secondAppPort}`);

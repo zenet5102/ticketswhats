@@ -36,7 +36,8 @@ function getMysqlSettings() {
       10
     ),
     createDatabase: parseBoolean(process.env.SECOND_APP_MYSQL_CREATE_DATABASE, true),
-    messagesTable: readEnv('SECOND_APP_MYSQL_MESSAGES_TABLE', 'second_whatsapp_messages')
+    messagesTable: readEnv('SECOND_APP_MYSQL_MESSAGES_TABLE', 'second_whatsapp_messages'),
+    queueTable: readEnv('SECOND_APP_MYSQL_QUEUE_TABLE', 'second_message_queue')
   };
 }
 
@@ -54,6 +55,7 @@ function escapeIdentifier(value, label = 'identificador') {
 
 const databaseNameSql = escapeIdentifier(settings.database, 'base de datos');
 const messagesTableSql = escapeIdentifier(settings.messagesTable, 'tabla');
+const queueTableSql = escapeIdentifier(settings.queueTable, 'tabla de cola');
 
 function createConnectionConfig(includeDatabase = true) {
   const config = {
@@ -113,6 +115,31 @@ async function initializeMessageDatabase(databasePool) {
       KEY idx_second_messages_chat_time (chat_id, timestamp_ts),
       KEY idx_second_messages_time (timestamp_ts),
       KEY idx_second_messages_phone (phone)
+    ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
+  `);
+
+  await databasePool.query(`
+    CREATE TABLE IF NOT EXISTS ${queueTableSql} (
+      id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+      queue_key VARCHAR(191) NULL,
+      target VARCHAR(191) NOT NULL,
+      phone VARCHAR(64) NULL,
+      status VARCHAR(20) NOT NULL DEFAULT 'pending',
+      source VARCHAR(64) NOT NULL DEFAULT 'second-queue',
+      variables_json LONGTEXT NOT NULL,
+      rendered_body TEXT NULL,
+      template_index INT NULL,
+      attempts INT NOT NULL DEFAULT 0,
+      last_error TEXT NULL,
+      scheduled_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      locked_at TIMESTAMP NULL DEFAULT NULL,
+      sent_at TIMESTAMP NULL DEFAULT NULL,
+      created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      PRIMARY KEY (id),
+      UNIQUE KEY uq_second_queue_key (queue_key),
+      KEY idx_second_queue_status (status, scheduled_at, id),
+      KEY idx_second_queue_phone (phone)
     ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
   `);
 }
@@ -380,6 +407,219 @@ async function listWhatsAppChatPhones(chatId) {
   return rows.map(row => row.phone);
 }
 
+function parseQueueRow(row) {
+  if (!row) {
+    return null;
+  }
+
+  let variables = {};
+
+  try {
+    variables = JSON.parse(row.variables_json || '{}') || {};
+  } catch (error) {
+    variables = {};
+  }
+
+  return {
+    ...row,
+    variables
+  };
+}
+
+async function getMessageQueueItem(id) {
+  const database = await getPool();
+  const [rows] = await database.execute(
+    `SELECT * FROM ${queueTableSql} WHERE id = ? LIMIT 1`,
+    [Number(id)]
+  );
+
+  return parseQueueRow(rows[0]);
+}
+
+async function enqueueMessageQueueItem(item = {}) {
+  const target = String(item.target || item.chatId || item.phone || '').trim();
+  const phone = normalizeChatPhone(item.phone || target);
+  const variables = item.variables && typeof item.variables === 'object' ? item.variables : {};
+  const queueKey = String(item.queueKey || '').trim() || null;
+  const source = String(item.source || 'second-queue').trim() || 'second-queue';
+
+  if (!target) {
+    throw new Error('Falta destino para encolar mensaje');
+  }
+
+  const database = await getPool();
+  const [result] = await database.execute(`
+    INSERT INTO ${queueTableSql} (
+      queue_key,
+      target,
+      phone,
+      source,
+      variables_json
+    )
+    VALUES (?, ?, ?, ?, ?)
+    ON DUPLICATE KEY UPDATE
+      id = LAST_INSERT_ID(id),
+      target = IF(status = 'sent', target, VALUES(target)),
+      phone = IF(status = 'sent', phone, VALUES(phone)),
+      source = IF(status = 'sent', source, VALUES(source)),
+      variables_json = IF(status = 'sent', variables_json, VALUES(variables_json)),
+      status = IF(status = 'sent', status, 'pending'),
+      last_error = IF(status = 'sent', last_error, NULL),
+      locked_at = IF(status = 'sent', locked_at, NULL),
+      updated_at = CURRENT_TIMESTAMP
+  `, [
+    queueKey,
+    target,
+    phone || null,
+    source,
+    JSON.stringify(variables)
+  ]);
+
+  return getMessageQueueItem(result.insertId);
+}
+
+async function enqueueMessageQueueItems(items = []) {
+  const results = [];
+
+  for (const item of items) {
+    results.push(await enqueueMessageQueueItem(item));
+  }
+
+  return results;
+}
+
+async function claimPendingMessageQueue(limit = 20) {
+  const safeLimit = Math.min(Math.max(Number(limit) || 20, 1), 100);
+  const database = await getPool();
+  const [rows] = await database.query(`
+    SELECT *
+    FROM ${queueTableSql}
+    WHERE status = 'pending'
+      AND scheduled_at <= CURRENT_TIMESTAMP
+    ORDER BY scheduled_at ASC, id ASC
+    LIMIT ${safeLimit}
+  `);
+  const claimed = [];
+
+  for (const row of rows) {
+    const [result] = await database.execute(`
+      UPDATE ${queueTableSql}
+      SET status = 'sending',
+          attempts = attempts + 1,
+          locked_at = CURRENT_TIMESTAMP,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+        AND status = 'pending'
+    `, [row.id]);
+
+    if (result.affectedRows) {
+      claimed.push(await getMessageQueueItem(row.id));
+    }
+  }
+
+  return claimed;
+}
+
+async function markMessageQueueSent(id, body, templateIndex) {
+  const database = await getPool();
+
+  await database.execute(`
+    UPDATE ${queueTableSql}
+    SET status = 'sent',
+        rendered_body = ?,
+        template_index = ?,
+        last_error = NULL,
+        sent_at = CURRENT_TIMESTAMP,
+        updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `, [
+    String(body || '').trim() || null,
+    Number.isFinite(Number(templateIndex)) ? Number(templateIndex) : null,
+    Number(id)
+  ]);
+
+  return getMessageQueueItem(id);
+}
+
+async function markMessageQueueError(id, errorMessage) {
+  const database = await getPool();
+
+  await database.execute(`
+    UPDATE ${queueTableSql}
+    SET status = 'error',
+        last_error = ?,
+        locked_at = NULL,
+        updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `, [String(errorMessage || 'Error enviando mensaje'), Number(id)]);
+
+  return getMessageQueueItem(id);
+}
+
+async function releaseMessageQueueItem(id, reason) {
+  const database = await getPool();
+
+  await database.execute(`
+    UPDATE ${queueTableSql}
+    SET status = 'pending',
+        last_error = ?,
+        locked_at = NULL,
+        updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+      AND status = 'sending'
+  `, [String(reason || '').trim() || null, Number(id)]);
+
+  return getMessageQueueItem(id);
+}
+
+async function getMessageQueueStats() {
+  const database = await getPool();
+  const [rows] = await database.query(`
+    SELECT status, COUNT(*) AS count
+    FROM ${queueTableSql}
+    GROUP BY status
+  `);
+  const stats = {
+    pending: 0,
+    sending: 0,
+    sent: 0,
+    error: 0,
+    total: 0
+  };
+
+  for (const row of rows) {
+    const status = String(row.status || '').trim() || 'unknown';
+    const count = Number(row.count || 0);
+    stats[status] = count;
+    stats.total += count;
+  }
+
+  return stats;
+}
+
+async function listMessageQueueItems(options = {}) {
+  const safeLimit = Math.min(Math.max(Number(options.limit) || 200, 1), 500);
+  const status = String(options.status || '').trim();
+  const database = await getPool();
+  const params = [];
+  let whereSql = '';
+
+  if (status) {
+    whereSql = 'WHERE status = ?';
+    params.push(status);
+  }
+
+  const [rows] = await database.execute(`
+    SELECT *
+    FROM ${queueTableSql}
+    ${whereSql}
+    ORDER BY updated_at DESC, id DESC
+    LIMIT ${safeLimit}
+  `, params);
+
+  return rows.map(parseQueueRow);
+}
+
 async function pingDatabase() {
   const database = await getPool();
   await database.query('SELECT 1 AS ok');
@@ -396,13 +636,22 @@ async function closePool() {
 }
 
 module.exports = {
+  claimPendingMessageQueue,
   closePool,
+  enqueueMessageQueueItem,
+  enqueueMessageQueueItems,
+  getMessageQueueItem,
+  getMessageQueueStats,
   getMysqlSettings,
   getPool,
+  listMessageQueueItems,
   listWhatsAppChatPhones,
   listWhatsAppConversations,
   listWhatsAppMessages,
+  markMessageQueueError,
+  markMessageQueueSent,
   normalizeChatPhone,
   pingDatabase,
+  releaseMessageQueueItem,
   saveWhatsAppMessage
 };
