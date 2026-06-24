@@ -783,6 +783,47 @@
       return normalizeClientMobile(getFieldValue(row, movilColumn));
     }
 
+    function getColumnValue(row, label) {
+      const column = TABLE_COLUMNS.find(item => item.label === label);
+      return column ? getFieldValue(row, column) : '';
+    }
+
+    function getTemplateVariables(row) {
+      const id = String(getFieldValue(row, TABLE_COLUMNS[0]) || '').trim();
+      const razonSocial = String(getColumnValue(row, 'Razon social') || '').trim();
+      const movil = getRowChatPhone(row) || String(getColumnValue(row, 'Movil') || '').trim();
+      const telefono = String(getColumnValue(row, 'Telefono') || '').trim();
+      const comprobantesAdeudados = String(getColumnValue(row, 'Comprobantes adeudados') || '').trim();
+
+      return {
+        id,
+        razon_social: razonSocial,
+        razonSocial,
+        cliente: razonSocial,
+        deuda: String(getColumnValue(row, 'Deuda') || '').trim(),
+        estado: String(getColumnValue(row, 'Estado') || '').trim(),
+        movil,
+        telefono,
+        comprobantes_adeudados: comprobantesAdeudados,
+        comprobantesAdeudados
+      };
+    }
+
+    function renderTemplateForRow(row) {
+      const template = String(els.messageTemplate.value || '').trim();
+
+      if (!template) {
+        return '';
+      }
+
+      const variables = getTemplateVariables(row);
+
+      return template.replace(/\{([a-zA-Z0-9_]+)\}/g, (match, key) => {
+        const value = variables[key];
+        return value === undefined || value === null ? match : String(value);
+      });
+    }
+
     function renderChatLink(row) {
       const phone = getRowChatPhone(row);
 
@@ -790,7 +831,14 @@
         return '<span class="badge bad">Sin movil valido</span>';
       }
 
-      return '<a class="button-link" href="/mensajes?tel=' + encodeURIComponent(phone) + '">Chat</a>';
+      const params = new URLSearchParams({ tel: phone });
+      const message = renderTemplateForRow(row);
+
+      if (message) {
+        params.set('message', message);
+      }
+
+      return '<a class="button-link" href="' + escapeHtml('/mensajes?' + params.toString()) + '">Chat</a>';
     }
 
     function getRowQueueKey(row) {

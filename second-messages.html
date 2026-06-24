@@ -1195,6 +1195,7 @@
     function openPhoneFromQuery() {
       const params = new URLSearchParams(window.location.search);
       const phone = cleanPhone(params.get('tel'));
+      const message = params.get('message') || params.get('template') || params.get('msg') || '';
 
       if (!phone) {
         return;
@@ -1206,6 +1207,10 @@
       renderConversations();
       renderChatHeader();
       renderMessages([]);
+
+      if (message) {
+        els.replyMessage.value = message;
+      }
 
       setTimeout(() => els.replyMessage.focus(), 100);
     }
