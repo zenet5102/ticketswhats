@@ -628,6 +628,12 @@
         render: row => renderQueueStatus(row)
       },
       {
+        label: 'Encolar',
+        keys: [],
+        value: row => getQueueStatusText(row),
+        render: (row, index) => renderQueueAction(row, index)
+      },
+      {
         label: 'Chat',
         keys: [],
         value: row => getRowChatPhone(row),
@@ -904,6 +910,28 @@
       return '<span class="badge ' + queueTone(item.status) + '">' + escapeHtml(queueLabel(item.status)) + '</span>' + detail;
     }
 
+    function renderQueueAction(row, index) {
+      const phone = getRowChatPhone(row);
+
+      if (!phone) {
+        return '<span class="badge bad">Sin movil valido</span>';
+      }
+
+      const item = getQueueItemForRow(row);
+      const status = item && item.status;
+
+      if (status === 'pending' || status === 'sending') {
+        return '<button type="button" disabled>En cola</button>';
+      }
+
+      if (status === 'sent') {
+        return '<button type="button" disabled>Enviado</button>';
+      }
+
+      const label = status === 'error' ? 'Reintentar' : 'Encolar';
+      return '<button type="button" data-enqueue-index="' + index + '">' + escapeHtml(label) + '</button>';
+    }
+
     function toComparableNumber(value) {
       if (typeof value === 'number') {
         return Number.isFinite(value) ? value : null;
@@ -979,10 +1007,10 @@
           '</button>' +
           '</th>';
       }).join('');
-      const body = rows.map(row => {
+      const body = rows.map((row, rowIndex) => {
         const cells = TABLE_COLUMNS.map(column => {
           if (typeof column.render === 'function') {
-            return '<td>' + column.render(row) + '</td>';
+            return '<td>' + column.render(row, rowIndex) + '</td>';
           }
 
           const value = formatCell(getFieldValue(row, column));
@@ -1018,6 +1046,17 @@
 
           state.offset = 0;
           renderCurrentPage();
+        });
+      });
+
+      els.resultWrap.querySelectorAll('button[data-enqueue-index]').forEach(button => {
+        button.addEventListener('click', () => {
+          const index = Number.parseInt(button.dataset.enqueueIndex, 10);
+          const row = rows[index];
+
+          enqueueSingleRow(row, button).catch(error => {
+            els.queueStatus.textContent = error.message;
+          });
         });
       });
     }
@@ -1338,6 +1377,43 @@
         els.queueStatus.textContent = error.message;
       } finally {
         els.enqueueBtn.disabled = false;
+      }
+    }
+
+    async function enqueueSingleRow(row, button) {
+      if (!row) {
+        return;
+      }
+
+      const originalText = button ? button.textContent : '';
+
+      if (button) {
+        button.disabled = true;
+        button.textContent = 'Encolando';
+      }
+
+      els.queueStatus.textContent = 'Encolando cliente...';
+
+      try {
+        const data = await fetchJson('/api/message-queue', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            rows: [row]
+          })
+        });
+
+        await loadQueueStatus().catch(() => renderQueue(data));
+        els.queueStatus.textContent = `${data.queued || 0} cliente en cola | ${data.skipped || 0} omitidos`;
+      } catch (error) {
+        els.queueStatus.textContent = error.message;
+
+        if (button && document.body.contains(button)) {
+          button.disabled = false;
+          button.textContent = originalText || 'Encolar';
+        }
       }
     }
 
