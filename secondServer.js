@@ -31,6 +31,7 @@ const {
   enqueueMessageQueueItems,
   getMessageQueueStats,
   getMysqlSettings,
+  getWhatsAppChatOwner,
   listMessageQueueItems,
   listWhatsAppConversations,
   listWhatsAppMessages,
@@ -100,6 +101,22 @@ function parseNonNegativeInteger(value, fallback) {
 
 function nowIso() {
   return new Date().toISOString();
+}
+
+function normalizeOwnerUsername(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function getUserOwnerUsername(user) {
+  return normalizeOwnerUsername(user && user.username);
+}
+
+function canSeeAllOwnedChats(user) {
+  return Boolean(user && (user.isAdmin || user.role === 'admin'));
+}
+
+function getScopedOwnerUsername(user) {
+  return canSeeAllOwnedChats(user) ? '' : getUserOwnerUsername(user);
 }
 
 function readSecondMessageSettings() {
@@ -598,12 +615,14 @@ async function storeWhatsAppMessage(message, source = 'whatsapp-second') {
   const direction = message.fromMe ? 'outgoing' : 'incoming';
   const chatId = String(message.fromMe ? message.to : message.from || '').trim();
 
-  if (!chatId) {
+  if (!chatId || chatId === 'status@broadcast') {
     return null;
   }
 
   const contactInfo = await getMessageContactInfo(message, chatId);
   const mediaInfo = await getMessageMediaInfo(message);
+  const phone = contactInfo.contactPhone || normalizeChatPhone(chatId);
+  const ownerUsername = await getWhatsAppChatOwner(chatId, phone);
   const rawBody = String(message.body || message.caption || '').trim();
   const body = rawBody || (mediaInfo.mediaMime
     ? `[${getMediaLabel(mediaInfo.mediaMime, message.type)} sin texto]`
@@ -616,7 +635,7 @@ async function storeWhatsAppMessage(message, source = 'whatsapp-second') {
   return saveWhatsAppMessage({
     id: getStoredMessageId(message, chatId, direction),
     chatId,
-    phone: contactInfo.contactPhone || normalizeChatPhone(chatId),
+    phone,
     contactName: contactInfo.contactName,
     direction,
     body,
@@ -626,7 +645,8 @@ async function storeWhatsAppMessage(message, source = 'whatsapp-second') {
     timestampTs: getWhatsAppTimestampMs(message.timestamp),
     fromMe: message.fromMe,
     ack: message.ack,
-    source
+    source,
+    ownerUsername
   });
 }
 
@@ -913,7 +933,13 @@ async function resolveChatId(target) {
     throw new Error('El numero no existe en WhatsApp o no se pudo resolver');
   }
 
-  return numberId._serialized;
+  const serialized = String(numberId._serialized || '').trim();
+
+  if (/@lid$/i.test(serialized)) {
+    return `${cleanPhone}@c.us`;
+  }
+
+  return serialized || `${cleanPhone}@c.us`;
 }
 
 async function getWhatsAppContactInfoByChatId(chatId) {
@@ -1052,7 +1078,8 @@ async function sendWhatsApp(target, message, mediaInput, source = 'second-app', 
     timestampTs: getWhatsAppTimestampMs(sentMessage && sentMessage.timestamp),
     fromMe: true,
     ack: sentMessage && sentMessage.ack,
-    source
+    source,
+    ownerUsername: options.ownerUsername
   });
 
   return {
@@ -1145,7 +1172,8 @@ async function processSecondMessageQueue() {
             item.variables.razon_social ||
             item.variables.razonSocial ||
             item.variables.cliente
-          )
+          ),
+          ownerUsername: item.owner_username
         });
         await markMessageQueueSent(item.id, body, template.index);
         unresolvedItemIds.delete(Number(item.id));
@@ -1899,10 +1927,11 @@ app.get('/phantom', requireLoggedIn, (req, res) => {
 
 app.get('/api/status', requireLoggedIn, async (req, res) => {
   const staleErrors = await markStaleMessageQueueErrors().catch(() => 0);
+  const ownerUsername = getScopedOwnerUsername(req.user);
   const [whatsapp, mysqlStatus, queueStats] = await Promise.all([
     getWhatsAppStatus(),
     getDatabaseStatus(),
-    getMessageQueueStats().catch(() => null)
+    getMessageQueueStats({ ownerUsername }).catch(() => null)
   ]);
 
   res.json({
@@ -1945,6 +1974,7 @@ app.delete('/api/message-templates/:id', requireAdmin, handleDeleteMessageTempla
 app.get('/api/message-queue/status', requireLoggedIn, async (req, res) => {
   try {
     const staleErrors = await markStaleMessageQueueErrors();
+    const ownerUsername = getScopedOwnerUsername(req.user);
     res.json({
       success: true,
       scheduler: {
@@ -1952,7 +1982,7 @@ app.get('/api/message-queue/status', requireLoggedIn, async (req, res) => {
         running: messageQueueRunning,
         staleErrors
       },
-      stats: await getMessageQueueStats()
+      stats: await getMessageQueueStats({ ownerUsername })
     });
   } catch (error) {
     res.status(500).json({
@@ -1965,13 +1995,15 @@ app.get('/api/message-queue/status', requireLoggedIn, async (req, res) => {
 app.get('/api/message-queue', requireLoggedIn, async (req, res) => {
   try {
     const staleErrors = await markStaleMessageQueueErrors();
+    const ownerUsername = getScopedOwnerUsername(req.user);
     res.json({
       success: true,
       staleErrors,
-      stats: await getMessageQueueStats(),
+      stats: await getMessageQueueStats({ ownerUsername }),
       items: await listMessageQueueItems({
         limit: req.query.limit,
-        status: req.query.status
+        status: req.query.status,
+        ownerUsername
       })
     });
   } catch (error) {
@@ -2001,6 +2033,7 @@ app.post('/api/message-queue', requirePrivileged, async (req, res) => {
     const body = req.body || {};
     const rows = Array.isArray(body.rows) ? body.rows : [];
     const messages = Array.isArray(body.messages) ? body.messages : [];
+    const ownerUsername = getUserOwnerUsername(req.user);
     const items = [];
 
     for (const row of rows) {
@@ -2039,7 +2072,12 @@ app.post('/api/message-queue', requirePrivileged, async (req, res) => {
       });
     }
 
-    const validItems = items.filter(item => item.target && isValidSecondQueueTarget(item.target));
+    const validItems = items
+      .filter(item => item.target && isValidSecondQueueTarget(item.target))
+      .map(item => ({
+        ...item,
+        ownerUsername
+      }));
 
     if (!validItems.length) {
       throw new Error('No hay mensajes validos para encolar');
@@ -2052,7 +2090,7 @@ app.post('/api/message-queue', requirePrivileged, async (req, res) => {
       queued: queued.length,
       skipped: items.length - validItems.length,
       items: queued,
-      stats: await getMessageQueueStats()
+      stats: await getMessageQueueStats({ ownerUsername: getScopedOwnerUsername(req.user) })
     });
   } catch (error) {
     res.status(400).json({
@@ -2066,7 +2104,9 @@ app.get('/api/chats', requireLoggedIn, async (req, res) => {
   try {
     res.json({
       success: true,
-      conversations: await listWhatsAppConversations(req.query.limit)
+      conversations: await listWhatsAppConversations(req.query.limit, {
+        ownerUsername: getScopedOwnerUsername(req.user)
+      })
     });
   } catch (error) {
     res.status(500).json({
@@ -2113,7 +2153,9 @@ app.get('/api/messages', requireLoggedIn, async (req, res) => {
 
     res.json({
       success: true,
-      messages: await listWhatsAppMessages(chatId, req.query.limit)
+      messages: await listWhatsAppMessages(chatId, req.query.limit, {
+        ownerUsername: getScopedOwnerUsername(req.user)
+      })
     });
   } catch (error) {
     res.status(500).json({
@@ -2128,7 +2170,8 @@ app.post('/api/messages/send', requirePrivileged, async (req, res) => {
     const body = req.body || {};
     const target = String(body.chatId || body.phone || '').trim();
     const result = await sendWhatsApp(target, body.message, body.media, 'second-inbox', {
-      contactName: body.contactName
+      contactName: body.contactName,
+      ownerUsername: getUserOwnerUsername(req.user)
     });
 
     res.json({

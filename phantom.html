@@ -1363,6 +1363,17 @@
         return;
       }
 
+      const validCount = state.rows.filter(row => getRowChatPhone(row)).length;
+
+      if (!validCount) {
+        els.queueStatus.textContent = 'No hay clientes con movil valido';
+        return;
+      }
+
+      if (!window.confirm('Encolar mensajes para ' + validCount + ' cliente' + (validCount === 1 ? '' : 's') + '?')) {
+        return;
+      }
+
       els.enqueueBtn.disabled = true;
       els.queueStatus.textContent = 'Encolando...';
 
@@ -1387,6 +1398,14 @@
 
     async function enqueueSingleRow(row, button) {
       if (!row) {
+        return;
+      }
+
+      const variables = getTemplateVariables(row);
+      const phone = getRowChatPhone(row);
+      const label = [variables.cliente, phone].filter(Boolean).join(' | ') || 'este cliente';
+
+      if (!window.confirm('Encolar mensaje para ' + label + '?')) {
         return;
       }
 

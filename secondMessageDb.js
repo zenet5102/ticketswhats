@@ -96,6 +96,30 @@ async function ensureDatabaseExists() {
   }
 }
 
+async function ensureTableColumn(databasePool, tableSql, columnName, definition) {
+  const [rows] = await databasePool.query(
+    `SHOW COLUMNS FROM ${tableSql} LIKE ?`,
+    [columnName]
+  );
+
+  if (!rows.length) {
+    await databasePool.query(
+      `ALTER TABLE ${tableSql} ADD COLUMN ${escapeIdentifier(columnName, 'columna')} ${definition}`
+    );
+  }
+}
+
+async function ensureTableIndex(databasePool, tableSql, indexName, definition) {
+  const [rows] = await databasePool.query(
+    `SHOW INDEX FROM ${tableSql} WHERE Key_name = ?`,
+    [indexName]
+  );
+
+  if (!rows.length) {
+    await databasePool.query(`ALTER TABLE ${tableSql} ADD ${definition}`);
+  }
+}
+
 async function initializeMessageDatabase(databasePool) {
   await databasePool.query(`
     CREATE TABLE IF NOT EXISTS ${messagesTableSql} (
@@ -113,12 +137,14 @@ async function initializeMessageDatabase(databasePool) {
       from_me TINYINT(1) NOT NULL DEFAULT 0,
       ack INT NULL,
       source VARCHAR(64) NULL,
+      owner_username VARCHAR(191) NULL,
       created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
       PRIMARY KEY (id),
       KEY idx_second_messages_chat_time (chat_id, timestamp_ts),
       KEY idx_second_messages_time (timestamp_ts),
-      KEY idx_second_messages_phone (phone)
+      KEY idx_second_messages_phone (phone),
+      KEY idx_second_messages_owner (owner_username, chat_id, timestamp_ts)
     ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
   `);
 
@@ -135,6 +161,7 @@ async function initializeMessageDatabase(databasePool) {
       template_index INT NULL,
       attempts INT NOT NULL DEFAULT 0,
       last_error TEXT NULL,
+      owner_username VARCHAR(191) NULL,
       scheduled_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
       locked_at TIMESTAMP NULL DEFAULT NULL,
       sent_at TIMESTAMP NULL DEFAULT NULL,
@@ -143,9 +170,25 @@ async function initializeMessageDatabase(databasePool) {
       PRIMARY KEY (id),
       UNIQUE KEY uq_second_queue_key (queue_key),
       KEY idx_second_queue_status (status, scheduled_at, id),
-      KEY idx_second_queue_phone (phone)
+      KEY idx_second_queue_phone (phone),
+      KEY idx_second_queue_owner (owner_username, status)
     ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
   `);
+
+  await ensureTableColumn(databasePool, messagesTableSql, 'owner_username', 'VARCHAR(191) NULL');
+  await ensureTableColumn(databasePool, queueTableSql, 'owner_username', 'VARCHAR(191) NULL');
+  await ensureTableIndex(
+    databasePool,
+    messagesTableSql,
+    'idx_second_messages_owner',
+    'KEY idx_second_messages_owner (owner_username, chat_id, timestamp_ts)'
+  );
+  await ensureTableIndex(
+    databasePool,
+    queueTableSql,
+    'idx_second_queue_owner',
+    'KEY idx_second_queue_owner (owner_username, status)'
+  );
 }
 
 async function getPool() {
@@ -184,6 +227,10 @@ function normalizeChatPhone(value) {
     .replace(/\D/g, '');
 }
 
+function normalizeOwnerUsername(value) {
+  return String(value || '').trim().toLowerCase().slice(0, 191);
+}
+
 function isLidChatId(value) {
   return /@lid$/i.test(String(value || '').trim());
 }
@@ -197,6 +244,30 @@ function normalizeMessagePhone(phone, chatId) {
   }
 
   return normalized;
+}
+
+function scopeQueueKey(queueKey, ownerUsername) {
+  const cleanKey = String(queueKey || '').trim();
+  const cleanOwner = normalizeOwnerUsername(ownerUsername);
+
+  if (!cleanKey || !cleanOwner) {
+    return cleanKey || null;
+  }
+
+  const prefix = `${cleanOwner}:`;
+  return cleanKey.startsWith(prefix) ? cleanKey : `${prefix}${cleanKey}`;
+}
+
+function getPublicQueueKey(queueKey, ownerUsername) {
+  const cleanKey = String(queueKey || '').trim();
+  const cleanOwner = normalizeOwnerUsername(ownerUsername);
+
+  if (!cleanKey || !cleanOwner) {
+    return cleanKey;
+  }
+
+  const prefix = `${cleanOwner}:`;
+  return cleanKey.startsWith(prefix) ? cleanKey.slice(prefix.length) : cleanKey;
 }
 
 async function getWhatsAppMessage(id) {
@@ -216,6 +287,7 @@ async function saveWhatsAppMessage(message = {}) {
   const timestamp = Number.isFinite(timestampTs) && timestampTs > 0 ? timestampTs : Date.now();
   const body = String(message.body || '').trim();
   const id = String(message.id || `${direction}-${chatId}-${timestamp}`).trim();
+  const ownerUsername = normalizeOwnerUsername(message.ownerUsername || message.owner_username);
 
   if (!id || !chatId || !body) {
     throw new Error('Faltan datos del mensaje');
@@ -238,13 +310,15 @@ async function saveWhatsAppMessage(message = {}) {
       timestamp_iso,
       from_me,
       ack,
-      source
+      source,
+      owner_username
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON DUPLICATE KEY UPDATE
       chat_id = VALUES(chat_id),
       phone = COALESCE(VALUES(phone), phone),
       contact_name = COALESCE(VALUES(contact_name), contact_name),
+      owner_username = COALESCE(VALUES(owner_username), owner_username),
       body = CASE
         WHEN body LIKE '[% sin texto]' AND VALUES(body) NOT LIKE '[% sin texto]'
         THEN VALUES(body)
@@ -272,16 +346,72 @@ async function saveWhatsAppMessage(message = {}) {
     new Date(timestamp).toISOString(),
     message.fromMe ? 1 : 0,
     Number.isFinite(Number(message.ack)) ? Number(message.ack) : null,
-    String(message.source || '').trim() || null
+    String(message.source || '').trim() || null,
+    ownerUsername || null
   ]);
 
   return getWhatsAppMessage(id);
 }
 
-async function listWhatsAppConversations(limit = 100) {
-  const safeLimit = Math.min(Math.max(Number(limit) || 100, 1), 1000);
+async function getWhatsAppChatOwner(chatId, phone) {
+  const cleanChatId = String(chatId || '').trim();
+  const cleanPhone = normalizeChatPhone(phone || chatId);
+
+  if (!cleanChatId && !cleanPhone) {
+    return '';
+  }
+
   const database = await getPool();
-  const [rows] = await database.query(`
+  const identityWhere = [];
+  const params = [];
+
+  if (cleanChatId) {
+    identityWhere.push('chat_id = ?');
+    params.push(cleanChatId);
+  }
+
+  if (cleanPhone) {
+    identityWhere.push('phone = ?');
+    params.push(cleanPhone);
+  }
+
+  const [rows] = await database.execute(`
+    SELECT owner_username
+    FROM ${messagesTableSql}
+    WHERE chat_id <> 'status@broadcast'
+      AND owner_username IS NOT NULL
+      AND owner_username <> ''
+      AND (${identityWhere.join(' OR ')})
+    ORDER BY timestamp_ts DESC, created_at DESC, id DESC
+    LIMIT 1
+  `, params);
+
+  return normalizeOwnerUsername(rows[0] && rows[0].owner_username);
+}
+
+async function listWhatsAppConversations(limit = 100, options = {}) {
+  const safeLimit = Math.min(Math.max(Number(limit) || 100, 1), 1000);
+  const ownerUsername = normalizeOwnerUsername(options.ownerUsername || options.owner_username);
+  const ownerFilters = ownerUsername
+    ? {
+      latestPhone: ' AND latest_phone.owner_username = ?',
+      latestContact: ' AND latest_contact.owner_username = ?',
+      counts: ' AND owner_username = ?',
+      ranked: ' AND ranked.owner_username = ?',
+      latest: ' AND latest.owner_username = ?'
+    }
+    : {
+      latestPhone: '',
+      latestContact: '',
+      counts: '',
+      ranked: '',
+      latest: ''
+    };
+  const params = ownerUsername
+    ? [ownerUsername, ownerUsername, ownerUsername, ownerUsername, ownerUsername]
+    : [];
+  const database = await getPool();
+  const [rows] = await database.execute(`
     SELECT
       latest.id,
       latest.chat_id,
@@ -290,6 +420,7 @@ async function listWhatsAppConversations(limit = 100) {
           SELECT latest_phone.phone
           FROM ${messagesTableSql} latest_phone
           WHERE latest_phone.chat_id = latest.chat_id
+            ${ownerFilters.latestPhone}
             AND latest_phone.phone IS NOT NULL
             AND latest_phone.phone <> ''
           ORDER BY latest_phone.timestamp_ts DESC, latest_phone.created_at DESC, latest_phone.id DESC
@@ -302,6 +433,7 @@ async function listWhatsAppConversations(limit = 100) {
           SELECT latest_contact.contact_name
           FROM ${messagesTableSql} latest_contact
           WHERE latest_contact.chat_id = latest.chat_id
+            ${ownerFilters.latestContact}
             AND latest_contact.contact_name IS NOT NULL
             AND latest_contact.contact_name <> ''
           ORDER BY latest_contact.timestamp_ts DESC, latest_contact.created_at DESC, latest_contact.id DESC
@@ -318,6 +450,7 @@ async function listWhatsAppConversations(limit = 100) {
       latest.from_me,
       latest.ack,
       latest.source,
+      latest.owner_username,
       latest.created_at,
       counts.total_messages,
       counts.incoming_messages,
@@ -332,25 +465,34 @@ async function listWhatsAppConversations(limit = 100) {
         SUM(CASE WHEN direction = 'outgoing' THEN 1 ELSE 0 END) AS outgoing_messages,
         MAX(CASE WHEN direction = 'incoming' THEN timestamp_ts ELSE NULL END) AS last_incoming_ts
       FROM ${messagesTableSql}
+      WHERE chat_id <> 'status@broadcast'
+        ${ownerFilters.counts}
       GROUP BY chat_id
     ) counts ON counts.chat_id = latest.chat_id
     WHERE latest.id = (
       SELECT ranked.id
       FROM ${messagesTableSql} ranked
       WHERE ranked.chat_id = latest.chat_id
+        AND ranked.chat_id <> 'status@broadcast'
+        ${ownerFilters.ranked}
       ORDER BY ranked.timestamp_ts DESC, ranked.created_at DESC, ranked.id DESC
       LIMIT 1
     )
+      AND latest.chat_id <> 'status@broadcast'
+      ${ownerFilters.latest}
     ORDER BY latest.timestamp_ts DESC, latest.created_at DESC, latest.id DESC
     LIMIT ${safeLimit}
-  `);
+  `, params);
 
   return rows;
 }
 
-async function listWhatsAppMessages(chatId, limit = 200) {
+async function listWhatsAppMessages(chatId, limit = 200, options = {}) {
   const cleanChatId = String(chatId || '').trim();
   const safeLimit = Math.min(Math.max(Number(limit) || 200, 1), 500);
+  const ownerUsername = normalizeOwnerUsername(options.ownerUsername || options.owner_username);
+  const ownerWhereSql = ownerUsername ? ' AND owner_username = ?' : '';
+  const params = ownerUsername ? [cleanChatId, ownerUsername] : [cleanChatId];
 
   if (!cleanChatId) {
     return [];
@@ -380,20 +522,26 @@ async function listWhatsAppMessages(chatId, limit = 200) {
         from_me,
         ack,
         source,
+        owner_username,
         created_at
       FROM ${messagesTableSql}
       WHERE chat_id = ?
+        AND chat_id <> 'status@broadcast'
+        ${ownerWhereSql}
       ORDER BY timestamp_ts DESC, created_at DESC, id DESC
       LIMIT ${safeLimit}
     ) recent_messages
     ORDER BY timestamp_ts ASC, created_at ASC, id ASC
-  `, [cleanChatId]);
+  `, params);
 
   return rows;
 }
 
-async function listWhatsAppChatPhones(chatId) {
+async function listWhatsAppChatPhones(chatId, options = {}) {
   const cleanChatId = String(chatId || '').trim();
+  const ownerUsername = normalizeOwnerUsername(options.ownerUsername || options.owner_username);
+  const ownerWhereSql = ownerUsername ? ' AND owner_username = ?' : '';
+  const params = ownerUsername ? [cleanChatId, ownerUsername] : [cleanChatId];
 
   if (!cleanChatId) {
     return [];
@@ -406,7 +554,8 @@ async function listWhatsAppChatPhones(chatId) {
     WHERE chat_id = ?
       AND phone IS NOT NULL
       AND phone <> ''
-  `, [cleanChatId]);
+      ${ownerWhereSql}
+  `, params);
 
   return rows.map(row => row.phone);
 }
@@ -424,8 +573,13 @@ function parseQueueRow(row) {
     variables = {};
   }
 
+  const ownerUsername = normalizeOwnerUsername(row.owner_username);
+
   return {
     ...row,
+    owner_username: ownerUsername,
+    internal_queue_key: row.queue_key || '',
+    queue_key: getPublicQueueKey(row.queue_key, ownerUsername),
     variables
   };
 }
@@ -445,6 +599,8 @@ async function enqueueMessageQueueItem(item = {}) {
   const phone = normalizeChatPhone(item.phone || target);
   const variables = item.variables && typeof item.variables === 'object' ? item.variables : {};
   const queueKey = String(item.queueKey || '').trim() || null;
+  const storageQueueKey = scopeQueueKey(queueKey, item.ownerUsername || item.owner_username);
+  const ownerUsername = normalizeOwnerUsername(item.ownerUsername || item.owner_username);
   const source = String(item.source || 'second-queue').trim() || 'second-queue';
 
   if (!target) {
@@ -458,25 +614,28 @@ async function enqueueMessageQueueItem(item = {}) {
       target,
       phone,
       source,
-      variables_json
+      variables_json,
+      owner_username
     )
-    VALUES (?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?)
     ON DUPLICATE KEY UPDATE
       id = LAST_INSERT_ID(id),
       target = IF(status = 'sent', target, VALUES(target)),
       phone = IF(status = 'sent', phone, VALUES(phone)),
       source = IF(status = 'sent', source, VALUES(source)),
       variables_json = IF(status = 'sent', variables_json, VALUES(variables_json)),
+      owner_username = IF(status = 'sent', owner_username, COALESCE(VALUES(owner_username), owner_username)),
       status = IF(status = 'sent', status, 'pending'),
       last_error = IF(status = 'sent', last_error, NULL),
       locked_at = IF(status = 'sent', locked_at, NULL),
       updated_at = CURRENT_TIMESTAMP
   `, [
-    queueKey,
+    storageQueueKey,
     target,
     phone || null,
     source,
-    JSON.stringify(variables)
+    JSON.stringify(variables),
+    ownerUsername || null
   ]);
 
   return getMessageQueueItem(result.insertId);
@@ -593,13 +752,22 @@ async function releaseMessageQueueItem(id, reason) {
   return getMessageQueueItem(id);
 }
 
-async function getMessageQueueStats() {
+async function getMessageQueueStats(options = {}) {
+  const ownerUsername = normalizeOwnerUsername(options.ownerUsername || options.owner_username);
+  const params = [];
+  const whereSql = ownerUsername ? 'WHERE owner_username = ?' : '';
+
+  if (ownerUsername) {
+    params.push(ownerUsername);
+  }
+
   const database = await getPool();
-  const [rows] = await database.query(`
+  const [rows] = await database.execute(`
     SELECT status, COUNT(*) AS count
     FROM ${queueTableSql}
+    ${whereSql}
     GROUP BY status
-  `);
+  `, params);
   const stats = {
     pending: 0,
     sending: 0,
@@ -621,14 +789,22 @@ async function getMessageQueueStats() {
 async function listMessageQueueItems(options = {}) {
   const safeLimit = Math.min(Math.max(Number(options.limit) || 200, 1), 500);
   const status = String(options.status || '').trim();
+  const ownerUsername = normalizeOwnerUsername(options.ownerUsername || options.owner_username);
   const database = await getPool();
   const params = [];
-  let whereSql = '';
+  const whereParts = [];
 
   if (status) {
-    whereSql = 'WHERE status = ?';
+    whereParts.push('status = ?');
     params.push(status);
   }
+
+  if (ownerUsername) {
+    whereParts.push('owner_username = ?');
+    params.push(ownerUsername);
+  }
+
+  const whereSql = whereParts.length ? `WHERE ${whereParts.join(' AND ')}` : '';
 
   const [rows] = await database.execute(`
     SELECT *
@@ -665,6 +841,7 @@ module.exports = {
   getMessageQueueStats,
   getMysqlSettings,
   getPool,
+  getWhatsAppChatOwner,
   listMessageQueueItems,
   listWhatsAppChatPhones,
   listWhatsAppConversations,
