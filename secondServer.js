@@ -771,6 +771,33 @@ async function restartWhatsAppClient(reason = 'manual', options = {}) {
   }
 }
 
+function isTransientWhatsAppError(error) {
+  const message = String(error && error.message || error || '').toLowerCase();
+
+  return message.includes('attempted to use detached frame') ||
+    message.includes('detached frame') ||
+    message.includes('frame was detached') ||
+    message.includes('execution context was destroyed') ||
+    message.includes('target closed') ||
+    message.includes('session closed') ||
+    message.includes('page crashed') ||
+    message.includes('browser has disconnected') ||
+    message.includes('most likely the page has been closed') ||
+    message.includes('protocol error') ||
+    message.includes('todavia no esta conectado');
+}
+
+function createTransientWhatsAppError(error) {
+  const detail = String(error && error.message || error || '').trim();
+  const nextError = new Error(detail
+    ? `WhatsApp secundario se recargo durante el envio. Reintentando cuando vuelva a conectar. Detalle: ${detail}`
+    : 'WhatsApp secundario se recargo durante el envio. Reintentando cuando vuelva a conectar.');
+
+  nextError.code = 'WHATSAPP_TRANSIENT';
+  nextError.cause = error;
+  return nextError;
+}
+
 async function getWhatsAppStatus() {
   if (client) {
     try {
@@ -869,14 +896,29 @@ async function sendWhatsApp(target, message, mediaInput, source = 'second-app') 
     throw new Error('Falta mensaje o archivo');
   }
 
-  const chatId = await resolveChatId(target);
+  let chatId;
   let sentMessage;
 
-  if (media) {
-    const messageMedia = new MessageMedia(media.mimetype, media.data, media.filename);
-    sentMessage = await client.sendMessage(chatId, messageMedia, cleanMessage ? { caption: cleanMessage } : {});
-  } else {
-    sentMessage = await client.sendMessage(chatId, cleanMessage);
+  try {
+    chatId = await resolveChatId(target);
+
+    if (media) {
+      const messageMedia = new MessageMedia(media.mimetype, media.data, media.filename);
+      sentMessage = await client.sendMessage(chatId, messageMedia, cleanMessage ? { caption: cleanMessage } : {});
+    } else {
+      sentMessage = await client.sendMessage(chatId, cleanMessage);
+    }
+  } catch (error) {
+    if (isTransientWhatsAppError(error)) {
+      whatsappLastError = String(error.message || error);
+      markWhatsAppState('SESSION_REFRESHING', false);
+      restartWhatsAppClient('transient-send-error').catch(restartError => {
+        console.warn('No se pudo reiniciar WhatsApp secundario tras error transitorio:', restartError.message);
+      });
+      throw createTransientWhatsAppError(error);
+    }
+
+    throw error;
   }
 
   const cleanPhone = normalizeChatPhone(target || chatId);
@@ -987,7 +1029,7 @@ async function processSecondMessageQueue() {
         unresolvedItemIds.delete(Number(item.id));
         sent += 1;
       } catch (error) {
-        if (String(error.message || '').includes('todavia no esta conectado')) {
+        if (isTransientWhatsAppError(error)) {
           await releaseMessageQueueItem(item.id, error.message);
           unresolvedItemIds.delete(Number(item.id));
 
@@ -1947,7 +1989,7 @@ app.post('/api/messages/send', requirePrivileged, async (req, res) => {
       message: result.message
     });
   } catch (error) {
-    const status = error.message.includes('todavia no esta conectado') ? 503 : 400;
+    const status = isTransientWhatsAppError(error) ? 503 : 400;
     res.status(status).json({
       success: false,
       error: error.message
