@@ -916,7 +916,59 @@ async function resolveChatId(target) {
   return numberId._serialized;
 }
 
-async function sendWhatsApp(target, message, mediaInput, source = 'second-app') {
+async function getWhatsAppContactInfoByChatId(chatId) {
+  const cleanChatId = String(chatId || '').trim();
+
+  if (!client || !cleanChatId) {
+    return {};
+  }
+
+  try {
+    const contact = await client.getContactById(cleanChatId);
+    const contactName = contact
+      ? contact.pushname || contact.name || contact.shortName || contact.verifiedName || ''
+      : '';
+
+    return {
+      chatId: cleanChatId,
+      phone: getContactPhone(contact, cleanChatId) || normalizeChatPhone(cleanChatId),
+      contactName
+    };
+  } catch (error) {
+    return {
+      chatId: cleanChatId,
+      phone: normalizeChatPhone(cleanChatId),
+      contactName: ''
+    };
+  }
+}
+
+async function resolveWhatsAppContact(target) {
+  await getWhatsAppStatus();
+
+  if (!client || !whatsappReady) {
+    throw new Error(`WhatsApp secundario todavia no esta conectado (${whatsappState})`);
+  }
+
+  const chatId = await withTimeout(
+    resolveChatId(target),
+    whatsappSendTimeoutMs,
+    () => createTransientWhatsAppError(new Error(`No se pudo resolver el contacto en ${Math.round(whatsappSendTimeoutMs / 1000)} segundos`))
+  );
+  const contact = await withTimeout(
+    getWhatsAppContactInfoByChatId(chatId),
+    whatsappSendTimeoutMs,
+    () => createTransientWhatsAppError(new Error(`No se pudo obtener el contacto en ${Math.round(whatsappSendTimeoutMs / 1000)} segundos`))
+  );
+
+  return {
+    chatId,
+    phone: contact.phone || normalizeChatPhone(chatId),
+    contactName: contact.contactName || ''
+  };
+}
+
+async function sendWhatsApp(target, message, mediaInput, source = 'second-app', options = {}) {
   await getWhatsAppStatus();
 
   if (!client || !whatsappReady) {
@@ -932,6 +984,7 @@ async function sendWhatsApp(target, message, mediaInput, source = 'second-app') 
 
   let chatId;
   let sentMessage;
+  let contactInfo = {};
 
   try {
     chatId = await withTimeout(
@@ -939,6 +992,7 @@ async function sendWhatsApp(target, message, mediaInput, source = 'second-app') 
       whatsappSendTimeoutMs,
       () => createTransientWhatsAppError(new Error(`No se pudo resolver el chat en ${Math.round(whatsappSendTimeoutMs / 1000)} segundos`))
     );
+    contactInfo = await getWhatsAppContactInfoByChatId(chatId);
   } catch (error) {
     if (isTransientWhatsAppError(error)) {
       whatsappLastError = String(error.message || error);
@@ -989,6 +1043,7 @@ async function sendWhatsApp(target, message, mediaInput, source = 'second-app') 
     id: getStoredMessageId(sentMessage, chatId, 'outgoing'),
     chatId,
     phone: cleanPhone || normalizeChatPhone(chatId),
+    contactName: String(options.contactName || contactInfo.contactName || '').trim(),
     direction: 'outgoing',
     body,
     mediaMime: media && media.mimetype,
@@ -1085,7 +1140,13 @@ async function processSecondMessageQueue() {
 
       try {
         const target = normalizeSecondQueuePhone(item.target) || item.target;
-        await sendWhatsApp(target, body, null, item.source || 'second-queue');
+        await sendWhatsApp(target, body, null, item.source || 'second-queue', {
+          contactName: item.variables && (
+            item.variables.razon_social ||
+            item.variables.razonSocial ||
+            item.variables.cliente
+          )
+        });
         await markMessageQueueSent(item.id, body, template.index);
         unresolvedItemIds.delete(Number(item.id));
         sent += 1;
@@ -2015,6 +2076,30 @@ app.get('/api/chats', requireLoggedIn, async (req, res) => {
   }
 });
 
+app.get('/api/contacts/resolve', requirePrivileged, async (req, res) => {
+  try {
+    const target = String(req.query.target || req.query.phone || req.query.chatId || '').trim();
+
+    if (!target) {
+      return res.status(400).json({
+        success: false,
+        error: 'Falta telefono o chat'
+      });
+    }
+
+    res.json({
+      success: true,
+      contact: await resolveWhatsAppContact(target)
+    });
+  } catch (error) {
+    const status = isTransientWhatsAppError(error) ? 503 : 400;
+    res.status(status).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
 app.get('/api/messages', requireLoggedIn, async (req, res) => {
   try {
     const chatId = String(req.query.chatId || '').trim();
@@ -2042,7 +2127,9 @@ app.post('/api/messages/send', requirePrivileged, async (req, res) => {
   try {
     const body = req.body || {};
     const target = String(body.chatId || body.phone || '').trim();
-    const result = await sendWhatsApp(target, body.message, body.media, 'second-inbox');
+    const result = await sendWhatsApp(target, body.message, body.media, 'second-inbox', {
+      contactName: body.contactName
+    });
 
     res.json({
       success: true,

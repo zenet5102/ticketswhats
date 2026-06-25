@@ -838,7 +838,12 @@
       }
 
       const params = new URLSearchParams({ tel: phone });
+      const clientName = String(getTemplateVariables(row).cliente || '').trim();
       const message = renderTemplateForRow(row);
+
+      if (clientName) {
+        params.set('name', clientName);
+      }
 
       if (message) {
         params.set('message', message);

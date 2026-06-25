@@ -664,6 +664,7 @@
       conversations: [],
       selectedChatId: '',
       draftPhone: '',
+      draftName: '',
       mediaLimitBytes: 15 * 1024 * 1024,
       loading: false
     };
@@ -828,6 +829,34 @@
       return data;
     }
 
+    async function resolveDraftContact(phone, fallbackName = '') {
+      const normalizedPhone = normalizeNewChatPhone(phone);
+
+      if (!normalizedPhone) {
+        return;
+      }
+
+      state.draftName = fallbackName || state.draftName;
+      renderChatHeader();
+
+      try {
+        const data = await fetchJson('/api/contacts/resolve?phone=' + encodeURIComponent(normalizedPhone));
+        const contact = data.contact || {};
+        const resolvedPhone = normalizeNewChatPhone(contact.phone || normalizedPhone);
+
+        if (state.draftPhone !== normalizedPhone && state.draftPhone !== resolvedPhone) {
+          return;
+        }
+
+        state.draftPhone = resolvedPhone || normalizedPhone;
+        state.draftName = String(contact.contactName || fallbackName || state.draftName || '').trim();
+        renderChatHeader();
+      } catch (error) {
+        state.draftName = fallbackName || state.draftName;
+        renderChatHeader();
+      }
+    }
+
     function getMediaLabelFromMime(mime) {
       if (String(mime || '').startsWith('image/')) {
         return 'Imagen';
@@ -955,6 +984,7 @@
         button.addEventListener('click', () => {
           state.selectedChatId = button.dataset.chatId || '';
           state.draftPhone = '';
+          state.draftName = '';
           renderConversations();
           renderChatHeader();
           loadMessages();
@@ -970,8 +1000,10 @@
         els.chatMeta.textContent = getConversationMeta(conversation);
         setBadge(els.chatBadge, conversation.direction === 'incoming' ? 'Entrada' : 'Salida', conversation.direction === 'incoming' ? 'good' : 'warn');
       } else if (state.draftPhone) {
-        els.chatTitle.textContent = getDisplayPhone(state.draftPhone, '');
-        els.chatMeta.textContent = `${state.draftPhone}@c.us`;
+        els.chatTitle.textContent = state.draftName || getDisplayPhone(state.draftPhone, '');
+        els.chatMeta.textContent = state.draftName
+          ? `${state.draftName} | ${state.draftPhone}@c.us`
+          : `${state.draftPhone}@c.us`;
         setBadge(els.chatBadge, 'Nuevo', 'warn');
       } else {
         els.chatTitle.textContent = 'Selecciona un chat';
@@ -1124,6 +1156,7 @@
       const conversation = getSelectedConversation();
       const targetChatId = conversation && conversation.chat_id || '';
       const targetPhone = state.draftPhone || conversation && conversation.phone || '';
+      const contactName = state.draftName || conversation && conversation.contact_name || '';
       const message = els.replyMessage.value.trim();
       const file = els.mediaInput.files[0] || null;
 
@@ -1159,6 +1192,7 @@
           body: JSON.stringify({
             chatId: targetChatId,
             phone: targetChatId ? '' : targetPhone,
+            contactName,
             message,
             media
           })
@@ -1166,6 +1200,7 @@
 
         state.selectedChatId = data.chatId || targetChatId;
         state.draftPhone = '';
+        state.draftName = '';
         els.replyMessage.value = '';
         els.mediaInput.value = '';
         els.sendError.textContent = 'Enviado';
@@ -1192,11 +1227,13 @@
 
       state.selectedChatId = '';
       state.draftPhone = phone;
+      state.draftName = '';
       els.phoneInput.value = '';
       els.sendError.textContent = '';
       renderConversations();
       renderChatHeader();
       renderMessages([]);
+      resolveDraftContact(phone).catch(() => { });
       els.replyMessage.focus();
     });
 
@@ -1249,6 +1286,7 @@
     function openPhoneFromQuery() {
       const params = new URLSearchParams(window.location.search);
       const phone = normalizeNewChatPhone(params.get('tel'));
+      const name = String(params.get('name') || params.get('cliente') || params.get('clientName') || '').trim();
       const message = params.get('message') || params.get('template') || params.get('msg') || '';
 
       if (!phone) {
@@ -1257,10 +1295,12 @@
 
       state.selectedChatId = '';
       state.draftPhone = phone;
+      state.draftName = name;
 
       renderConversations();
       renderChatHeader();
       renderMessages([]);
+      resolveDraftContact(phone, name).catch(() => { });
 
       if (message) {
         els.replyMessage.value = message;
