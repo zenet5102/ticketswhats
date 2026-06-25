@@ -40,7 +40,7 @@ function getMysqlSettings() {
     queueTable: readEnv('SECOND_APP_MYSQL_QUEUE_TABLE', 'second_message_queue'),
     queueSendingTimeoutMinutes: parsePositiveInteger(
       process.env.SECOND_MESSAGE_QUEUE_SENDING_TIMEOUT_MINUTES,
-      15
+      2
     )
   };
 }
@@ -493,7 +493,7 @@ async function enqueueMessageQueueItems(items = []) {
 }
 
 async function markStaleMessageQueueErrors(timeoutMinutes = settings.queueSendingTimeoutMinutes) {
-  const safeMinutes = Math.min(Math.max(Number(timeoutMinutes) || 15, 1), 1440);
+  const safeMinutes = Math.min(Math.max(Number(timeoutMinutes) || 2, 1), 1440);
   const database = await getPool();
   const [result] = await database.query(`
     UPDATE ${queueTableSql}

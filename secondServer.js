@@ -55,6 +55,7 @@ const maxStoredMediaBytes = parsePositiveInteger(process.env.SECOND_APP_MAX_STOR
 const maxRequestBodyMb = parsePositiveInteger(process.env.SECOND_APP_JSON_LIMIT_MB, 25);
 const messageQueueIntervalMinutes = parsePositiveInteger(process.env.SECOND_MESSAGE_QUEUE_INTERVAL_MINUTES, 10);
 const messageQueueBatchSize = parsePositiveInteger(process.env.SECOND_MESSAGE_QUEUE_BATCH_SIZE, 20);
+const whatsappSendTimeoutMs = parsePositiveInteger(process.env.SECOND_WHATSAPP_SEND_TIMEOUT_SECONDS, 60) * 1000;
 const secondMessageSettingsPath = path.join(__dirname, 'data', 'second-message-settings.json');
 
 let whatsappReady = false;
@@ -772,6 +773,10 @@ async function restartWhatsAppClient(reason = 'manual', options = {}) {
 }
 
 function isTransientWhatsAppError(error) {
+  if (error && error.code === 'WHATSAPP_TRANSIENT') {
+    return true;
+  }
+
   const message = String(error && error.message || error || '').toLowerCase();
 
   return message.includes('attempted to use detached frame') ||
@@ -796,6 +801,35 @@ function createTransientWhatsAppError(error) {
   nextError.code = 'WHATSAPP_TRANSIENT';
   nextError.cause = error;
   return nextError;
+}
+
+function isUnconfirmedWhatsAppSendError(error) {
+  return Boolean(error && error.code === 'WHATSAPP_SEND_UNCONFIRMED');
+}
+
+function createUnconfirmedWhatsAppSendError(error) {
+  const detail = String(error && error.message || error || '').trim();
+  const nextError = new Error(detail
+    ? `Envio no confirmado por WhatsApp Web. Revisar el chat antes de reintentar. Detalle: ${detail}`
+    : 'Envio no confirmado por WhatsApp Web. Revisar el chat antes de reintentar.');
+
+  nextError.code = 'WHATSAPP_SEND_UNCONFIRMED';
+  nextError.cause = error;
+  return nextError;
+}
+
+function withTimeout(promise, timeoutMs, createError) {
+  let timeoutId;
+  const timeout = new Promise((resolve, reject) => {
+    timeoutId = setTimeout(() => {
+      reject(createError());
+    }, timeoutMs);
+  });
+
+  return Promise.race([
+    promise.finally(() => clearTimeout(timeoutId)),
+    timeout
+  ]);
 }
 
 async function getWhatsAppStatus() {
@@ -900,22 +934,49 @@ async function sendWhatsApp(target, message, mediaInput, source = 'second-app') 
   let sentMessage;
 
   try {
-    chatId = await resolveChatId(target);
-
-    if (media) {
-      const messageMedia = new MessageMedia(media.mimetype, media.data, media.filename);
-      sentMessage = await client.sendMessage(chatId, messageMedia, cleanMessage ? { caption: cleanMessage } : {});
-    } else {
-      sentMessage = await client.sendMessage(chatId, cleanMessage);
-    }
+    chatId = await withTimeout(
+      resolveChatId(target),
+      whatsappSendTimeoutMs,
+      () => createTransientWhatsAppError(new Error(`No se pudo resolver el chat en ${Math.round(whatsappSendTimeoutMs / 1000)} segundos`))
+    );
   } catch (error) {
     if (isTransientWhatsAppError(error)) {
       whatsappLastError = String(error.message || error);
       markWhatsAppState('SESSION_REFRESHING', false);
-      restartWhatsAppClient('transient-send-error').catch(restartError => {
-        console.warn('No se pudo reiniciar WhatsApp secundario tras error transitorio:', restartError.message);
+      restartWhatsAppClient('transient-resolve-error').catch(restartError => {
+        console.warn('No se pudo reiniciar WhatsApp secundario tras error resolviendo chat:', restartError.message);
       });
-      throw createTransientWhatsAppError(error);
+      throw error;
+    }
+
+    throw error;
+  }
+
+  try {
+    if (media) {
+      const messageMedia = new MessageMedia(media.mimetype, media.data, media.filename);
+      sentMessage = await withTimeout(
+        client.sendMessage(chatId, messageMedia, cleanMessage ? { caption: cleanMessage } : {}),
+        whatsappSendTimeoutMs,
+        () => createUnconfirmedWhatsAppSendError(new Error(`Timeout de confirmacion de envio (${Math.round(whatsappSendTimeoutMs / 1000)} segundos)`))
+      );
+    } else {
+      sentMessage = await withTimeout(
+        client.sendMessage(chatId, cleanMessage),
+        whatsappSendTimeoutMs,
+        () => createUnconfirmedWhatsAppSendError(new Error(`Timeout de confirmacion de envio (${Math.round(whatsappSendTimeoutMs / 1000)} segundos)`))
+      );
+    }
+  } catch (error) {
+    if (isTransientWhatsAppError(error) || isUnconfirmedWhatsAppSendError(error)) {
+      whatsappLastError = String(error.message || error);
+      markWhatsAppState('SESSION_REFRESHING', false);
+      restartWhatsAppClient('unconfirmed-send-error').catch(restartError => {
+        console.warn('No se pudo reiniciar WhatsApp secundario tras envio no confirmado:', restartError.message);
+      });
+      throw isUnconfirmedWhatsAppSendError(error)
+        ? error
+        : createUnconfirmedWhatsAppSendError(error);
     }
 
     throw error;
@@ -1989,7 +2050,11 @@ app.post('/api/messages/send', requirePrivileged, async (req, res) => {
       message: result.message
     });
   } catch (error) {
-    const status = isTransientWhatsAppError(error) ? 503 : 400;
+    const status = isUnconfirmedWhatsAppSendError(error)
+      ? 504
+      : isTransientWhatsAppError(error)
+        ? 503
+        : 400;
     res.status(status).json({
       success: false,
       error: error.message
