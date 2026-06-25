@@ -640,7 +640,7 @@
           <span class="badge blue" id="loadedBadge">0</span>
         </div>
         <div class="new-chat">
-          <input id="phoneInput" type="tel" inputmode="tel" placeholder="5491123456789" autocomplete="off">
+          <input id="phoneInput" type="tel" inputmode="tel" placeholder="1162446858 o 5491162446858" autocomplete="off">
           <button id="startChatBtn" type="button" title="Abrir conversacion">Nuevo</button>
         </div>
         <div id="conversationList" class="conversation-list">
@@ -726,9 +726,56 @@
       return String(value || '').replace(/\D/g, '');
     }
 
+    function normalizeNewChatPhone(value) {
+      let phone = cleanPhone(value).replace(/^00+/, '');
+
+      if (!phone) {
+        return '';
+      }
+
+      if (phone.startsWith('549')) {
+        return phone;
+      }
+
+      if (phone.startsWith('54')) {
+        return '549' + phone.slice(2).replace(/^15/, '');
+      }
+
+      phone = phone.replace(/^0+/, '');
+
+      if (/^1115\d{8}$/.test(phone)) {
+        phone = '11' + phone.slice(4);
+      } else if (phone.startsWith('15') && phone.length >= 10) {
+        phone = '11' + phone.slice(2);
+      }
+
+      return '549' + phone;
+    }
+
+    function getPhoneFromChatId(chatId) {
+      const text = String(chatId || '').trim();
+
+      if (!/@(c\.us|s\.whatsapp\.net)$/i.test(text)) {
+        return '';
+      }
+
+      return cleanPhone(text.split('@')[0]);
+    }
+
+    function getDisplayPhone(phone, chatId) {
+      const cleanStoredPhone = cleanPhone(phone);
+      const cleanChatPhone = getPhoneFromChatId(chatId);
+
+      if (cleanStoredPhone && !(/@lid$/i.test(String(chatId || '')) && cleanStoredPhone === cleanPhone(chatId))) {
+        return cleanStoredPhone;
+      }
+
+      return cleanChatPhone || cleanStoredPhone;
+    }
+
     function getConversationName(conversation) {
       if (!conversation.ticket_razon_social) {
-        return conversation.contact_name || conversation.phone || conversation.chat_id;
+        return conversation.contact_name || getDisplayPhone(conversation.phone, conversation.chat_id) || conversation.chat_id;
       }
 
       return [
@@ -745,7 +792,7 @@
         return '--';
       }
 
-      const phone = conversation.phone || '';
+      const phone = getDisplayPhone(conversation.phone, conversation.chat_id);
       const chatId = conversation.chat_id || '';
       const parts = [];
 
@@ -761,7 +808,7 @@
         parts.push('Razon social: ' + conversation.ticket_razon_social);
       }
 
-      if (phone && chatId && !chatId.startsWith(phone)) {
+      if (phone && chatId && getPhoneFromChatId(chatId) !== phone) {
         parts.push(phone, chatId);
       } else {
         parts.push(phone || chatId);
@@ -775,7 +822,7 @@
       const name = useConversation ? conversation.contact_name || message.contact_name || '' : message.contact_name || '';
       const phone = useConversation ? message.phone || conversation.phone || '' : message.phone || '';
       const chatId = useConversation ? conversation.chat_id || message.chat_id || '' : message.chat_id || '';
-      const number = phone || chatId;
+      const number = getDisplayPhone(phone, chatId) || chatId;
 
       if (name && number && name !== number) {
         return `${name} | ${number}`;
@@ -1211,10 +1258,10 @@
 
     function renderChatHeader(conversation) {
       if (!conversation) {
-        const phone = cleanPhone(els.phoneInput.value);
+        const phone = normalizeNewChatPhone(els.phoneInput.value);
         const chatId = state.selectedChatId || (phone ? `${phone}@c.us` : '');
 
-        els.chatTitle.textContent = phone || 'Selecciona una conversacion';
+        els.chatTitle.textContent = getDisplayPhone(phone, chatId) || 'Selecciona una conversacion';
         els.chatMeta.textContent = chatId || '--';
         setBadge(els.chatDirection, chatId ? 'Nuevo' : 'Sin chat', chatId ? 'warn' : 'bad');
         return;
@@ -1345,7 +1392,7 @@
         return;
       }
 
-      const phone = cleanPhone(els.phoneInput.value);
+      const phone = normalizeNewChatPhone(els.phoneInput.value);
 
       if (!phone) {
         els.sendError.textContent = 'Falta telefono';
@@ -1371,7 +1418,9 @@
 
       const message = els.replyMessage.value.trim();
       const conversation = state.conversations.find(item => item.chat_id === state.selectedChatId);
-      const phone = cleanPhone(els.phoneInput.value) || cleanPhone(conversation && conversation.phone);
+      const phone = normalizeNewChatPhone(els.phoneInput.value) ||
+        normalizeNewChatPhone(conversation && conversation.phone) ||
+        getPhoneFromChatId(conversation && conversation.chat_id);
 
       if (!message) {
         els.sendError.textContent = 'Falta mensaje';

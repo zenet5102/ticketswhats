@@ -37,7 +37,11 @@ function getMysqlSettings() {
     ),
     createDatabase: parseBoolean(process.env.SECOND_APP_MYSQL_CREATE_DATABASE, true),
     messagesTable: readEnv('SECOND_APP_MYSQL_MESSAGES_TABLE', 'second_whatsapp_messages'),
-    queueTable: readEnv('SECOND_APP_MYSQL_QUEUE_TABLE', 'second_message_queue')
+    queueTable: readEnv('SECOND_APP_MYSQL_QUEUE_TABLE', 'second_message_queue'),
+    queueSendingTimeoutMinutes: parsePositiveInteger(
+      process.env.SECOND_MESSAGE_QUEUE_SENDING_TIMEOUT_MINUTES,
+      15
+    )
   };
 }
 
@@ -488,6 +492,23 @@ async function enqueueMessageQueueItems(items = []) {
   return results;
 }
 
+async function markStaleMessageQueueErrors(timeoutMinutes = settings.queueSendingTimeoutMinutes) {
+  const safeMinutes = Math.min(Math.max(Number(timeoutMinutes) || 15, 1), 1440);
+  const database = await getPool();
+  const [result] = await database.query(`
+    UPDATE ${queueTableSql}
+    SET status = 'error',
+        last_error = COALESCE(last_error, ?),
+        locked_at = NULL,
+        updated_at = CURRENT_TIMESTAMP
+    WHERE status = 'sending'
+      AND locked_at IS NOT NULL
+      AND locked_at < DATE_SUB(CURRENT_TIMESTAMP, INTERVAL ${safeMinutes} MINUTE)
+  `, [`Envio sin confirmacion por mas de ${safeMinutes} minutos`]);
+
+  return Number(result.affectedRows || 0);
+}
+
 async function claimPendingMessageQueue(limit = 20) {
   const safeLimit = Math.min(Math.max(Number(limit) || 20, 1), 100);
   const database = await getPool();
@@ -650,6 +671,7 @@ module.exports = {
   listWhatsAppMessages,
   markMessageQueueError,
   markMessageQueueSent,
+  markStaleMessageQueueErrors,
   normalizeChatPhone,
   pingDatabase,
   releaseMessageQueueItem,

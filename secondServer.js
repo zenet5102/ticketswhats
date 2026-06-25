@@ -36,6 +36,7 @@ const {
   listWhatsAppMessages,
   markMessageQueueError,
   markMessageQueueSent,
+  markStaleMessageQueueErrors,
   normalizeChatPhone,
   pingDatabase,
   releaseMessageQueueItem,
@@ -942,8 +943,11 @@ async function processSecondMessageQueue() {
   messageQueueRunning = true;
   messageQueueState.runCount += 1;
   messageQueueState.lastRunStartedAt = nowIso();
+  const unresolvedItemIds = new Set();
+  let staleErrors = 0;
 
   try {
+    staleErrors = await markStaleMessageQueueErrors();
     await getWhatsAppStatus();
 
     if (!client || !whatsappReady) {
@@ -951,6 +955,7 @@ async function processSecondMessageQueue() {
         skipped: true,
         waiting: true,
         reason: `WhatsApp secundario no conectado (${whatsappState})`,
+        staleErrors,
         stats: await getMessageQueueStats().catch(() => null)
       };
       messageQueueState.lastResult = result;
@@ -961,6 +966,7 @@ async function processSecondMessageQueue() {
     const items = await claimPendingMessageQueue(messageQueueBatchSize);
     let sent = 0;
     let errors = 0;
+    items.forEach(item => unresolvedItemIds.add(Number(item.id)));
 
     for (let index = 0; index < items.length; index += 1) {
       const item = items[index];
@@ -969,6 +975,7 @@ async function processSecondMessageQueue() {
 
       if (!body) {
         await markMessageQueueError(item.id, 'El template genero un mensaje vacio');
+        unresolvedItemIds.delete(Number(item.id));
         errors += 1;
         continue;
       }
@@ -977,25 +984,30 @@ async function processSecondMessageQueue() {
         const target = normalizeSecondQueuePhone(item.target) || item.target;
         await sendWhatsApp(target, body, null, item.source || 'second-queue');
         await markMessageQueueSent(item.id, body, template.index);
+        unresolvedItemIds.delete(Number(item.id));
         sent += 1;
       } catch (error) {
         if (String(error.message || '').includes('todavia no esta conectado')) {
           await releaseMessageQueueItem(item.id, error.message);
+          unresolvedItemIds.delete(Number(item.id));
 
           for (const remaining of items.slice(index + 1)) {
             await releaseMessageQueueItem(remaining.id, error.message);
+            unresolvedItemIds.delete(Number(remaining.id));
           }
 
           break;
         }
 
         await markMessageQueueError(item.id, error.message);
+        unresolvedItemIds.delete(Number(item.id));
         errors += 1;
       }
     }
 
     const result = {
       skipped: false,
+      staleErrors,
       claimed: items.length,
       sent,
       errors,
@@ -1009,6 +1021,11 @@ async function processSecondMessageQueue() {
       message: error.message,
       at: nowIso()
     };
+
+    for (const id of unresolvedItemIds) {
+      await markMessageQueueError(id, `Error inesperado en cola: ${error.message}`).catch(() => { });
+    }
+
     throw error;
   } finally {
     messageQueueState.lastRunFinishedAt = nowIso();
@@ -1717,6 +1734,7 @@ app.get('/phantom', requireLoggedIn, (req, res) => {
 });
 
 app.get('/api/status', requireLoggedIn, async (req, res) => {
+  const staleErrors = await markStaleMessageQueueErrors().catch(() => 0);
   const [whatsapp, mysqlStatus, queueStats] = await Promise.all([
     getWhatsAppStatus(),
     getDatabaseStatus(),
@@ -1730,6 +1748,7 @@ app.get('/api/status', requireLoggedIn, async (req, res) => {
     messageQueue: {
       ...messageQueueState,
       running: messageQueueRunning,
+      staleErrors,
       stats: queueStats
     },
     mediaLimitBytes: maxStoredMediaBytes
@@ -1761,11 +1780,13 @@ app.delete('/api/message-templates/:id', requireAdmin, handleDeleteMessageTempla
 
 app.get('/api/message-queue/status', requireLoggedIn, async (req, res) => {
   try {
+    const staleErrors = await markStaleMessageQueueErrors();
     res.json({
       success: true,
       scheduler: {
         ...messageQueueState,
-        running: messageQueueRunning
+        running: messageQueueRunning,
+        staleErrors
       },
       stats: await getMessageQueueStats()
     });
@@ -1779,8 +1800,10 @@ app.get('/api/message-queue/status', requireLoggedIn, async (req, res) => {
 
 app.get('/api/message-queue', requireLoggedIn, async (req, res) => {
   try {
+    const staleErrors = await markStaleMessageQueueErrors();
     res.json({
       success: true,
+      staleErrors,
       stats: await getMessageQueueStats(),
       items: await listMessageQueueItems({
         limit: req.query.limit,
