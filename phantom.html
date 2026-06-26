@@ -266,6 +266,42 @@
       overflow-wrap: anywhere;
     }
 
+    .mobile-options {
+      display: grid;
+      gap: 6px;
+      min-width: 150px;
+    }
+
+    .mobile-option {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      color: var(--text);
+      font-size: 13px;
+      line-height: 1.2;
+      white-space: nowrap;
+    }
+
+    .mobile-option input {
+      width: 16px;
+      min-height: 16px;
+      margin: 0;
+      padding: 0;
+      flex: 0 0 auto;
+    }
+
+    .mobile-option input[type="text"] {
+      width: min(170px, 36vw);
+      min-height: 30px;
+      padding: 5px 7px;
+      font-size: 13px;
+      flex: 1 1 auto;
+    }
+
+    .mobile-option.invalid {
+      color: var(--muted);
+    }
+
     .table-head {
       min-height: 52px;
       border-bottom: 1px solid var(--line);
@@ -599,11 +635,13 @@
       {
         label: 'Razon social',
         keys: ['razonSocial', 'RS', 'RazonSocial', 'Razon_Social', 'Razon Social', 'Razon', 'razon_social'],
-        fallback: row => [row.Apellido, row.Nombre].filter(Boolean).join(' ')
+        fallback: row => [row.Apellido, row.Nombre].filter(Boolean).join(' '),
+        render: row => renderPhantomClientLink(row, 'Razon social', 'http://192.168.200.14:5594/Phantom/Includes/getinfo.php?id=')
       },
       {
         label: 'Deuda',
-        keys: ['deuda', 'balance', 'Balance_CC', 'Balance', 'Saldo', 'SaldoCC', 'SaldoCuentaCorriente']
+        keys: ['deuda', 'balance', 'Balance_CC', 'Balance', 'Saldo', 'SaldoCC', 'SaldoCuentaCorriente'],
+        render: row => renderPhantomClientLink(row, 'Deuda', 'http://192.168.200.14:5594/Phantom/Includes/billing_estadocuenta.php?id=')
       },
       {
         label: 'Estado',
@@ -611,11 +649,15 @@
       },
       {
         label: 'Movil',
-        keys: ['movil', 'Movil', 'Móvil', 'Celular', 'celular', 'Mobile', 'TelefonoMovil', 'TelMovil', 'Movi', 'movi']
+        keys: ['movil', 'Movil', 'Móvil', 'Celular', 'celular', 'Mobile', 'TelefonoMovil', 'TelMovil', 'Movi', 'movi'],
+        value: row => getRowChatPhone(row),
+        render: (row, index) => renderMobileOptions(row, index)
       },
+    
       {
-        label: 'Telefono',
-        keys: ['telefono', 'Telefono', 'Teléfono', 'Tel', 'tel', 'Telefono1', 'Telefono_1']
+        label: 'Fecha ultima factura',
+        keys: ['fechaUltimaFactura', 'fecha_ultima_factura', 'Fecha_Ultima_Factura'],
+        value: row => formatPhantomDateOnly(getFirstColumnValue(row, ['fechaUltimaFactura', 'fecha_ultima_factura', 'Fecha_Ultima_Factura']))
       },
       {
         label: 'Comprobantes adeudados',
@@ -741,6 +783,36 @@
       return typeof column.fallback === 'function' ? column.fallback(row) : '';
     }
 
+    function getFirstColumnValue(row, keys) {
+      if (!row || typeof row !== 'object' || Array.isArray(row)) {
+        return '';
+      }
+
+      for (const key of keys) {
+        if (row[key] !== undefined && row[key] !== null && row[key] !== '') {
+          return row[key];
+        }
+      }
+
+      return '';
+    }
+
+    function formatPhantomDateOnly(value) {
+      const text = String(value === undefined || value === null ? '' : value).trim();
+
+      if (!text) {
+        return '';
+      }
+
+      const match = text.match(/^(\d{4})-(\d{2})-(\d{2})(?:[ T]\d{2}:\d{2}:\d{2})?/);
+
+      if (match) {
+        return `${match[3]}/${match[2]}/${match[1]}`;
+      }
+
+      return text;
+    }
+
     function formatCell(value) {
       if (value === undefined || value === null) {
         return '';
@@ -752,18 +824,53 @@
 
       return String(value);
     }
-    function getFirstPhoneFromValue(value) {
-      return String(value || '')
-        .split(';')[0]
-        .replace(/\D/g, '')
-        .trim();
+
+    function getRowId(row) {
+      return String(getFieldValue(row, TABLE_COLUMNS[0]) || '').trim();
     }
 
-    function normalizeClientMobile(value) {
-      let phone = getFirstPhoneFromValue(value);
+    function renderPhantomClientLink(row, label, baseUrl) {
+      const column = TABLE_COLUMNS.find(item => item.label === label);
+      const value = formatCell(column ? getFieldValue(row, column) : '');
+      const displayValue = value === '' ? '--' : value;
+      const id = getRowId(row);
+
+      if (!id) {
+        return escapeHtml(displayValue);
+      }
+
+      return '<a href="' + escapeHtml(baseUrl + encodeURIComponent(id)) + '" target="_blank" rel="noopener noreferrer">' +
+        escapeHtml(displayValue) +
+        '</a>';
+    }
+
+    function getPhonePartsFromValue(value) {
+      return String(value || '')
+        .split(/[;\n,|\/]+/)
+        .map(item => item.trim())
+        .filter(Boolean);
+    }
+
+    function normalizeClientMobileCandidate(value) {
+      let phone = String(value || '')
+        .replace(/\D/g, '')
+        .trim();
 
       if (!phone) {
         return '';
+      }
+
+      if (phone.startsWith('549')) {
+        return /^549\d{8,12}$/.test(phone) ? phone : '';
+      }
+
+      if (phone.startsWith('54')) {
+        phone = '549' + phone.slice(2);
+        return /^549\d{8,12}$/.test(phone) ? phone : '';
+      }
+
+      if (phone.startsWith('0')) {
+        phone = phone.replace(/^0+/, '');
       }
 
       // Si viene como 15xxxxxxx, quitar el 15 y usar 11xxxxxxx
@@ -784,9 +891,122 @@
       return phone;
     }
 
+    function getMobileColumnRawValue(row) {
+      const column = TABLE_COLUMNS.find(item => item.label === 'Movil');
+
+      if (!row || !column) {
+        return '';
+      }
+
+      return getFirstColumnValue(row, column.keys);
+    }
+
+    function getRowMobileOptions(row) {
+      const seen = new Set();
+
+      return getPhonePartsFromValue(getMobileColumnRawValue(row))
+        .map((raw, index) => ({
+          key: String(index),
+          raw,
+          phone: normalizeClientMobileCandidate(raw)
+        }))
+        .filter(option => {
+          const dedupeKey = option.phone || option.raw.toLowerCase();
+
+          if (seen.has(dedupeKey)) {
+            return false;
+          }
+
+          seen.add(dedupeKey);
+          return true;
+        });
+    }
+
+    function getMobileOptionEditValue(row, option) {
+      const edits = row && row.mobileEdits && typeof row.mobileEdits === 'object'
+        ? row.mobileEdits
+        : {};
+
+      return String(edits[option.key] || option.raw || '').trim();
+    }
+
+    function getSelectedRowMobileOption(row) {
+      const options = getRowMobileOptions(row);
+
+      if (!options.length) {
+        return null;
+      }
+
+      const selectedKey = String(row.selectedMovilKey || '').trim();
+
+      if (selectedKey) {
+        const selectedOption = options.find(option => option.key === selectedKey);
+
+        if (selectedOption) {
+          return selectedOption;
+        }
+      }
+
+      const selected = String(row.selectedMovil || '').trim();
+
+      if (selected) {
+        const selectedOption = options.find(option => option.phone === selected);
+
+        if (selectedOption) {
+          row.selectedMovilKey = selectedOption.key;
+          return selectedOption;
+        }
+      }
+
+      row.selectedMovilKey = options[0].key;
+      row.selectedMovil = options[0].phone || '';
+      return options[0];
+    }
+
+    function getSelectedRowMobile(row) {
+      const option = getSelectedRowMobileOption(row);
+
+      if (!option) {
+        return '';
+      }
+
+      const phone = option.phone || normalizeClientMobileCandidate(getMobileOptionEditValue(row, option));
+      row.selectedMovil = phone;
+      return phone;
+    }
+
+    function renderMobileOptions(row, index) {
+      const options = getRowMobileOptions(row);
+
+      if (!options.length) {
+        return '<span class="badge bad">Sin movil valido</span>';
+      }
+
+      const selectedOption = getSelectedRowMobileOption(row);
+      const groupName = 'mobile-option-' + index;
+
+      return '<div class="mobile-options">' + options.map(option => {
+        const checked = selectedOption && option.key === selectedOption.key ? ' checked' : '';
+        const radio = '<input type="radio" name="' + escapeHtml(groupName) + '" value="' + escapeHtml(option.key) + '" data-mobile-index="' + index + '" data-mobile-key="' + escapeHtml(option.key) + '"' + checked + '>';
+
+        if (!option.phone) {
+          const editValue = getMobileOptionEditValue(row, option);
+
+          return '<label class="mobile-option invalid">' +
+            radio +
+            '<input type="text" value="' + escapeHtml(editValue) + '" data-mobile-edit-index="' + index + '" data-mobile-edit-key="' + escapeHtml(option.key) + '" inputmode="tel">' +
+            '</label>';
+        }
+
+        return '<label class="mobile-option">' +
+          radio +
+          '<span>' + escapeHtml(option.raw) + '</span>' +
+          '</label>';
+      }).join('') + '</div>';
+    }
+
     function getRowChatPhone(row) {
-      const movilColumn = TABLE_COLUMNS.find(column => column.label === 'Movil');
-      return normalizeClientMobile(getFieldValue(row, movilColumn));
+      return getSelectedRowMobile(row);
     }
 
     function getColumnValue(row, label) {
@@ -797,8 +1017,9 @@
     function getTemplateVariables(row) {
       const id = String(getFieldValue(row, TABLE_COLUMNS[0]) || '').trim();
       const razonSocial = String(getColumnValue(row, 'Razon social') || '').trim();
-      const movil = getRowChatPhone(row) || String(getColumnValue(row, 'Movil') || '').trim();
+      const movil = getRowChatPhone(row) || String(getMobileColumnRawValue(row) || '').trim();
       const telefono = String(getColumnValue(row, 'Telefono') || '').trim();
+      const fechaUltimaFactura = String(getColumnValue(row, 'Fecha ultima factura') || '').trim();
       const comprobantesAdeudados = String(getColumnValue(row, 'Comprobantes adeudados') || '').trim();
 
       return {
@@ -810,9 +1031,19 @@
         estado: String(getColumnValue(row, 'Estado') || '').trim(),
         movil,
         telefono,
+        fecha_ultima_factura: fechaUltimaFactura,
+        fechaUltimaFactura,
         comprobantes_adeudados: comprobantesAdeudados,
         comprobantesAdeudados
       };
+    }
+
+    function getQueueRowPayload(row) {
+      const selectedMovil = getRowChatPhone(row);
+
+      return selectedMovil
+        ? { ...row, movil: selectedMovil, selectedMovil }
+        : { ...row };
     }
 
     function renderTemplateForRow(row) {
@@ -1062,6 +1293,44 @@
           enqueueSingleRow(row, button).catch(error => {
             els.queueStatus.textContent = error.message;
           });
+        });
+      });
+
+      els.resultWrap.querySelectorAll('input[data-mobile-index]').forEach(input => {
+        input.addEventListener('change', () => {
+          const index = Number.parseInt(input.dataset.mobileIndex, 10);
+          const row = rows[index];
+
+          if (!row || !input.checked) {
+            return;
+          }
+
+          const option = getRowMobileOptions(row).find(item => item.key === input.dataset.mobileKey);
+          row.selectedMovilKey = input.dataset.mobileKey || '';
+          row.selectedMovil = option && option.phone
+            ? option.phone
+            : normalizeClientMobileCandidate(getMobileOptionEditValue(row, option || { key: row.selectedMovilKey, raw: '' }));
+          renderCurrentPage();
+        });
+      });
+
+      els.resultWrap.querySelectorAll('input[data-mobile-edit-index]').forEach(input => {
+        input.addEventListener('change', () => {
+          const index = Number.parseInt(input.dataset.mobileEditIndex, 10);
+          const row = rows[index];
+
+          if (!row) {
+            return;
+          }
+
+          const key = input.dataset.mobileEditKey || '';
+          row.mobileEdits = row.mobileEdits && typeof row.mobileEdits === 'object'
+            ? row.mobileEdits
+            : {};
+          row.mobileEdits[key] = input.value;
+          row.selectedMovilKey = key;
+          row.selectedMovil = normalizeClientMobileCandidate(input.value);
+          renderCurrentPage();
         });
       });
     }
@@ -1384,7 +1653,7 @@
             'Content-Type': 'application/json'
           },
           body: JSON.stringify({
-            rows: state.rows
+            rows: state.rows.map(getQueueRowPayload)
           })
         });
         await loadQueueStatus().catch(() => renderQueue(data));
@@ -1425,7 +1694,7 @@
             'Content-Type': 'application/json'
           },
           body: JSON.stringify({
-            rows: [row]
+            rows: [getQueueRowPayload(row)]
           })
         });
 

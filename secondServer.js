@@ -161,6 +161,7 @@ const secondMessageTemplatePlaceholders = [
   'estado',
   'movil',
   'telefono',
+  'fecha_ultima_factura',
   'comprobantes_adeudados'
 ];
 
@@ -969,6 +970,21 @@ async function getWhatsAppContactInfoByChatId(chatId) {
   }
 }
 
+async function getOptionalWhatsAppContactInfoByChatId(chatId) {
+  const timeoutMs = Math.min(10000, whatsappSendTimeoutMs);
+
+  try {
+    return await withTimeout(
+      getWhatsAppContactInfoByChatId(chatId),
+      timeoutMs,
+      () => new Error(`No se pudo obtener el contacto en ${Math.round(timeoutMs / 1000)} segundos`)
+    );
+  } catch (error) {
+    console.warn('No se pudo obtener info del contacto antes de enviar:', error.message);
+    return {};
+  }
+}
+
 async function resolveWhatsAppContact(target) {
   await getWhatsAppStatus();
 
@@ -1018,7 +1034,7 @@ async function sendWhatsApp(target, message, mediaInput, source = 'second-app', 
       whatsappSendTimeoutMs,
       () => createTransientWhatsAppError(new Error(`No se pudo resolver el chat en ${Math.round(whatsappSendTimeoutMs / 1000)} segundos`))
     );
-    contactInfo = await getWhatsAppContactInfoByChatId(chatId);
+    contactInfo = await getOptionalWhatsAppContactInfoByChatId(chatId);
   } catch (error) {
     if (isTransientWhatsAppError(error)) {
       whatsappLastError = String(error.message || error);
@@ -1429,6 +1445,22 @@ function getFirstPhantomValue(row, keys, fallback = '') {
   return fallback;
 }
 
+function formatPhantomDateOnly(value) {
+  const text = String(value === undefined || value === null ? '' : value).trim();
+
+  if (!text) {
+    return '';
+  }
+
+  const match = text.match(/^(\d{4})-(\d{2})-(\d{2})(?:[ T]\d{2}:\d{2}:\d{2})?/);
+
+  if (match) {
+    return `${match[3]}/${match[2]}/${match[1]}`;
+  }
+
+  return text;
+}
+
 function invertPhantomSign(value) {
   if (value === undefined || value === null || value === '') {
     return '';
@@ -1538,6 +1570,7 @@ function formatPhantomClientRows(rows) {
   return rows.map(row => {
     const razonFallback = [row && row.Apellido, row && row.Nombre].filter(Boolean).join(' ');
     const balance = getFirstPhantomValue(row, ['Balance_CC', 'BalanceCC', 'Balance', 'balance', 'Saldo', 'SaldoCC', 'SaldoCuentaCorriente']);
+    const fechaUltimaFactura = formatPhantomDateOnly(getFirstPhantomValue(row, ['Fecha_Ultima_Factura']));
 
     return {
       id: getFirstPhantomValue(row, ['ID', 'Id', 'id', 'IDA', 'ida', 'ClienteID', 'Cliente_Id', 'Codigo', 'CodigoCliente']),
@@ -1546,6 +1579,7 @@ function formatPhantomClientRows(rows) {
       estado: getFirstPhantomValue(row, ['Estado', 'estado']),
       movil: getFirstPhantomValue(row, ['Movil', 'Móvil', 'movil', 'Celular', 'celular', 'Mobile', 'TelefonoMovil', 'TelMovil', 'Movi', 'movi']),
       telefono: getFirstPhantomValue(row, ['Telefono', 'Teléfono', 'telefono', 'Tel', 'tel', 'Telefono1', 'Telefono_1']),
+      fechaUltimaFactura,
       comprobantesAdeudados: getFirstPhantomValue(row, ['C_Comprobantes_Adeudados', 'Fecha_Ultimo_Mov', 'CompAdeudados', 'ComprobantesAdeudados', 'Comprobantes_Adeudados', 'compAdeudados', 'comp_adeudados', 'Adeudados'])
     };
   }).filter(hasDebtOrOverdueReceipts);
@@ -1561,6 +1595,7 @@ function createMessageVariablesFromRow(row = {}) {
   const comprobantesAdeudados = getFirstPhantomValue(row, ['comprobantesAdeudados', 'C_Comprobantes_Adeudados', 'Fecha_Ultimo_Mov', 'ComprobantesAdeudados', 'Comprobantes_Adeudados']);
   const normalizedMovil = normalizeSecondQueuePhone(movil);
   const normalizedTelefono = normalizeSecondQueuePhone(telefono);
+  const fechaUltimaFactura = formatPhantomDateOnly(getFirstPhantomValue(row, ['fechaUltimaFactura', 'fecha_ultima_factura', 'Fecha_Ultima_Factura']));
 
   return {
     id,
@@ -1573,6 +1608,8 @@ function createMessageVariablesFromRow(row = {}) {
     movil_raw: movil,
     telefono: normalizedTelefono || telefono,
     telefono_raw: telefono,
+    fecha_ultima_factura: fechaUltimaFactura,
+    fechaUltimaFactura,
     comprobantes_adeudados: comprobantesAdeudados,
     comprobantesAdeudados
   };
