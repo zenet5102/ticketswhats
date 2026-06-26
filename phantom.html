@@ -1168,6 +1168,41 @@
       return '<button type="button" data-enqueue-index="' + index + '">' + escapeHtml(label) + '</button>';
     }
 
+    function attachEnqueueButton(button, rows) {
+      button.addEventListener('click', () => {
+        const index = Number.parseInt(button.dataset.enqueueIndex, 10);
+        const row = rows[index];
+
+        enqueueSingleRow(row, button).catch(error => {
+          els.queueStatus.textContent = error.message;
+        });
+      });
+    }
+
+    function refreshRowContactActions(row, index, sourceElement, rows) {
+      const tableRow = sourceElement && sourceElement.closest('tr');
+
+      if (!tableRow) {
+        return;
+      }
+
+      const enqueueIndex = TABLE_COLUMNS.findIndex(column => column.label === 'Encolar');
+      const chatIndex = TABLE_COLUMNS.findIndex(column => column.label === 'Chat');
+
+      if (enqueueIndex >= 0 && tableRow.children[enqueueIndex]) {
+        tableRow.children[enqueueIndex].innerHTML = renderQueueAction(row, index);
+        const button = tableRow.children[enqueueIndex].querySelector('button[data-enqueue-index]');
+
+        if (button) {
+          attachEnqueueButton(button, rows);
+        }
+      }
+
+      if (chatIndex >= 0 && tableRow.children[chatIndex]) {
+        tableRow.children[chatIndex].innerHTML = renderChatLink(row);
+      }
+    }
+
     function toComparableNumber(value) {
       if (typeof value === 'number') {
         return Number.isFinite(value) ? value : null;
@@ -1286,14 +1321,7 @@
       });
 
       els.resultWrap.querySelectorAll('button[data-enqueue-index]').forEach(button => {
-        button.addEventListener('click', () => {
-          const index = Number.parseInt(button.dataset.enqueueIndex, 10);
-          const row = rows[index];
-
-          enqueueSingleRow(row, button).catch(error => {
-            els.queueStatus.textContent = error.message;
-          });
-        });
+        attachEnqueueButton(button, rows);
       });
 
       els.resultWrap.querySelectorAll('input[data-mobile-index]').forEach(input => {
@@ -1310,11 +1338,18 @@
           row.selectedMovil = option && option.phone
             ? option.phone
             : normalizeClientMobileCandidate(getMobileOptionEditValue(row, option || { key: row.selectedMovilKey, raw: '' }));
-          renderCurrentPage();
+          refreshRowContactActions(row, index, input, rows);
         });
       });
 
       els.resultWrap.querySelectorAll('input[data-mobile-edit-index]').forEach(input => {
+        input.addEventListener('keydown', event => {
+          if (event.key === 'Enter') {
+            event.preventDefault();
+            input.blur();
+          }
+        });
+
         input.addEventListener('change', () => {
           const index = Number.parseInt(input.dataset.mobileEditIndex, 10);
           const row = rows[index];
@@ -1330,7 +1365,7 @@
           row.mobileEdits[key] = input.value;
           row.selectedMovilKey = key;
           row.selectedMovil = normalizeClientMobileCandidate(input.value);
-          renderCurrentPage();
+          refreshRowContactActions(row, index, input, rows);
         });
       });
     }
