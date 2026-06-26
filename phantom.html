@@ -333,6 +333,20 @@
       white-space: nowrap;
     }
 
+    .search-box {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      color: var(--muted);
+      font-size: 13px;
+      white-space: nowrap;
+    }
+
+    .search-box input {
+      width: min(260px, 42vw);
+      min-height: 38px;
+    }
+
     select {
       min-height: 38px;
       border: 1px solid var(--line);
@@ -557,6 +571,10 @@
       <div class="table-head">
         <div class="panel-title">Resultado</div>
         <div class="table-controls">
+          <label class="search-box" for="clientSearch">
+            <span>Buscar</span>
+            <input id="clientSearch" type="search" placeholder="Nombre, ID o telefono">
+          </label>
           <label class="page-size" for="pageSize">
             <span>Filas</span>
             <select id="pageSize">
@@ -591,13 +609,15 @@
       templates: [],
       selectedTemplateId: '',
       sortIndex: -1,
-      sortDirection: 'asc'
+      sortDirection: 'asc',
+      searchQuery: ''
     };
 
     const MAX_FETCH_ROWS = 500;
 
     const els = {
       deleteTemplateBtn: document.getElementById('deleteTemplateBtn'),
+      clientSearch: document.getElementById('clientSearch'),
       enqueueBtn: document.getElementById('enqueueBtn'),
       errorText: document.getElementById('errorText'),
       lastRunValue: document.getElementById('lastRunValue'),
@@ -712,8 +732,43 @@
       return Math.floor(state.offset / state.limit) + 1;
     }
 
+    function normalizeSearchText(value) {
+      return String(value === undefined || value === null ? '' : value)
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .toLowerCase()
+        .trim();
+    }
+
+    function getRowSearchText(row) {
+      const values = [
+        getRowId(row),
+        getColumnValue(row, 'Razon social'),
+        getMobileColumnRawValue(row),
+        getRowChatPhone(row),
+        getColumnValue(row, 'Telefono')
+      ];
+
+      return normalizeSearchText(values.join(' '));
+    }
+
+    function getFilteredRows() {
+      const query = normalizeSearchText(state.searchQuery);
+
+      if (!query) {
+        return state.rows.slice();
+      }
+
+      const terms = query.split(/\s+/).filter(Boolean);
+
+      return state.rows.filter(row => {
+        const text = getRowSearchText(row);
+        return terms.every(term => text.includes(term));
+      });
+    }
+
     function getSortedRows() {
-      const rows = state.rows.slice();
+      const rows = getFilteredRows();
       const column = TABLE_COLUMNS[state.sortIndex];
 
       if (!column) {
@@ -732,7 +787,7 @@
     }
 
     function renderPagination() {
-      const total = state.rows.length;
+      const total = getFilteredRows().length;
       const page = getPageNumber();
       els.pageBadge.textContent = 'Pagina ' + page;
       els.prevPageBtn.disabled = state.loading || state.offset <= 0;
@@ -745,6 +800,7 @@
       state.loading = loading;
       els.refreshBtn.disabled = loading;
       els.enqueueBtn.disabled = loading;
+      els.clientSearch.disabled = loading;
       renderPagination();
     }
 
@@ -1371,13 +1427,15 @@
     }
 
     function clampOffset() {
-      if (!state.rows.length) {
+      const total = getFilteredRows().length;
+
+      if (!total) {
         state.offset = 0;
         return;
       }
 
-      if (state.offset >= state.rows.length) {
-        state.offset = Math.floor((state.rows.length - 1) / state.limit) * state.limit;
+      if (state.offset >= total) {
+        state.offset = Math.floor((total - 1) / state.limit) * state.limit;
       }
     }
 
@@ -1385,15 +1443,20 @@
       clampOffset();
 
       const visibleRows = getVisibleRows();
+      const filteredTotal = getFilteredRows().length;
       const total = state.rows.length;
       const page = getPageNumber();
       const rangeStart = visibleRows.length ? state.offset + 1 : 0;
       const rangeEnd = state.offset + visibleRows.length;
 
-      els.rowCount.textContent = String(total);
+      els.rowCount.textContent = state.searchQuery
+        ? String(filteredTotal) + '/' + String(total)
+        : String(total);
       els.rowDetail.textContent = visibleRows.length
-        ? `Pagina ${page} | ${rangeStart}-${rangeEnd} de ${total}`
-        : 'Sin registros';
+        ? `Pagina ${page} | ${rangeStart}-${rangeEnd} de ${filteredTotal}`
+        : state.searchQuery
+          ? 'Sin resultados'
+          : 'Sin registros';
 
       renderTable(visibleRows);
       renderPagination();
@@ -1662,12 +1725,14 @@
     }
 
     async function enqueueRows() {
-      if (!state.rows.length) {
+      const rowsToQueue = getFilteredRows();
+
+      if (!rowsToQueue.length) {
         els.queueStatus.textContent = 'Sin registros';
         return;
       }
 
-      const validCount = state.rows.filter(row => getRowChatPhone(row)).length;
+      const validCount = rowsToQueue.filter(row => getRowChatPhone(row)).length;
 
       if (!validCount) {
         els.queueStatus.textContent = 'No hay clientes con movil valido';
@@ -1688,7 +1753,7 @@
             'Content-Type': 'application/json'
           },
           body: JSON.stringify({
-            rows: state.rows.map(getQueueRowPayload)
+            rows: rowsToQueue.map(getQueueRowPayload)
           })
         });
         await loadQueueStatus().catch(() => renderQueue(data));
@@ -1747,6 +1812,11 @@
 
     els.refreshBtn.addEventListener('click', loadData);
     els.enqueueBtn.addEventListener('click', enqueueRows);
+    els.clientSearch.addEventListener('input', () => {
+      state.searchQuery = els.clientSearch.value;
+      state.offset = 0;
+      renderCurrentPage();
+    });
     els.newTemplateBtn.addEventListener('click', startNewTemplate);
     els.deleteTemplateBtn.addEventListener('click', () => {
       deleteTemplate().catch(error => {
@@ -1771,7 +1841,7 @@
     });
 
     els.nextPageBtn.addEventListener('click', () => {
-      if (state.loading || state.offset + state.limit >= state.rows.length) {
+      if (state.loading || state.offset + state.limit >= getFilteredRows().length) {
         return;
       }
 
