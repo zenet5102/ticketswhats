@@ -67,6 +67,7 @@ let whatsappQr = null;
 let whatsappQrText = null;
 let whatsappQrSvg = null;
 let whatsappRestarting = false;
+let whatsappReconnectTimer = null;
 let client = null;
 let messageQueueRunning = false;
 const messageQueueState = {
@@ -433,6 +434,19 @@ function clearWhatsAppQr() {
   whatsappQrSvg = null;
 }
 
+function scheduleWhatsAppReconnect(reason, delayMs = 5000) {
+  if (whatsappReconnectTimer || whatsappRestarting) {
+    return;
+  }
+
+  whatsappReconnectTimer = setTimeout(() => {
+    whatsappReconnectTimer = null;
+    restartWhatsAppClient(reason).catch(error => {
+      console.warn('No se pudo reiniciar WhatsApp secundario automaticamente:', error.message);
+    });
+  }, delayMs);
+}
+
 function createQrText(input) {
   let output = '';
   qrcode.generate(input, { small: true }, value => {
@@ -727,6 +741,7 @@ function attachWhatsAppEvents(instance) {
     markWhatsAppState(`DISCONNECTED: ${reason}`, false);
     clearWhatsAppQr();
     console.log('WhatsApp secundario desconectado:', reason);
+    scheduleWhatsAppReconnect(`disconnected: ${reason || 'unknown'}`);
   });
 
   instance.on('message', message => {
@@ -764,6 +779,10 @@ async function restartWhatsAppClient(reason = 'manual', options = {}) {
   }
 
   whatsappRestarting = true;
+  if (whatsappReconnectTimer) {
+    clearTimeout(whatsappReconnectTimer);
+    whatsappReconnectTimer = null;
+  }
   markWhatsAppState(options.resetAuth ? 'RESETTING_AUTH' : 'RESTARTING', false);
   whatsappLastError = null;
   clearWhatsAppQr();
