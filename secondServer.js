@@ -31,7 +31,9 @@ const {
   enqueueMessageQueueItems,
   getMessageQueueStats,
   getMysqlSettings,
+  getPhantomBajaSyncStatus,
   getWhatsAppChatOwner,
+  listPhantomBajaClients,
   listMessageQueueItems,
   listWhatsAppConversations,
   listWhatsAppMessages,
@@ -41,6 +43,7 @@ const {
   normalizeChatPhone,
   pingDatabase,
   releaseMessageQueueItem,
+  replacePhantomBajaClients,
   saveWhatsAppMessage
 } = require('./secondMessageDb');
 
@@ -58,6 +61,9 @@ const messageQueueIntervalMinutes = parsePositiveInteger(process.env.SECOND_MESS
 const messageQueueBatchSize = parsePositiveInteger(process.env.SECOND_MESSAGE_QUEUE_BATCH_SIZE, 20);
 const whatsappSendTimeoutMs = parsePositiveInteger(process.env.SECOND_WHATSAPP_SEND_TIMEOUT_SECONDS, 60) * 1000;
 const secondMessageSettingsPath = path.join(__dirname, 'data', 'second-message-settings.json');
+const phantomBajaSyncHour = Math.min(parseNonNegativeInteger(process.env.PHANTOM_BAJA_SYNC_HOUR, 3), 23);
+const phantomBajaSyncMinute = Math.min(parseNonNegativeInteger(process.env.PHANTOM_BAJA_SYNC_MINUTE, 0), 59);
+const phantomBajaSyncLimit = Math.min(parsePositiveInteger(process.env.PHANTOM_BAJA_SYNC_LIMIT, 500), 500);
 
 let whatsappReady = false;
 let whatsappState = 'starting';
@@ -70,6 +76,17 @@ let whatsappRestarting = false;
 let whatsappReconnectTimer = null;
 let client = null;
 let messageQueueRunning = false;
+let phantomBajaSyncRunning = false;
+let phantomBajaSyncTimer = null;
+const phantomBajaSyncState = {
+  active: false,
+  running: false,
+  lastRunStartedAt: null,
+  lastRunFinishedAt: null,
+  nextRunAt: null,
+  lastResult: null,
+  lastError: null
+};
 const messageQueueState = {
   active: false,
   intervalMinutes: messageQueueIntervalMinutes,
@@ -1604,7 +1621,8 @@ function formatPhantomClientRows(rows, options = {}) {
       movil: getFirstPhantomValue(row, ['Movil', 'Móvil', 'movil', 'Celular', 'celular', 'Mobile', 'TelefonoMovil', 'TelMovil', 'Movi', 'movi']),
       telefono: getFirstPhantomValue(row, ['Telefono', 'Teléfono', 'telefono', 'Tel', 'tel', 'Telefono1', 'Telefono_1']),
       fechaUltimaFactura,
-      comprobantesAdeudados: getFirstPhantomValue(row, ['C_Comprobantes_Adeudados', 'Fecha_Ultimo_Mov', 'CompAdeudados', 'ComprobantesAdeudados', 'Comprobantes_Adeudados', 'compAdeudados', 'comp_adeudados', 'Adeudados'])
+      comprobantesAdeudados: getFirstPhantomValue(row, ['C_Comprobantes_Adeudados', 'Fecha_Ultimo_Mov', 'CompAdeudados', 'ComprobantesAdeudados', 'Comprobantes_Adeudados', 'compAdeudados', 'comp_adeudados', 'Adeudados']),
+      raw: row
     };
   });
 
@@ -1670,9 +1688,7 @@ function createQueueItemFromRow(row = {}) {
   };
 }
 
-async function handlePhantomConsultaMasiva(req, res) {
-  try {
-    const requestBody = req.body && typeof req.body === 'object' ? req.body : {};
+function getPhantomCredentials() {
     const baseUrl = String(process.env.PHANTOM_API_URL || '').trim();
     const apiUser = normalizePhantomQueryValue(process.env.PHANTOM_API_USER);
     const apiPass = normalizePhantomQueryValue(process.env.PHANTOM_API_PASS);
@@ -1680,6 +1696,12 @@ async function handlePhantomConsultaMasiva(req, res) {
     if (!baseUrl || !apiUser || !apiPass) {
       throw new Error('Faltan PHANTOM_API_URL, PHANTOM_API_USER o PHANTOM_API_PASS');
     }
+
+  return { baseUrl, apiUser, apiPass };
+}
+
+async function createPhantomToken() {
+  const { baseUrl, apiUser, apiPass } = getPhantomCredentials();
 
     const authUrl = buildPhantomUrl(baseUrl, {
       action: 'autentificar',
@@ -1704,14 +1726,19 @@ async function handlePhantomConsultaMasiva(req, res) {
       throw new Error(`Phantom no devolvio token. Auth HTTP ${authResponse.status}; body ${authPreview ? `"${authPreview}"` : 'vacio'}`);
     }
 
+  return { baseUrl, token };
+}
+
+async function fetchPhantomConsultaMasivaRows(options = {}) {
+    const { baseUrl, token } = await createPhantomToken();
     const idDesde = parsePositiveInteger(process.env.PHANTOM_CONSULTA_ID_DESDE, 1);
     const idHasta = parsePositiveInteger(process.env.PHANTOM_CONSULTA_ID_HASTA, 999999999);
     const desc = parsePositiveInteger(process.env.PHANTOM_CONSULTA_DESC, 1);
     const defaultLimit = parsePositiveInteger(process.env.PHANTOM_CONSULTA_LIMIT, 10);
-    const requestedLimit = parsePositiveInteger(req.query.limit ?? requestBody.limit, defaultLimit);
+  const requestedLimit = parsePositiveInteger(options.limit, defaultLimit);
     const limit = Math.min(requestedLimit, 500);
-    const requestedOffset = req.query.offset ?? requestBody.offset;
-    const requestedPage = parsePositiveInteger(req.query.page ?? requestBody.page, 0);
+  const requestedOffset = options.offset;
+  const requestedPage = parsePositiveInteger(options.page, 0);
     const offset = requestedOffset !== undefined
       ? parseNonNegativeInteger(requestedOffset, 0)
       : requestedPage
@@ -1720,7 +1747,7 @@ async function handlePhantomConsultaMasiva(req, res) {
     const balanceCC = parsePositiveInteger(process.env.PHANTOM_CONSULTA_BALANCE_CC, 1);
     const compAdeudados = parsePositiveInteger(process.env.PHANTOM_CONSULTA_COMP_ADEUDADOS, 1);
     const estado = normalizePhantomEstado(
-      req.query.estado ?? requestBody.estado,
+    options.estado,
       process.env.PHANTOM_CONSULTA_ESTADO || 'Suspendido'
     );
     const consultaUrl = buildPhantomUrl(baseUrl, {
@@ -1765,18 +1792,78 @@ async function handlePhantomConsultaMasiva(req, res) {
       filterDebt: shouldFilterDebt
     });
 
+  return {
+    rows,
+    rawRows,
+    estado,
+    pagination: {
+      limit,
+      offset,
+      page: Math.floor(offset / limit) + 1,
+      returned: rows.length,
+      rawReturned: rawRows.length,
+      hasNextPage: rawRows.length === limit
+    }
+  };
+}
+
+async function handlePhantomConsultaMasiva(req, res) {
+  try {
+    const requestBody = req.body && typeof req.body === 'object' ? req.body : {};
+    const estado = normalizePhantomEstado(
+      req.query.estado ?? requestBody.estado,
+      process.env.PHANTOM_CONSULTA_ESTADO || 'Suspendido'
+    );
+    const requestedLimit = req.query.limit ?? requestBody.limit;
+    const requestedOffset = req.query.offset ?? requestBody.offset;
+    const requestedPage = req.query.page ?? requestBody.page;
+
+    if (estado.toLowerCase() === 'baja') {
+      const defaultLimit = parsePositiveInteger(process.env.PHANTOM_CONSULTA_LIMIT, 10);
+      const limit = Math.min(parsePositiveInteger(requestedLimit, defaultLimit), 500);
+      const page = parsePositiveInteger(requestedPage, 0);
+      const offset = requestedOffset !== undefined
+        ? parseNonNegativeInteger(requestedOffset, 0)
+        : page
+          ? (page - 1) * limit
+          : 0;
+      const result = await listPhantomBajaClients({ limit, offset });
+      const syncStatus = await getPhantomBajaSyncStatus().catch(() => null);
+
+      return res.json({
+        success: true,
+        rows: result.rows,
+        pagination: {
+          limit: result.limit,
+          offset: result.offset,
+          page: Math.floor(result.offset / result.limit) + 1,
+          returned: result.rows.length,
+          total: result.total,
+          hasNextPage: result.hasNextPage
+        },
+        estado,
+        source: 'db',
+        sync: {
+          ...phantomBajaSyncState,
+          database: syncStatus
+        },
+        receivedAt: new Date().toISOString()
+      });
+    }
+
+    const result = await fetchPhantomConsultaMasivaRows({
+      estado,
+      limit: requestedLimit,
+      offset: requestedOffset,
+      page: requestedPage
+    });
+
     res.json({
       success: true,
-      rows,
-      pagination: {
-        limit,
-        offset,
-        page: Math.floor(offset / limit) + 1,
-        returned: rows.length,
-        rawReturned: rawRows.length,
-        hasNextPage: rawRows.length === limit
-      },
-      estado,
+      rows: result.rows,
+      pagination: result.pagination,
+      estado: result.estado,
+      source: 'phantom',
       receivedAt: new Date().toISOString()
     });
   } catch (error) {
@@ -1832,6 +1919,106 @@ async function handleCheckWhatsAppNumber(req, res) {
       error: error.message
     });
   }
+}
+
+function getNextPhantomBajaSyncDate(fromDate = new Date()) {
+  const next = new Date(fromDate);
+  next.setHours(phantomBajaSyncHour, phantomBajaSyncMinute, 0, 0);
+
+  if (next <= fromDate) {
+    next.setDate(next.getDate() + 1);
+  }
+
+  return next;
+}
+
+async function syncPhantomBajaClients(reason = 'scheduled') {
+  if (phantomBajaSyncRunning) {
+    return {
+      skipped: true,
+      reason: 'sync-running'
+    };
+  }
+
+  phantomBajaSyncRunning = true;
+  phantomBajaSyncState.running = true;
+  phantomBajaSyncState.lastRunStartedAt = nowIso();
+  phantomBajaSyncState.lastError = null;
+  console.log(`[PHANTOM BAJA] Sincronizando clientes baja (${reason})`);
+
+  const startedAt = new Date();
+  const allRows = [];
+  let offset = 0;
+  let page = 1;
+
+  try {
+    while (true) {
+      const result = await fetchPhantomConsultaMasivaRows({
+        estado: 'Baja',
+        limit: phantomBajaSyncLimit,
+        offset
+      });
+      allRows.push(...result.rows);
+
+      if (!result.pagination.hasNextPage) {
+        break;
+      }
+
+      offset += result.pagination.limit;
+      page += 1;
+
+      if (page > 10000) {
+        throw new Error('Corte de seguridad: demasiadas paginas sincronizando Baja');
+      }
+    }
+
+    const saved = await replacePhantomBajaClients(allRows, startedAt);
+    const result = {
+      skipped: false,
+      reason,
+      saved,
+      pages: page,
+      finishedAt: nowIso()
+    };
+
+    phantomBajaSyncState.lastResult = result;
+    phantomBajaSyncState.lastError = null;
+    console.log(`[PHANTOM BAJA] Sincronizacion completa: ${saved} registros en ${page} pagina(s)`);
+    return result;
+  } catch (error) {
+    phantomBajaSyncState.lastError = {
+      message: error.message,
+      at: nowIso()
+    };
+    console.error('[PHANTOM BAJA] Error sincronizando:', error);
+    throw error;
+  } finally {
+    phantomBajaSyncState.lastRunFinishedAt = nowIso();
+    phantomBajaSyncState.running = false;
+    phantomBajaSyncRunning = false;
+  }
+}
+
+function scheduleNextPhantomBajaSync() {
+  const nextRun = getNextPhantomBajaSyncDate();
+  const delayMs = Math.max(nextRun.getTime() - Date.now(), 1000);
+  phantomBajaSyncState.nextRunAt = nextRun.toISOString();
+
+  if (phantomBajaSyncTimer) {
+    clearTimeout(phantomBajaSyncTimer);
+  }
+
+  phantomBajaSyncTimer = setTimeout(() => {
+    syncPhantomBajaClients('scheduled')
+      .catch(() => { })
+      .finally(scheduleNextPhantomBajaSync);
+  }, delayMs);
+}
+
+function startPhantomBajaSyncScheduler() {
+  phantomBajaSyncState.active = true;
+  scheduleNextPhantomBajaSync();
+  console.log(`Sync clientes Baja activo todos los dias a las ${String(phantomBajaSyncHour).padStart(2, '0')}:${String(phantomBajaSyncMinute).padStart(2, '0')}.`);
 }
 
 function listAvailableSecondUserGroups() {
@@ -2323,6 +2510,33 @@ app.post('/api/messages/send', requirePrivileged, async (req, res) => {
 
 app.get('/api/phantom/consulta-masiva', requireLoggedIn, handlePhantomConsultaMasiva);
 app.post('/api/phantom/consulta-masiva', requireLoggedIn, handlePhantomConsultaMasiva);
+app.get('/api/phantom/baja/sync-status', requireLoggedIn, async (req, res) => {
+  try {
+    res.json({
+      success: true,
+      scheduler: phantomBajaSyncState,
+      database: await getPhantomBajaSyncStatus()
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+app.post('/api/phantom/baja/sync', requirePrivileged, async (req, res) => {
+  try {
+    res.json({
+      success: true,
+      result: await syncPhantomBajaClients('manual')
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
 app.get('/api/whatsapp/check-number', requireLoggedIn, handleCheckWhatsAppNumber);
 
 app.post('/api/whatsapp/reconnect', requirePrivileged, async (req, res) => {
@@ -2375,6 +2589,10 @@ pingDatabase().catch(error => {
 
 initializeWhatsAppClient().catch(() => { });
 startSecondMessageQueueScheduler();
+startPhantomBajaSyncScheduler();
+syncPhantomBajaClients('startup')
+  .then(result => console.log('[PHANTOM BAJA] Corrida inicial:', result))
+  .catch(error => console.error('[PHANTOM BAJA] Error corrida inicial:', error));
 processSecondMessageQueue()
   .then(result => console.log('[QUEUE] Corrida inicial:', result))
   .catch(error => console.error('[QUEUE] Error corrida inicial:', error));

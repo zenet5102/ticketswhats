@@ -38,6 +38,7 @@ function getMysqlSettings() {
     createDatabase: parseBoolean(process.env.SECOND_APP_MYSQL_CREATE_DATABASE, true),
     messagesTable: readEnv('SECOND_APP_MYSQL_MESSAGES_TABLE', 'second_whatsapp_messages'),
     queueTable: readEnv('SECOND_APP_MYSQL_QUEUE_TABLE', 'second_message_queue'),
+    phantomBajaTable: readEnv('SECOND_APP_MYSQL_PHANTOM_BAJA_TABLE', 'second_phantom_baja_clients'),
     queueSendingTimeoutMinutes: parsePositiveInteger(
       process.env.SECOND_MESSAGE_QUEUE_SENDING_TIMEOUT_MINUTES,
       2
@@ -60,6 +61,7 @@ function escapeIdentifier(value, label = 'identificador') {
 const databaseNameSql = escapeIdentifier(settings.database, 'base de datos');
 const messagesTableSql = escapeIdentifier(settings.messagesTable, 'tabla');
 const queueTableSql = escapeIdentifier(settings.queueTable, 'tabla de cola');
+const phantomBajaTableSql = escapeIdentifier(settings.phantomBajaTable, 'tabla de clientes baja');
 
 function createConnectionConfig(includeDatabase = true) {
   const config = {
@@ -175,6 +177,28 @@ async function initializeMessageDatabase(databasePool) {
     ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
   `);
 
+  await databasePool.query(`
+    CREATE TABLE IF NOT EXISTS ${phantomBajaTableSql} (
+      id VARCHAR(191) NOT NULL,
+      razon_social VARCHAR(255) NULL,
+      deuda VARCHAR(64) NULL,
+      estado VARCHAR(64) NULL,
+      movil VARCHAR(255) NULL,
+      telefono VARCHAR(255) NULL,
+      fecha_ultima_factura VARCHAR(64) NULL,
+      comprobantes_adeudados VARCHAR(191) NULL,
+      raw_json LONGTEXT NOT NULL,
+      synced_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      PRIMARY KEY (id),
+      KEY idx_second_phantom_baja_estado (estado),
+      KEY idx_second_phantom_baja_synced (synced_at),
+      KEY idx_second_phantom_baja_razon (razon_social),
+      KEY idx_second_phantom_baja_movil (movil)
+    ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
+  `);
+
   await ensureTableColumn(databasePool, messagesTableSql, 'owner_username', 'VARCHAR(191) NULL');
   await ensureTableColumn(databasePool, queueTableSql, 'owner_username', 'VARCHAR(191) NULL');
   await ensureTableIndex(
@@ -189,6 +213,7 @@ async function initializeMessageDatabase(databasePool) {
     'idx_second_queue_owner',
     'KEY idx_second_queue_owner (owner_username, status)'
   );
+  await ensureTableColumn(databasePool, phantomBajaTableSql, 'raw_json', 'LONGTEXT NOT NULL');
 }
 
 async function getPool() {
@@ -817,6 +842,134 @@ async function listMessageQueueItems(options = {}) {
   return rows.map(parseQueueRow);
 }
 
+function normalizePhantomBajaRow(row = {}, fallbackIndex = 0) {
+  const id = String(row.id || row.ID || row.Id || row.IDA || row.ida || row.ClienteID || row.Cliente_Id || row.Codigo || row.CodigoCliente || '').trim() ||
+    `row:${fallbackIndex}`;
+
+  return {
+    id,
+    razonSocial: String(row.razonSocial || row.razon_social || row.RS || row.RazonSocial || row.Razon_Social || row['Razon Social'] || row.Razon || '').trim(),
+    deuda: String(row.deuda || row.balance || row.Balance_CC || row.Balance || row.Saldo || '').trim(),
+    estado: String(row.estado || row.Estado || 'Baja').trim(),
+    movil: String(row.movil || row.Movil || row['Móvil'] || row.Celular || row.celular || row.Mobile || row.TelefonoMovil || row.TelMovil || row.Movi || row.movi || '').trim(),
+    telefono: String(row.telefono || row.Telefono || row['Teléfono'] || row.Tel || row.tel || row.Telefono1 || row.Telefono_1 || '').trim(),
+    fechaUltimaFactura: String(row.fechaUltimaFactura || row.fecha_ultima_factura || row.Fecha_Ultima_Factura || '').trim(),
+    comprobantesAdeudados: String(row.comprobantesAdeudados || row.C_Comprobantes_Adeudados || row.Fecha_Ultimo_Mov || row.ComprobantesAdeudados || row.Comprobantes_Adeudados || '').trim(),
+    raw: row.raw && typeof row.raw === 'object' ? row.raw : row
+  };
+}
+
+function parsePhantomBajaDbRow(row = {}) {
+  let raw = {};
+
+  try {
+    raw = JSON.parse(row.raw_json || '{}') || {};
+  } catch (error) {
+    raw = {};
+  }
+
+  return {
+    ...raw,
+    id: row.id,
+    razonSocial: row.razon_social || raw.razonSocial || raw.razon_social || '',
+    deuda: row.deuda || raw.deuda || '',
+    estado: row.estado || raw.estado || 'Baja',
+    movil: row.movil || raw.movil || '',
+    telefono: row.telefono || raw.telefono || '',
+    fechaUltimaFactura: row.fecha_ultima_factura || raw.fechaUltimaFactura || raw.fecha_ultima_factura || '',
+    comprobantesAdeudados: row.comprobantes_adeudados || raw.comprobantesAdeudados || raw.comprobantes_adeudados || '',
+    syncedAt: row.synced_at
+  };
+}
+
+async function replacePhantomBajaClients(rows = [], syncedAt = new Date()) {
+  const database = await getPool();
+  const connection = await database.getConnection();
+  const normalizedRows = rows.map(normalizePhantomBajaRow);
+  const syncedAtValue = syncedAt instanceof Date ? syncedAt : new Date(syncedAt || Date.now());
+
+  try {
+    await connection.beginTransaction();
+    await connection.query(`DELETE FROM ${phantomBajaTableSql}`);
+
+    if (normalizedRows.length) {
+      const values = normalizedRows.map(row => [
+        row.id,
+        row.razonSocial || null,
+        row.deuda || null,
+        row.estado || 'Baja',
+        row.movil || null,
+        row.telefono || null,
+        row.fechaUltimaFactura || null,
+        row.comprobantesAdeudados || null,
+        JSON.stringify(row.raw || row),
+        syncedAtValue
+      ]);
+
+      await connection.query(`
+        INSERT INTO ${phantomBajaTableSql} (
+          id,
+          razon_social,
+          deuda,
+          estado,
+          movil,
+          telefono,
+          fecha_ultima_factura,
+          comprobantes_adeudados,
+          raw_json,
+          synced_at
+        )
+        VALUES ?
+      `, [values]);
+    }
+
+    await connection.commit();
+    return normalizedRows.length;
+  } catch (error) {
+    await connection.rollback();
+    throw error;
+  } finally {
+    connection.release();
+  }
+}
+
+async function listPhantomBajaClients(options = {}) {
+  const safeLimit = Math.min(Math.max(Number(options.limit) || 10, 1), 500);
+  const safeOffset = Math.max(Number(options.offset) || 0, 0);
+  const database = await getPool();
+  const [[countRow]] = await database.query(`SELECT COUNT(*) AS total FROM ${phantomBajaTableSql}`);
+  const [rows] = await database.query(`
+    SELECT *
+    FROM ${phantomBajaTableSql}
+    ORDER BY CAST(id AS UNSIGNED) DESC, id DESC
+    LIMIT ${safeLimit}
+    OFFSET ${safeOffset}
+  `);
+
+  const total = Number(countRow && countRow.total || 0);
+
+  return {
+    rows: rows.map(parsePhantomBajaDbRow),
+    total,
+    limit: safeLimit,
+    offset: safeOffset,
+    hasNextPage: safeOffset + rows.length < total
+  };
+}
+
+async function getPhantomBajaSyncStatus() {
+  const database = await getPool();
+  const [[row]] = await database.query(`
+    SELECT COUNT(*) AS total, MAX(synced_at) AS last_synced_at
+    FROM ${phantomBajaTableSql}
+  `);
+
+  return {
+    total: Number(row && row.total || 0),
+    lastSyncedAt: row && row.last_synced_at ? row.last_synced_at : null
+  };
+}
+
 async function pingDatabase() {
   const database = await getPool();
   await database.query('SELECT 1 AS ok');
@@ -841,7 +994,9 @@ module.exports = {
   getMessageQueueStats,
   getMysqlSettings,
   getPool,
+  getPhantomBajaSyncStatus,
   getWhatsAppChatOwner,
+  listPhantomBajaClients,
   listMessageQueueItems,
   listWhatsAppChatPhones,
   listWhatsAppConversations,
@@ -852,5 +1007,6 @@ module.exports = {
   normalizeChatPhone,
   pingDatabase,
   releaseMessageQueueItem,
+  replacePhantomBajaClients,
   saveWhatsAppMessage
 };
