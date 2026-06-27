@@ -75,7 +75,8 @@
     }
 
     button,
-    .button-like {
+    .button-like,
+    .nav-trigger {
       min-height: 38px;
       border: 1px solid var(--line);
       border-radius: 8px;
@@ -89,6 +90,53 @@
       justify-content: center;
       gap: 8px;
       white-space: nowrap;
+      text-decoration: none;
+    }
+
+    .nav-dropdown {
+      position: relative;
+    }
+
+    .nav-trigger {
+      list-style: none;
+    }
+
+    .nav-trigger::-webkit-details-marker {
+      display: none;
+    }
+
+    .nav-menu {
+      position: absolute;
+      top: calc(100% + 6px);
+      right: 0;
+      min-width: 180px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      box-shadow: 0 12px 24px rgba(15, 23, 42, 0.12);
+      padding: 6px;
+      display: grid;
+      gap: 4px;
+      z-index: 5;
+    }
+
+    .nav-dropdown:not([open]) .nav-menu {
+      display: none;
+    }
+
+    .nav-menu a {
+      min-height: 34px;
+      border-radius: 6px;
+      padding: 7px 9px;
+      color: var(--text);
+      text-decoration: none;
+      display: flex;
+      align-items: center;
+    }
+
+    .nav-menu a:hover {
+      background: var(--accent-soft);
+      color: var(--accent);
     }
 
     button.primary {
@@ -488,8 +536,15 @@
       }
 
       .actions button,
-      .actions .button-like {
+      .actions .button-like,
+      .actions .nav-dropdown,
+      .actions .nav-trigger {
         flex: 1 1 calc(50% - 8px);
+      }
+
+      .nav-menu {
+        left: 0;
+        right: 0;
       }
 
       .status-grid,
@@ -570,7 +625,13 @@
       <div class="actions">
         <span id="sessionBadge" class="button-like">Sesion</span>
         <a id="usersLink" class="button-like" href="/usuarios" hidden>Usuarios</a>
-        <a class="button-like" href="/phantom">Clientes suspendidos</a>
+        <details class="nav-dropdown">
+          <summary class="nav-trigger">Clientes</summary>
+          <div class="nav-menu">
+            <a href="/phantom/suspendidos">Suspendidos</a>
+            <a href="/phantom/baja">Baja</a>
+          </div>
+        </details>
         <button id="refreshBtn" type="button">Actualizar</button>
         <button id="reconnectBtn" type="button">Reconectar</button>
         <button id="resetAuthBtn" class="danger" type="button">Reset QR</button>

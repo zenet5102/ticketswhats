@@ -1585,8 +1585,13 @@ function isValidSecondQueueTarget(value) {
   return isDirectChatId(target) || /^549\d{8,12}$/.test(target);
 }
 
-function formatPhantomClientRows(rows) {
-  return rows.map(row => {
+function normalizePhantomEstado(value, fallback = 'Suspendido') {
+  const estado = String(value || '').trim();
+  return estado || fallback;
+}
+
+function formatPhantomClientRows(rows, options = {}) {
+  const formattedRows = rows.map(row => {
     const razonFallback = [row && row.Apellido, row && row.Nombre].filter(Boolean).join(' ');
     const balance = getFirstPhantomValue(row, ['Balance_CC', 'BalanceCC', 'Balance', 'balance', 'Saldo', 'SaldoCC', 'SaldoCuentaCorriente']);
     const fechaUltimaFactura = formatPhantomDateOnly(getFirstPhantomValue(row, ['Fecha_Ultima_Factura']));
@@ -1601,7 +1606,11 @@ function formatPhantomClientRows(rows) {
       fechaUltimaFactura,
       comprobantesAdeudados: getFirstPhantomValue(row, ['C_Comprobantes_Adeudados', 'Fecha_Ultimo_Mov', 'CompAdeudados', 'ComprobantesAdeudados', 'Comprobantes_Adeudados', 'compAdeudados', 'comp_adeudados', 'Adeudados'])
     };
-  }).filter(hasDebtOrOverdueReceipts);
+  });
+
+  return options.filterDebt === false
+    ? formattedRows
+    : formattedRows.filter(hasDebtOrOverdueReceipts);
 }
 
 function createMessageVariablesFromRow(row = {}) {
@@ -1710,7 +1719,10 @@ async function handlePhantomConsultaMasiva(req, res) {
         : parseNonNegativeInteger(process.env.PHANTOM_CONSULTA_OFFSET, 0);
     const balanceCC = parsePositiveInteger(process.env.PHANTOM_CONSULTA_BALANCE_CC, 1);
     const compAdeudados = parsePositiveInteger(process.env.PHANTOM_CONSULTA_COMP_ADEUDADOS, 1);
-    const estado = String(process.env.PHANTOM_CONSULTA_ESTADO || 'Suspendido').trim();
+    const estado = normalizePhantomEstado(
+      req.query.estado ?? requestBody.estado,
+      process.env.PHANTOM_CONSULTA_ESTADO || 'Suspendido'
+    );
     const consultaUrl = buildPhantomUrl(baseUrl, {
       action: 'Consulta_Masiva_Datos',
       JSON: 1,
@@ -1747,7 +1759,11 @@ async function handlePhantomConsultaMasiva(req, res) {
       throw new Error(`Error consultando Phantom: ${payload.message || payload.error || payload.msg || `code ${payload.code}`}`);
     }
 
-    const rows = formatPhantomClientRows(extractPhantomRows(payload));
+    const rawRows = extractPhantomRows(payload);
+    const shouldFilterDebt = estado.toLowerCase() !== 'baja';
+    const rows = formatPhantomClientRows(rawRows, {
+      filterDebt: shouldFilterDebt
+    });
 
     res.json({
       success: true,
@@ -1757,12 +1773,61 @@ async function handlePhantomConsultaMasiva(req, res) {
         offset,
         page: Math.floor(offset / limit) + 1,
         returned: rows.length,
-        hasNextPage: rows.length === limit
+        rawReturned: rawRows.length,
+        hasNextPage: rawRows.length === limit
       },
+      estado,
       receivedAt: new Date().toISOString()
     });
   } catch (error) {
     res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+}
+
+async function handleCheckWhatsAppNumber(req, res) {
+  try {
+    await getWhatsAppStatus();
+
+    if (!client || !whatsappReady) {
+      return res.status(503).json({
+        success: false,
+        error: `WhatsApp secundario todavia no esta conectado (${whatsappState})`
+      });
+    }
+
+    const rawTarget = String(req.query.phone || req.query.target || '').trim();
+    const target = normalizeSecondQueuePhone(rawTarget) || rawTarget;
+
+    if (!target) {
+      return res.status(400).json({
+        success: false,
+        error: 'Falta telefono'
+      });
+    }
+
+    const chatId = isDirectChatId(target)
+      ? target
+      : await withTimeout(
+        client.getNumberId(normalizeChatPhone(target)),
+        Math.min(whatsappSendTimeoutMs, 20000),
+        () => createTransientWhatsAppError(new Error('Timeout verificando numero en WhatsApp'))
+      );
+    const serialized = chatId && typeof chatId === 'object'
+      ? String(chatId._serialized || '').trim()
+      : String(chatId || '').trim();
+
+    res.json({
+      success: true,
+      exists: Boolean(serialized),
+      phone: normalizeChatPhone(target),
+      chatId: serialized
+    });
+  } catch (error) {
+    const status = isTransientWhatsAppError(error) ? 503 : 400;
+    res.status(status).json({
       success: false,
       error: error.message
     });
@@ -1978,6 +2043,14 @@ app.get('/mensajes', requireLoggedIn, (req, res) => {
 });
 
 app.get('/phantom', requireLoggedIn, (req, res) => {
+  res.redirect('/phantom/suspendidos');
+});
+
+app.get('/phantom/suspendidos', requireLoggedIn, (req, res) => {
+  sendHtmlFile(res, 'phantom.html');
+});
+
+app.get('/phantom/baja', requireLoggedIn, (req, res) => {
   sendHtmlFile(res, 'phantom.html');
 });
 
@@ -2250,6 +2323,7 @@ app.post('/api/messages/send', requirePrivileged, async (req, res) => {
 
 app.get('/api/phantom/consulta-masiva', requireLoggedIn, handlePhantomConsultaMasiva);
 app.post('/api/phantom/consulta-masiva', requireLoggedIn, handlePhantomConsultaMasiva);
+app.get('/api/whatsapp/check-number', requireLoggedIn, handleCheckWhatsAppNumber);
 
 app.post('/api/whatsapp/reconnect', requirePrivileged, async (req, res) => {
   try {

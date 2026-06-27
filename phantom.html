@@ -74,6 +74,7 @@
 
     button,
     .button-link,
+    .nav-trigger,
     .session-chip {
       min-height: 38px;
       border: 1px solid var(--line);
@@ -89,6 +90,53 @@
       gap: 8px;
       white-space: nowrap;
       text-decoration: none;
+    }
+
+    .nav-dropdown {
+      position: relative;
+    }
+
+    .nav-trigger {
+      list-style: none;
+    }
+
+    .nav-trigger::-webkit-details-marker {
+      display: none;
+    }
+
+    .nav-menu {
+      position: absolute;
+      top: calc(100% + 6px);
+      right: 0;
+      min-width: 180px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      box-shadow: 0 12px 24px rgba(15, 23, 42, 0.12);
+      padding: 6px;
+      display: grid;
+      gap: 4px;
+      z-index: 5;
+    }
+
+    .nav-dropdown:not([open]) .nav-menu {
+      display: none;
+    }
+
+    .nav-menu a {
+      min-height: 34px;
+      border-radius: 6px;
+      padding: 7px 9px;
+      color: var(--text);
+      text-decoration: none;
+      display: flex;
+      align-items: center;
+    }
+
+    .nav-menu a:hover,
+    .nav-menu a.active {
+      background: var(--accent-soft);
+      color: var(--accent);
     }
 
     .session-chip {
@@ -480,8 +528,15 @@
 
       .actions button,
       .actions .button-link,
+      .actions .nav-dropdown,
+      .actions .nav-trigger,
       .actions .session-chip {
         flex: 1 1 calc(50% - 8px);
+      }
+
+      .nav-menu {
+        left: 0;
+        right: 0;
       }
 
       .status-grid {
@@ -511,11 +566,18 @@
   <header class="topbar">
     <div class="topbar-inner">
       <div>
-        <h1>Clientes suspendidos</h1>
+        <h1 id="pageTitle">Clientes Phantom</h1>
         <div class="subtitle" id="lastRefresh">Cargando...</div>
       </div>
       <div class="actions">
         <a class="button-link" href="/mensajes">Mensajes</a>
+        <details class="nav-dropdown">
+          <summary class="nav-trigger">Clientes</summary>
+          <div class="nav-menu">
+            <a id="navSuspendidos" href="/phantom/suspendidos">Suspendidos</a>
+            <a id="navBaja" href="/phantom/baja">Baja</a>
+          </div>
+        </details>
         <a id="usersLink" class="button-link" href="/usuarios" hidden>Usuarios</a>
         <span id="sessionBadge" class="session-chip">Sesion</span>
         <button id="refreshBtn" class="primary" type="button">Actualizar</button>
@@ -610,10 +672,11 @@
       selectedTemplateId: '',
       sortIndex: -1,
       sortDirection: 'asc',
-      searchQuery: ''
+      searchQuery: '',
+      activeEstado: window.location.pathname.toLowerCase().includes('/baja') ? 'Baja' : 'Suspendido',
+      hasNextPage: false,
+      whatsappChecks: new Map()
     };
-
-    const MAX_FETCH_ROWS = 500;
 
     const els = {
       deleteTemplateBtn: document.getElementById('deleteTemplateBtn'),
@@ -624,9 +687,12 @@
       lastRefresh: document.getElementById('lastRefresh'),
       logoutBtn: document.getElementById('logoutBtn'),
       messageTemplate: document.getElementById('messageTemplate'),
+      navBaja: document.getElementById('navBaja'),
+      navSuspendidos: document.getElementById('navSuspendidos'),
       newTemplateBtn: document.getElementById('newTemplateBtn'),
       nextPageBtn: document.getElementById('nextPageBtn'),
       pageBadge: document.getElementById('pageBadge'),
+      pageTitle: document.getElementById('pageTitle'),
       pageSize: document.getElementById('pageSize'),
       prevPageBtn: document.getElementById('prevPageBtn'),
       queueList: document.getElementById('queueList'),
@@ -688,6 +754,12 @@
         keys: [],
         value: row => getQueueStatusText(row),
         render: row => renderQueueStatus(row)
+      },
+      {
+        label: 'WhatsApp',
+        keys: [],
+        value: row => getWhatsAppCheckText(row),
+        render: (row, index) => renderWhatsAppCheck(row, index)
       },
       {
         label: 'Encolar',
@@ -783,7 +855,7 @@
     }
 
     function getVisibleRows() {
-      return getSortedRows().slice(state.offset, state.offset + state.limit);
+      return getSortedRows();
     }
 
     function renderPagination() {
@@ -791,7 +863,7 @@
       const page = getPageNumber();
       els.pageBadge.textContent = 'Pagina ' + page;
       els.prevPageBtn.disabled = state.loading || state.offset <= 0;
-      els.nextPageBtn.disabled = state.loading || state.offset + state.limit >= total;
+      els.nextPageBtn.disabled = state.loading || !state.hasNextPage;
       els.pageSize.disabled = state.loading;
       els.pageSize.value = String(state.limit);
     }
@@ -1186,6 +1258,62 @@
       return queueLabel(item && item.status);
     }
 
+    function getWhatsAppCheckKey(row) {
+      const phone = getRowChatPhone(row);
+      return phone ? 'phone:' + phone : '';
+    }
+
+    function getWhatsAppCheckText(row) {
+      const key = getWhatsAppCheckKey(row);
+      const check = key ? state.whatsappChecks.get(key) : null;
+
+      if (!key) {
+        return 'Sin movil';
+      }
+
+      if (!check) {
+        return 'Sin verificar';
+      }
+
+      if (check.loading) {
+        return 'Verificando';
+      }
+
+      if (check.error) {
+        return 'Error';
+      }
+
+      return check.exists ? 'Existe' : 'No existe';
+    }
+
+    function renderWhatsAppCheck(row, index) {
+      const phone = getRowChatPhone(row);
+
+      if (!phone) {
+        return '<span class="badge bad">Sin movil valido</span>';
+      }
+
+      const key = getWhatsAppCheckKey(row);
+      const check = state.whatsappChecks.get(key);
+
+      if (check && check.loading) {
+        return '<button type="button" disabled>Verificando</button>';
+      }
+
+      if (check && check.error) {
+        return '<button type="button" data-check-whatsapp-index="' + index + '">Reintentar</button>' +
+          '<div class="queue-item-detail">' + escapeHtml(check.error) + '</div>';
+      }
+
+      if (check) {
+        return '<span class="badge ' + (check.exists ? 'good' : 'bad') + '">' +
+          escapeHtml(check.exists ? 'Existe' : 'No existe') +
+          '</span>';
+      }
+
+      return '<button type="button" data-check-whatsapp-index="' + index + '">Verificar</button>';
+    }
+
     function renderQueueStatus(row) {
       const item = getQueueItemForRow(row);
 
@@ -1244,6 +1372,7 @@
 
       const enqueueIndex = TABLE_COLUMNS.findIndex(column => column.label === 'Encolar');
       const chatIndex = TABLE_COLUMNS.findIndex(column => column.label === 'Chat');
+      const whatsappIndex = TABLE_COLUMNS.findIndex(column => column.label === 'WhatsApp');
 
       if (enqueueIndex >= 0 && tableRow.children[enqueueIndex]) {
         tableRow.children[enqueueIndex].innerHTML = renderQueueAction(row, index);
@@ -1256,6 +1385,15 @@
 
       if (chatIndex >= 0 && tableRow.children[chatIndex]) {
         tableRow.children[chatIndex].innerHTML = renderChatLink(row);
+      }
+
+      if (whatsappIndex >= 0 && tableRow.children[whatsappIndex]) {
+        tableRow.children[whatsappIndex].innerHTML = renderWhatsAppCheck(row, index);
+        const button = tableRow.children[whatsappIndex].querySelector('button[data-check-whatsapp-index]');
+
+        if (button) {
+          attachWhatsAppCheckButton(button, rows);
+        }
       }
     }
 
@@ -1380,6 +1518,10 @@
         attachEnqueueButton(button, rows);
       });
 
+      els.resultWrap.querySelectorAll('button[data-check-whatsapp-index]').forEach(button => {
+        attachWhatsAppCheckButton(button, rows);
+      });
+
       els.resultWrap.querySelectorAll('input[data-mobile-index]').forEach(input => {
         input.addEventListener('change', () => {
           const index = Number.parseInt(input.dataset.mobileIndex, 10);
@@ -1430,12 +1572,7 @@
       const total = getFilteredRows().length;
 
       if (!total) {
-        state.offset = 0;
         return;
-      }
-
-      if (state.offset >= total) {
-        state.offset = Math.floor((total - 1) / state.limit) * state.limit;
       }
     }
 
@@ -1453,7 +1590,7 @@
         ? String(filteredTotal) + '/' + String(total)
         : String(total);
       els.rowDetail.textContent = visibleRows.length
-        ? `Pagina ${page} | ${rangeStart}-${rangeEnd} de ${filteredTotal}`
+        ? `Estado ${state.activeEstado} | Pagina ${page} | ${rangeStart}-${rangeEnd}`
         : state.searchQuery
           ? 'Sin resultados'
           : 'Sin registros';
@@ -1689,26 +1826,37 @@
       }
     }
 
-    async function loadData() {
+    function renderPageHeader() {
+      const isBaja = state.activeEstado === 'Baja';
+      els.pageTitle.textContent = isBaja ? 'Clientes baja' : 'Clientes suspendidos';
+      document.title = isBaja ? 'Clientes baja' : 'Clientes suspendidos';
+      els.navBaja.classList.toggle('active', isBaja);
+      els.navSuspendidos.classList.toggle('active', !isBaja);
+    }
+
+    async function loadData(nextOffset = 0) {
       els.errorText.textContent = '';
+      state.offset = Math.max(0, nextOffset);
+      renderPageHeader();
       setLoading(true);
       els.statusValue.textContent = 'Consultando';
-      els.statusDetail.textContent = 'Autenticando...';
+      els.statusDetail.textContent = 'Estado ' + state.activeEstado;
       setBadge('Cargando', 'warn');
 
       try {
         const params = new URLSearchParams({
-          limit: String(MAX_FETCH_ROWS),
-          offset: '0'
+          estado: state.activeEstado,
+          limit: String(state.limit),
+          offset: String(state.offset)
         });
         const data = await fetchJson('/api/phantom/consulta-masiva?' + params.toString(), {
           method: 'GET'
         });
 
         state.rows = data.rows || [];
-        state.offset = 0;
+        state.hasNextPage = Boolean(data.pagination && data.pagination.hasNextPage);
         els.statusValue.textContent = 'OK';
-        els.statusDetail.textContent = 'Consulta completada';
+        els.statusDetail.textContent = 'Consulta ' + (data.estado || state.activeEstado);
         const refreshText = formatDateTime(data.receivedAt || Date.now());
         els.lastRunValue.textContent = refreshText;
         els.lastRefresh.textContent = 'Actualizado ' + refreshText;
@@ -1722,6 +1870,45 @@
       } finally {
         setLoading(false);
       }
+    }
+
+    async function checkWhatsAppRow(row, button, rows) {
+      const phone = getRowChatPhone(row);
+
+      if (!phone) {
+        return;
+      }
+
+      const key = getWhatsAppCheckKey(row);
+      state.whatsappChecks.set(key, { loading: true });
+      renderCurrentPage();
+
+      try {
+        const params = new URLSearchParams({ phone });
+        const data = await fetchJson('/api/whatsapp/check-number?' + params.toString());
+        state.whatsappChecks.set(key, {
+          loading: false,
+          exists: Boolean(data.exists),
+          chatId: data.chatId || ''
+        });
+      } catch (error) {
+        state.whatsappChecks.set(key, {
+          loading: false,
+          error: error.message
+        });
+      }
+
+      renderCurrentPage();
+    }
+
+    function attachWhatsAppCheckButton(button, rows) {
+      button.addEventListener('click', () => {
+        const index = Number.parseInt(button.dataset.checkWhatsappIndex, 10);
+        const row = rows[index];
+        checkWhatsAppRow(row, button, rows).catch(error => {
+          els.queueStatus.textContent = error.message;
+        });
+      });
     }
 
     async function enqueueRows() {
@@ -1810,7 +1997,7 @@
       }
     }
 
-    els.refreshBtn.addEventListener('click', loadData);
+    els.refreshBtn.addEventListener('click', () => loadData(0));
     els.enqueueBtn.addEventListener('click', enqueueRows);
     els.clientSearch.addEventListener('input', () => {
       state.searchQuery = els.clientSearch.value;
@@ -1836,24 +2023,27 @@
         return;
       }
 
-      state.offset = Math.max(0, state.offset - state.limit);
-      renderCurrentPage();
+      loadData(Math.max(0, state.offset - state.limit)).catch(error => {
+        els.errorText.textContent = error.message;
+      });
     });
 
     els.nextPageBtn.addEventListener('click', () => {
-      if (state.loading || state.offset + state.limit >= getFilteredRows().length) {
+      if (state.loading || !state.hasNextPage) {
         return;
       }
 
-      state.offset += state.limit;
-      renderCurrentPage();
+      loadData(state.offset + state.limit).catch(error => {
+        els.errorText.textContent = error.message;
+      });
     });
 
     els.pageSize.addEventListener('change', () => {
       const nextLimit = Number.parseInt(els.pageSize.value, 10);
       state.limit = Number.isFinite(nextLimit) && nextLimit > 0 ? nextLimit : 10;
-      state.offset = 0;
-      renderCurrentPage();
+      loadData(0).catch(error => {
+        els.errorText.textContent = error.message;
+      });
     });
 
     els.logoutBtn.addEventListener('click', async () => {
@@ -1863,11 +2053,12 @@
 
     (async function boot() {
       try {
+        renderPageHeader();
         renderPagination();
         await loadSession();
         await loadTemplates();
         await loadQueueStatus().catch(() => { });
-        await loadData();
+        await loadData(0);
         setInterval(() => loadQueueStatus().catch(() => { }), 15000);
       } catch (error) {
         els.lastRefresh.textContent = error.message;
