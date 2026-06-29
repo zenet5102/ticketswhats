@@ -957,6 +957,10 @@
           <span aria-hidden="true">&#9742;</span>
           Moviles
         </button>
+        <button id="whatsappTopbarReconnectBtn" type="button" title="Reconectar WhatsApp">
+          <span aria-hidden="true">&#8635;</span>
+          WhatsApp
+        </button>
         <button id="runBtn" class="primary" type="button" title="Ejecutar ciclo completo">
           <span aria-hidden="true">&#9658;</span>
           Ciclo
@@ -1157,6 +1161,7 @@
       whatsappQrPanel: document.getElementById('whatsappQrPanel'),
       whatsappReconnectBtn: document.getElementById('whatsappReconnectBtn'),
       whatsappResetAuthBtn: document.getElementById('whatsappResetAuthBtn'),
+      whatsappTopbarReconnectBtn: document.getElementById('whatsappTopbarReconnectBtn'),
       whatsappQrText: document.getElementById('whatsappQrText')
     };
 
@@ -1926,7 +1931,7 @@
       els.sessionBadge.textContent = user.name + ' | ' + roleLabel;
 
       const fullAccess = hasFullAccess();
-      [els.syncBtn, els.statusBtn, els.phonesBtn, els.runBtn, els.saveMessageBtn].forEach(button => {
+      [els.syncBtn, els.statusBtn, els.phonesBtn, els.runBtn, els.saveMessageBtn, els.whatsappTopbarReconnectBtn].forEach(button => {
         button.hidden = !fullAccess;
       });
       els.usersBtn.hidden = user.role !== 'admin';
@@ -2016,6 +2021,7 @@
       els.autoReminderSwitch.disabled = disabled || !canManageAutomaticReminder();
       els.whatsappReconnectBtn.disabled = disabled || !fullAccess;
       els.whatsappResetAuthBtn.disabled = disabled || !fullAccess;
+      els.whatsappTopbarReconnectBtn.disabled = disabled || !fullAccess;
       els.messageTemplate.disabled = disabled || !fullAccess;
       els.todayBtn.disabled = disabled;
       els.dateFilter.disabled = disabled;
@@ -2105,6 +2111,7 @@
     }
 
     els.whatsappReconnectBtn.addEventListener('click', reconnectWhatsApp);
+    els.whatsappTopbarReconnectBtn.addEventListener('click', reconnectWhatsApp);
 
     async function resetWhatsAppAuth() {
       if (!window.confirm('Esto borra la sesion local de WhatsApp y genera un QR nuevo. Continuar?')) {

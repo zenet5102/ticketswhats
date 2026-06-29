@@ -605,6 +605,10 @@
           <span aria-hidden="true">&#8635;</span>
           Actualizar
         </button>
+        <button id="reconnectBtn" type="button" title="Reconectar WhatsApp">
+          <span aria-hidden="true">&#8635;</span>
+          Reconectar
+        </button>
         <span id="sessionBadge" class="session-chip">Sesion</span>
         <button id="logoutBtn" type="button" title="Cerrar sesion">
           <span aria-hidden="true">&#9211;</span>
@@ -701,6 +705,7 @@
       logoutBtn: document.getElementById('logoutBtn'),
       messageList: document.getElementById('messageList'),
       phoneInput: document.getElementById('phoneInput'),
+      reconnectBtn: document.getElementById('reconnectBtn'),
       refreshBtn: document.getElementById('refreshBtn'),
       replyForm: document.getElementById('replyForm'),
       replyMessage: document.getElementById('replyMessage'),
@@ -1153,6 +1158,8 @@
       const fullAccess = hasFullAccess();
       els.phoneInput.disabled = !fullAccess;
       els.startChatBtn.disabled = !fullAccess;
+      els.reconnectBtn.hidden = !fullAccess;
+      els.reconnectBtn.disabled = !fullAccess;
 
       if (!fullAccess) {
         els.sendError.textContent = 'Solo lectura';
@@ -1358,6 +1365,7 @@
 
       state.loading = true;
       els.refreshBtn.disabled = true;
+      els.reconnectBtn.disabled = true;
 
       try {
         await loadStatus();
@@ -1373,6 +1381,30 @@
       } finally {
         state.loading = false;
         els.refreshBtn.disabled = false;
+        els.reconnectBtn.disabled = !hasFullAccess();
+      }
+    }
+
+    async function reconnectWhatsApp() {
+      if (!hasFullAccess()) {
+        showToast('Permisos insuficientes');
+        return;
+      }
+
+      els.reconnectBtn.disabled = true;
+      showToast('Reconectando WhatsApp...');
+
+      try {
+        await fetchJson('/whatsapp/reconnect', {
+          method: 'POST'
+        });
+        showToast('WhatsApp reiniciado');
+        await loadStatus();
+      } catch (error) {
+        showToast(error.message);
+        els.whatsappDetail.textContent = error.message;
+      } finally {
+        els.reconnectBtn.disabled = false;
       }
     }
 
@@ -1465,6 +1497,7 @@
     }
 
     els.refreshBtn.addEventListener('click', refreshAll);
+    els.reconnectBtn.addEventListener('click', reconnectWhatsApp);
     els.logoutBtn.addEventListener('click', logout);
     document.addEventListener('pointerdown', unlockNotificationSound, { once: true });
     document.addEventListener('keydown', unlockNotificationSound, { once: true });
