@@ -27,6 +27,7 @@ const {
   updateUser
 } = require('./users');
 const {
+  cancelMessageQueueItem,
   claimPendingMessageQueue,
   enqueueMessageQueueItems,
   getMessageQueueStats,
@@ -106,6 +107,7 @@ app.use(express.json({ limit: `${maxRequestBodyMb}mb` }));
 const requireLoggedIn = requireAuth();
 const requirePrivileged = requireLoggedIn;
 const requireAdmin = requireAuth(['admin']);
+const requireTemplateEditor = requireAuth(['admin', 'usuario']);
 
 function parsePositiveInteger(value, fallback) {
   const parsed = Number.parseInt(value, 10);
@@ -1612,6 +1614,8 @@ function formatPhantomClientRows(rows, options = {}) {
     const razonFallback = [row && row.Apellido, row && row.Nombre].filter(Boolean).join(' ');
     const balance = getFirstPhantomValue(row, ['Balance_CC', 'BalanceCC', 'Balance', 'balance', 'Saldo', 'SaldoCC', 'SaldoCuentaCorriente']);
     const fechaUltimaFactura = formatPhantomDateOnly(getFirstPhantomValue(row, ['Fecha_Ultima_Factura']));
+    const fechaUltimoCambio = formatPhantomDateOnly(getFirstPhantomValue(row, ['Fecha_Ultimo_Cambio', 'fechaUltimoCambio', 'fecha_ultimo_cambio']));
+    const fechaInstalacion = formatPhantomDateOnly(getFirstPhantomValue(row, ['Fecha_Instalacion', 'fechaInstalacion', 'fecha_instalacion']));
 
     return {
       id: getFirstPhantomValue(row, ['ID', 'Id', 'id', 'IDA', 'ida', 'ClienteID', 'Cliente_Id', 'Codigo', 'CodigoCliente']),
@@ -1621,6 +1625,8 @@ function formatPhantomClientRows(rows, options = {}) {
       movil: getFirstPhantomValue(row, ['Movil', 'Móvil', 'movil', 'Celular', 'celular', 'Mobile', 'TelefonoMovil', 'TelMovil', 'Movi', 'movi']),
       telefono: getFirstPhantomValue(row, ['Telefono', 'Teléfono', 'telefono', 'Tel', 'tel', 'Telefono1', 'Telefono_1']),
       fechaUltimaFactura,
+      fechaUltimoCambio,
+      fechaInstalacion,
       comprobantesAdeudados: getFirstPhantomValue(row, ['C_Comprobantes_Adeudados', 'Fecha_Ultimo_Mov', 'CompAdeudados', 'ComprobantesAdeudados', 'Comprobantes_Adeudados', 'compAdeudados', 'comp_adeudados', 'Adeudados']),
       raw: row
     };
@@ -1642,6 +1648,8 @@ function createMessageVariablesFromRow(row = {}) {
   const normalizedMovil = normalizeSecondQueuePhone(movil);
   const normalizedTelefono = normalizeSecondQueuePhone(telefono);
   const fechaUltimaFactura = formatPhantomDateOnly(getFirstPhantomValue(row, ['fechaUltimaFactura', 'fecha_ultima_factura', 'Fecha_Ultima_Factura']));
+  const fechaUltimoCambio = formatPhantomDateOnly(getFirstPhantomValue(row, ['fechaUltimoCambio', 'fecha_ultimo_cambio', 'Fecha_Ultimo_Cambio']));
+  const fechaInstalacion = formatPhantomDateOnly(getFirstPhantomValue(row, ['fechaInstalacion', 'fecha_instalacion', 'Fecha_Instalacion']));
 
   return {
     id,
@@ -1656,6 +1664,10 @@ function createMessageVariablesFromRow(row = {}) {
     telefono_raw: telefono,
     fecha_ultima_factura: fechaUltimaFactura,
     fechaUltimaFactura,
+    fecha_ultimo_cambio: fechaUltimoCambio,
+    fechaUltimoCambio,
+    fecha_instalacion: fechaInstalacion,
+    fechaInstalacion,
     comprobantes_adeudados: comprobantesAdeudados,
     comprobantesAdeudados
   };
@@ -1817,6 +1829,8 @@ async function handlePhantomConsultaMasiva(req, res) {
     const requestedLimit = req.query.limit ?? requestBody.limit;
     const requestedOffset = req.query.offset ?? requestBody.offset;
     const requestedPage = req.query.page ?? requestBody.page;
+    const sortKey = req.query.sortKey ?? requestBody.sortKey;
+    const sortDirection = req.query.sortDirection ?? requestBody.sortDirection;
 
     if (estado.toLowerCase() === 'baja') {
       const defaultLimit = parsePositiveInteger(process.env.PHANTOM_CONSULTA_LIMIT, 10);
@@ -1827,7 +1841,12 @@ async function handlePhantomConsultaMasiva(req, res) {
         : page
           ? (page - 1) * limit
           : 0;
-      const result = await listPhantomBajaClients({ limit, offset });
+      const result = await listPhantomBajaClients({
+        limit,
+        offset,
+        sortKey,
+        sortDirection
+      });
       const syncStatus = await getPhantomBajaSyncStatus().catch(() => null);
 
       return res.json({
@@ -2229,6 +2248,10 @@ app.get('/mensajes', requireLoggedIn, (req, res) => {
   sendHtmlFile(res, 'second-messages.html');
 });
 
+app.get('/cola', requireLoggedIn, (req, res) => {
+  sendHtmlFile(res, 'queue.html');
+});
+
 app.get('/phantom', requireLoggedIn, (req, res) => {
   res.redirect('/phantom/suspendidos');
 });
@@ -2268,7 +2291,7 @@ app.get('/api/message-templates', requireLoggedIn, handleListMessageTemplates);
 
 app.get('/api/message-templates/:id', requireLoggedIn, handleGetMessageTemplate);
 
-app.post('/api/message-templates', requireAdmin, (req, res) => {
+app.post('/api/message-templates', requireTemplateEditor, (req, res) => {
   const body = req.body || {};
   const isLegacyReplace = Object.prototype.hasOwnProperty.call(body, 'template') ||
     Object.prototype.hasOwnProperty.call(body, 'templates');
@@ -2284,8 +2307,8 @@ app.post('/api/message-templates', requireAdmin, (req, res) => {
   return handleReplaceMessageTemplates(req, res);
 });
 
-app.put('/api/message-templates/:id', requireAdmin, handleUpdateMessageTemplate);
-app.delete('/api/message-templates/:id', requireAdmin, handleDeleteMessageTemplate);
+app.put('/api/message-templates/:id', requireTemplateEditor, handleUpdateMessageTemplate);
+app.delete('/api/message-templates/:id', requireTemplateEditor, handleDeleteMessageTemplate);
 
 app.get('/api/message-queue/status', requireLoggedIn, async (req, res) => {
   try {
@@ -2324,6 +2347,26 @@ app.get('/api/message-queue', requireLoggedIn, async (req, res) => {
     });
   } catch (error) {
     res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+app.post('/api/message-queue/:id/cancel', requireLoggedIn, async (req, res) => {
+  try {
+    const ownerUsername = getScopedOwnerUsername(req.user);
+    const item = await cancelMessageQueueItem(req.params.id, {
+      ownerUsername
+    });
+
+    res.json({
+      success: true,
+      item,
+      stats: await getMessageQueueStats({ ownerUsername })
+    });
+  } catch (error) {
+    res.status(400).json({
       success: false,
       error: error.message
     });

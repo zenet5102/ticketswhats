@@ -571,6 +571,7 @@
       </div>
       <div class="actions">
         <a class="button-link" href="/mensajes">Mensajes</a>
+        <a class="button-link" href="/cola">Cola</a>
         <details class="nav-dropdown">
           <summary class="nav-trigger">Clientes</summary>
           <div class="nav-menu">
@@ -716,25 +717,30 @@
     const TABLE_COLUMNS = [
       {
         label: 'ID',
+        sortKey: 'id',
         keys: ['id', 'ID', 'Id', 'IDA', 'ida', 'ClienteID', 'Cliente_Id', 'Codigo', 'CodigoCliente']
       },
       {
         label: 'Razon social',
+        sortKey: 'razonSocial',
         keys: ['razonSocial', 'RS', 'RazonSocial', 'Razon_Social', 'Razon Social', 'Razon', 'razon_social'],
         fallback: row => [row.Apellido, row.Nombre].filter(Boolean).join(' '),
         render: row => renderPhantomClientLink(row, 'Razon social', 'http://192.168.200.14:5594/Phantom/Includes/getinfo.php?id=')
       },
       {
         label: 'Deuda',
+        sortKey: 'deuda',
         keys: ['deuda', 'balance', 'Balance_CC', 'Balance', 'Saldo', 'SaldoCC', 'SaldoCuentaCorriente'],
         render: row => renderPhantomClientLink(row, 'Deuda', 'http://192.168.200.14:5594/Phantom/Includes/billing_estadocuenta.php?id=')
       },
       {
         label: 'Estado',
+        visibleWhen: estado => estado !== 'Baja',
         keys: ['estado', 'Estado']
       },
       {
         label: 'Movil',
+        sortKey: 'movil',
         keys: ['movil', 'Movil', 'Móvil', 'Celular', 'celular', 'Mobile', 'TelefonoMovil', 'TelMovil', 'Movi', 'movi'],
         value: row => getRowChatPhone(row),
         render: (row, index) => renderMobileOptions(row, index)
@@ -742,11 +748,27 @@
     
       {
         label: 'Fecha ultima factura',
+        sortKey: 'fechaUltimaFactura',
         keys: ['fechaUltimaFactura', 'fecha_ultima_factura', 'Fecha_Ultima_Factura'],
         value: row => formatPhantomDateOnly(getFirstColumnValue(row, ['fechaUltimaFactura', 'fecha_ultima_factura', 'Fecha_Ultima_Factura']))
       },
       {
+        label: 'Fecha_Ultimo_Cambio',
+        sortKey: 'fechaUltimoCambio',
+        visibleWhen: estado => estado === 'Baja',
+        keys: ['fechaUltimoCambio', 'fecha_ultimo_cambio', 'Fecha_Ultimo_Cambio'],
+        value: row => formatPhantomDateOnly(getFirstColumnValue(row, ['fechaUltimoCambio', 'fecha_ultimo_cambio', 'Fecha_Ultimo_Cambio']))
+      },
+      {
+        label: 'Fecha_Instalacion',
+        sortKey: 'fechaInstalacion',
+        visibleWhen: estado => estado === 'Baja',
+        keys: ['fechaInstalacion', 'fecha_instalacion', 'Fecha_Instalacion'],
+        value: row => formatPhantomDateOnly(getFirstColumnValue(row, ['fechaInstalacion', 'fecha_instalacion', 'Fecha_Instalacion']))
+      },
+      {
         label: 'Comprobantes adeudados',
+        visibleWhen: estado => estado !== 'Baja',
         keys: ['comprobantesAdeudados', 'C_Comprobantes_Adeudados', 'Fecha_Ultimo_Mov', 'ComprobantesAdeudados', 'Comprobantes_Adeudados', 'compAdeudados', 'comp_adeudados', 'Adeudados']
       },
       {
@@ -774,6 +796,12 @@
         render: row => renderChatLink(row)
       }
     ];
+
+    function getActiveTableColumns() {
+      return TABLE_COLUMNS.filter(column => {
+        return typeof column.visibleWhen !== 'function' || column.visibleWhen(state.activeEstado);
+      });
+    }
 
     function escapeHtml(value) {
       return String(value === undefined || value === null ? '' : value)
@@ -841,7 +869,7 @@
 
     function getSortedRows() {
       const rows = getFilteredRows();
-      const column = TABLE_COLUMNS[state.sortIndex];
+      const column = getActiveTableColumns()[state.sortIndex];
 
       if (!column) {
         return rows;
@@ -1148,6 +1176,8 @@
       const movil = getRowChatPhone(row) || String(getMobileColumnRawValue(row) || '').trim();
       const telefono = String(getColumnValue(row, 'Telefono') || '').trim();
       const fechaUltimaFactura = String(getColumnValue(row, 'Fecha ultima factura') || '').trim();
+      const fechaUltimoCambio = String(getColumnValue(row, 'Fecha_Ultimo_Cambio') || '').trim();
+      const fechaInstalacion = String(getColumnValue(row, 'Fecha_Instalacion') || '').trim();
       const comprobantesAdeudados = String(getColumnValue(row, 'Comprobantes adeudados') || '').trim();
 
       return {
@@ -1161,6 +1191,10 @@
         telefono,
         fecha_ultima_factura: fechaUltimaFactura,
         fechaUltimaFactura,
+        fecha_ultimo_cambio: fechaUltimoCambio,
+        fechaUltimoCambio,
+        fecha_instalacion: fechaInstalacion,
+        fechaInstalacion,
         comprobantes_adeudados: comprobantesAdeudados,
         comprobantesAdeudados
       };
@@ -1370,9 +1404,10 @@
         return;
       }
 
-      const enqueueIndex = TABLE_COLUMNS.findIndex(column => column.label === 'Encolar');
-      const chatIndex = TABLE_COLUMNS.findIndex(column => column.label === 'Chat');
-      const whatsappIndex = TABLE_COLUMNS.findIndex(column => column.label === 'WhatsApp');
+      const activeColumns = getActiveTableColumns();
+      const enqueueIndex = activeColumns.findIndex(column => column.label === 'Encolar');
+      const chatIndex = activeColumns.findIndex(column => column.label === 'Chat');
+      const whatsappIndex = activeColumns.findIndex(column => column.label === 'WhatsApp');
 
       if (enqueueIndex >= 0 && tableRow.children[enqueueIndex]) {
         tableRow.children[enqueueIndex].innerHTML = renderQueueAction(row, index);
@@ -1456,7 +1491,8 @@
         return;
       }
 
-      const head = TABLE_COLUMNS.map((column, index) => {
+      const activeColumns = getActiveTableColumns();
+      const head = activeColumns.map((column, index) => {
         const active = index === state.sortIndex;
         const indicator = active
           ? '<span class="sort-indicator">' + (state.sortDirection === 'asc' ? '🔺' : '🔻') + '</span>'
@@ -1473,7 +1509,7 @@
           '</th>';
       }).join('');
       const body = rows.map((row, rowIndex) => {
-        const cells = TABLE_COLUMNS.map(column => {
+        const cells = activeColumns.map(column => {
           if (typeof column.render === 'function') {
             return '<td>' + column.render(row, rowIndex) + '</td>';
           }
@@ -1510,7 +1546,13 @@
           }
 
           state.offset = 0;
-          renderCurrentPage();
+          if (state.activeEstado === 'Baja') {
+            loadData(0).catch(error => {
+              els.errorText.textContent = error.message;
+            });
+          } else {
+            renderCurrentPage();
+          }
         });
       });
 
@@ -1608,7 +1650,7 @@
     }
 
     function canManageTemplates() {
-      return Boolean(state.user && state.user.role === 'admin');
+      return Boolean(state.user && (state.user.role === 'admin' || state.user.role === 'usuario'));
     }
 
     function applyTemplatePermissions() {
@@ -1767,7 +1809,7 @@
 
     async function saveTemplates() {
       if (!canManageTemplates()) {
-        els.queueStatus.textContent = 'Solo admin puede modificar templates';
+        els.queueStatus.textContent = 'Permisos insuficientes para modificar templates';
         return;
       }
 
@@ -1797,7 +1839,7 @@
 
     async function deleteTemplate() {
       if (!canManageTemplates()) {
-        els.queueStatus.textContent = 'Solo admin puede eliminar templates';
+        els.queueStatus.textContent = 'Permisos insuficientes para eliminar templates';
         return;
       }
 
@@ -1849,6 +1891,13 @@
           limit: String(state.limit),
           offset: String(state.offset)
         });
+        const sortColumn = getActiveTableColumns()[state.sortIndex];
+
+        if (state.activeEstado === 'Baja' && sortColumn && sortColumn.sortKey) {
+          params.set('sortKey', sortColumn.sortKey);
+          params.set('sortDirection', state.sortDirection);
+        }
+
         const data = await fetchJson('/api/phantom/consulta-masiva?' + params.toString(), {
           method: 'GET'
         });

@@ -777,6 +777,48 @@ async function releaseMessageQueueItem(id, reason) {
   return getMessageQueueItem(id);
 }
 
+async function cancelMessageQueueItem(id, options = {}) {
+  const database = await getPool();
+  const cleanId = Number(id);
+  const ownerUsername = normalizeOwnerUsername(options.ownerUsername || options.owner_username);
+  const ownerWhereSql = ownerUsername ? ' AND owner_username = ?' : '';
+  const params = ownerUsername ? [cleanId, ownerUsername] : [cleanId];
+
+  if (!Number.isFinite(cleanId) || cleanId <= 0) {
+    throw new Error('ID de cola invalido');
+  }
+
+  const existing = await getMessageQueueItem(cleanId);
+
+  if (!existing || (ownerUsername && existing.owner_username !== ownerUsername)) {
+    throw new Error('Mensaje de cola no encontrado');
+  }
+
+  if (existing.status !== 'pending') {
+    throw new Error('Solo se pueden cancelar mensajes pendientes');
+  }
+
+  const [result] = await database.execute(`
+    UPDATE ${queueTableSql}
+    SET status = 'cancelled',
+        last_error = ?,
+        locked_at = NULL,
+        updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+      AND status = 'pending'
+      ${ownerWhereSql}
+  `, [
+    'Cancelado manualmente',
+    ...params
+  ]);
+
+  if (!result.affectedRows) {
+    throw new Error('No se pudo cancelar el mensaje');
+  }
+
+  return getMessageQueueItem(cleanId);
+}
+
 async function getMessageQueueStats(options = {}) {
   const ownerUsername = normalizeOwnerUsername(options.ownerUsername || options.owner_username);
   const params = [];
@@ -798,6 +840,7 @@ async function getMessageQueueStats(options = {}) {
     sending: 0,
     sent: 0,
     error: 0,
+    cancelled: 0,
     total: 0
   };
 
@@ -854,6 +897,8 @@ function normalizePhantomBajaRow(row = {}, fallbackIndex = 0) {
     movil: String(row.movil || row.Movil || row['Móvil'] || row.Celular || row.celular || row.Mobile || row.TelefonoMovil || row.TelMovil || row.Movi || row.movi || '').trim(),
     telefono: String(row.telefono || row.Telefono || row['Teléfono'] || row.Tel || row.tel || row.Telefono1 || row.Telefono_1 || '').trim(),
     fechaUltimaFactura: String(row.fechaUltimaFactura || row.fecha_ultima_factura || row.Fecha_Ultima_Factura || '').trim(),
+    fechaUltimoCambio: String(row.fechaUltimoCambio || row.fecha_ultimo_cambio || row.Fecha_Ultimo_Cambio || '').trim(),
+    fechaInstalacion: String(row.fechaInstalacion || row.fecha_instalacion || row.Fecha_Instalacion || '').trim(),
     comprobantesAdeudados: String(row.comprobantesAdeudados || row.C_Comprobantes_Adeudados || row.Fecha_Ultimo_Mov || row.ComprobantesAdeudados || row.Comprobantes_Adeudados || '').trim(),
     raw: row.raw && typeof row.raw === 'object' ? row.raw : row
   };
@@ -877,6 +922,8 @@ function parsePhantomBajaDbRow(row = {}) {
     movil: row.movil || raw.movil || '',
     telefono: row.telefono || raw.telefono || '',
     fechaUltimaFactura: row.fecha_ultima_factura || raw.fechaUltimaFactura || raw.fecha_ultima_factura || '',
+    fechaUltimoCambio: raw.fechaUltimoCambio || raw.fecha_ultimo_cambio || raw.Fecha_Ultimo_Cambio || '',
+    fechaInstalacion: raw.fechaInstalacion || raw.fecha_instalacion || raw.Fecha_Instalacion || '',
     comprobantesAdeudados: row.comprobantes_adeudados || raw.comprobantesAdeudados || raw.comprobantes_adeudados || '',
     syncedAt: row.synced_at
   };
@@ -936,12 +983,25 @@ async function replacePhantomBajaClients(rows = [], syncedAt = new Date()) {
 async function listPhantomBajaClients(options = {}) {
   const safeLimit = Math.min(Math.max(Number(options.limit) || 10, 1), 500);
   const safeOffset = Math.max(Number(options.offset) || 0, 0);
+  const sortKey = String(options.sortKey || '').trim();
+  const sortDirection = String(options.sortDirection || '').toLowerCase() === 'asc' ? 'ASC' : 'DESC';
+  const sortExpressions = {
+    id: 'CAST(id AS UNSIGNED)',
+    razonSocial: 'razon_social',
+    deuda: 'CAST(REPLACE(REPLACE(deuda, ".", ""), ",", ".") AS DECIMAL(18,2))',
+    movil: 'movil',
+    telefono: 'telefono',
+    fechaUltimaFactura: 'fecha_ultima_factura',
+    fechaUltimoCambio: 'COALESCE(JSON_UNQUOTE(JSON_EXTRACT(raw_json, "$.Fecha_Ultimo_Cambio")), JSON_UNQUOTE(JSON_EXTRACT(raw_json, "$.fechaUltimoCambio")), JSON_UNQUOTE(JSON_EXTRACT(raw_json, "$.fecha_ultimo_cambio")))',
+    fechaInstalacion: 'COALESCE(JSON_UNQUOTE(JSON_EXTRACT(raw_json, "$.Fecha_Instalacion")), JSON_UNQUOTE(JSON_EXTRACT(raw_json, "$.fechaInstalacion")), JSON_UNQUOTE(JSON_EXTRACT(raw_json, "$.fecha_instalacion")))'
+  };
+  const orderExpression = sortExpressions[sortKey] || 'CAST(id AS UNSIGNED)';
   const database = await getPool();
   const [[countRow]] = await database.query(`SELECT COUNT(*) AS total FROM ${phantomBajaTableSql}`);
   const [rows] = await database.query(`
     SELECT *
     FROM ${phantomBajaTableSql}
-    ORDER BY CAST(id AS UNSIGNED) DESC, id DESC
+    ORDER BY ${orderExpression} ${sortDirection}, CAST(id AS UNSIGNED) DESC, id DESC
     LIMIT ${safeLimit}
     OFFSET ${safeOffset}
   `);
@@ -986,6 +1046,7 @@ async function closePool() {
 }
 
 module.exports = {
+  cancelMessageQueueItem,
   claimPendingMessageQueue,
   closePool,
   enqueueMessageQueueItem,

@@ -1,0 +1,584 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Cola de mensajes</title>
+  <style>
+    :root {
+      --bg: #f5f7fb;
+      --panel: #ffffff;
+      --line: #d7deea;
+      --text: #17202a;
+      --muted: #66758a;
+      --accent: #2563eb;
+      --accent-soft: #e8f0ff;
+      --good: #11845b;
+      --good-soft: #e6f6ee;
+      --warn: #a16207;
+      --warn-soft: #fff4d6;
+      --bad: #bd2c2c;
+      --bad-soft: #fde8e8;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: Arial, Helvetica, sans-serif;
+      font-size: 15px;
+    }
+
+    .topbar {
+      border-bottom: 1px solid var(--line);
+      background: var(--panel);
+    }
+
+    .topbar-inner,
+    .content {
+      width: min(1240px, calc(100% - 32px));
+      margin: 0 auto;
+    }
+
+    .topbar-inner {
+      min-height: 68px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 24px;
+      letter-spacing: 0;
+    }
+
+    .subtitle {
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .actions,
+    .table-controls {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      gap: 8px;
+    }
+
+    button,
+    .button-link,
+    .session-chip,
+    select {
+      min-height: 38px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      color: var(--text);
+      padding: 0 12px;
+      font: inherit;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      white-space: nowrap;
+      text-decoration: none;
+    }
+
+    button.primary {
+      border-color: var(--accent);
+      background: var(--accent);
+      color: #ffffff;
+      font-weight: 700;
+    }
+
+    button.danger {
+      border-color: #f0b5b5;
+      color: var(--bad);
+    }
+
+    button:disabled {
+      cursor: progress;
+      opacity: 0.65;
+    }
+
+    .content {
+      padding: 22px 0 32px;
+      display: grid;
+      gap: 16px;
+    }
+
+    .status-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .metric,
+    .panel {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+    }
+
+    .metric {
+      padding: 14px;
+    }
+
+    .metric-label,
+    .muted {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .metric-value {
+      margin-top: 6px;
+      font-size: 24px;
+      font-weight: 800;
+    }
+
+    .panel-head {
+      min-height: 58px;
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--line);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .panel-title {
+      font-weight: 800;
+      font-size: 17px;
+    }
+
+    .table-wrap {
+      overflow: auto;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      min-width: 1120px;
+    }
+
+    th,
+    td {
+      border-bottom: 1px solid var(--line);
+      padding: 10px 12px;
+      text-align: left;
+      vertical-align: top;
+    }
+
+    th {
+      color: var(--muted);
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      background: #f8fafc;
+    }
+
+    .badge {
+      min-height: 24px;
+      border-radius: 999px;
+      padding: 3px 9px;
+      background: #eef2f7;
+      color: var(--muted);
+      display: inline-flex;
+      align-items: center;
+      font-size: 12px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    .badge.good {
+      background: var(--good-soft);
+      color: var(--good);
+    }
+
+    .badge.warn {
+      background: var(--warn-soft);
+      color: var(--warn);
+    }
+
+    .badge.bad {
+      background: var(--bad-soft);
+      color: var(--bad);
+    }
+
+    .mono {
+      font-family: Consolas, "Courier New", monospace;
+      font-size: 13px;
+    }
+
+    .detail {
+      max-width: 280px;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.35;
+      word-break: break-word;
+    }
+
+    .empty,
+    .error-text {
+      padding: 18px;
+      color: var(--muted);
+    }
+
+    .error-text {
+      color: var(--bad);
+    }
+
+    @media (max-width: 760px) {
+      .topbar-inner,
+      .panel-head {
+        align-items: stretch;
+        flex-direction: column;
+      }
+
+      .actions,
+      .table-controls {
+        justify-content: flex-start;
+      }
+
+      .status-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <div>
+        <h1>Cola de mensajes</h1>
+        <div class="subtitle" id="lastRefresh">Cargando...</div>
+      </div>
+      <div class="actions">
+        <a class="button-link" href="/mensajes">Mensajes</a>
+        <a class="button-link" href="/phantom/baja">Clientes baja</a>
+        <span id="sessionBadge" class="session-chip">Sesion</span>
+        <button id="refreshBtn" class="primary" type="button">Actualizar</button>
+        <button id="logoutBtn" type="button">Salir</button>
+      </div>
+    </div>
+  </header>
+
+  <main class="content">
+    <section class="status-grid" aria-label="Resumen">
+      <div class="metric">
+        <div class="metric-label">Pendientes</div>
+        <div class="metric-value" id="pendingCount">0</div>
+      </div>
+      <div class="metric">
+        <div class="metric-label">Enviando</div>
+        <div class="metric-value" id="sendingCount">0</div>
+      </div>
+      <div class="metric">
+        <div class="metric-label">Enviados</div>
+        <div class="metric-value" id="sentCount">0</div>
+      </div>
+      <div class="metric">
+        <div class="metric-label">Cancelados / error</div>
+        <div class="metric-value" id="closedCount">0</div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head">
+        <div>
+          <div class="panel-title">Mensajes en cola</div>
+          <div class="muted" id="queueDetail">--</div>
+        </div>
+        <div class="table-controls">
+          <select id="statusFilter" aria-label="Filtrar por estado">
+            <option value="">Todos</option>
+            <option value="pending">Pendientes</option>
+            <option value="sending">Enviando</option>
+            <option value="sent">Enviados</option>
+            <option value="error">Error</option>
+            <option value="cancelled">Cancelados</option>
+          </select>
+          <select id="limitSelect" aria-label="Cantidad">
+            <option value="50">50</option>
+            <option value="100">100</option>
+            <option value="200" selected>200</option>
+            <option value="500">500</option>
+          </select>
+        </div>
+      </div>
+      <div id="errorText" class="error-text" hidden></div>
+      <div id="tableWrap" class="table-wrap">
+        <div class="empty">Cargando cola...</div>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const state = {
+      loading: false,
+      user: null,
+      items: []
+    };
+
+    const els = {
+      closedCount: document.getElementById('closedCount'),
+      errorText: document.getElementById('errorText'),
+      lastRefresh: document.getElementById('lastRefresh'),
+      limitSelect: document.getElementById('limitSelect'),
+      logoutBtn: document.getElementById('logoutBtn'),
+      pendingCount: document.getElementById('pendingCount'),
+      queueDetail: document.getElementById('queueDetail'),
+      refreshBtn: document.getElementById('refreshBtn'),
+      sendingCount: document.getElementById('sendingCount'),
+      sentCount: document.getElementById('sentCount'),
+      sessionBadge: document.getElementById('sessionBadge'),
+      statusFilter: document.getElementById('statusFilter'),
+      tableWrap: document.getElementById('tableWrap')
+    };
+
+    function escapeHtml(value) {
+      return String(value === undefined || value === null ? '' : value)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
+
+    function formatDateTime(value) {
+      if (!value) {
+        return '--';
+      }
+
+      const date = new Date(value);
+
+      if (Number.isNaN(date.getTime())) {
+        return String(value);
+      }
+
+      return new Intl.DateTimeFormat('es-AR', {
+        day: '2-digit',
+        month: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit'
+      }).format(date);
+    }
+
+    function statusLabel(status) {
+      const labels = {
+        pending: 'Pendiente',
+        sending: 'Enviando',
+        sent: 'Enviado',
+        error: 'Error',
+        cancelled: 'Cancelado'
+      };
+
+      return labels[status] || status || '--';
+    }
+
+    function statusTone(status) {
+      if (status === 'sent') {
+        return 'good';
+      }
+
+      if (status === 'pending' || status === 'sending') {
+        return 'warn';
+      }
+
+      if (status === 'error' || status === 'cancelled') {
+        return 'bad';
+      }
+
+      return '';
+    }
+
+    function parseVariables(item) {
+      if (item.variables && typeof item.variables === 'object') {
+        return item.variables;
+      }
+
+      try {
+        return JSON.parse(item.variables_json || '{}') || {};
+      } catch (error) {
+        return {};
+      }
+    }
+
+    async function fetchJson(url, options) {
+      const response = await fetch(url, options);
+      const data = await response.json().catch(() => ({}));
+
+      if (response.status === 401) {
+        window.location.href = '/login?next=' + encodeURIComponent(window.location.pathname + window.location.search);
+        return new Promise(() => { });
+      }
+
+      if (!response.ok || !data.success) {
+        throw new Error(data.error || 'Error HTTP ' + response.status);
+      }
+
+      return data;
+    }
+
+    function renderStats(stats) {
+      const pending = Number(stats && stats.pending || 0);
+      const sending = Number(stats && stats.sending || 0);
+      const sent = Number(stats && stats.sent || 0);
+      const error = Number(stats && stats.error || 0);
+      const cancelled = Number(stats && stats.cancelled || 0);
+
+      els.pendingCount.textContent = String(pending);
+      els.sendingCount.textContent = String(sending);
+      els.sentCount.textContent = String(sent);
+      els.closedCount.textContent = String(cancelled + error);
+      els.queueDetail.textContent = 'Total: ' + Number(stats && stats.total || 0) + ' | Error: ' + error;
+    }
+
+    function renderTable() {
+      if (!state.items.length) {
+        els.tableWrap.innerHTML = '<div class="empty">No hay mensajes para este filtro.</div>';
+        return;
+      }
+
+      const rows = state.items.map(item => {
+        const variables = parseVariables(item);
+        const client = variables.cliente || variables.razon_social || variables.razonSocial || '';
+        const detail = item.rendered_body || item.last_error || variables.deuda || '';
+        const canCancel = item.status === 'pending';
+
+        return '<tr>' +
+          '<td class="mono">#' + escapeHtml(item.id) + '</td>' +
+          '<td><span class="badge ' + statusTone(item.status) + '">' + escapeHtml(statusLabel(item.status)) + '</span></td>' +
+          '<td>' +
+            '<div>' + escapeHtml(client || item.target || '--') + '</div>' +
+            '<div class="detail">' + escapeHtml(detail || item.queue_key || '') + '</div>' +
+          '</td>' +
+          '<td class="mono">' + escapeHtml(item.phone || item.target || '--') + '</td>' +
+          '<td>' + escapeHtml(item.owner_username || 'sin usuario') + '</td>' +
+          '<td>' + escapeHtml(formatDateTime(item.created_at)) + '</td>' +
+          '<td>' + escapeHtml(formatDateTime(item.scheduled_at)) + '</td>' +
+          '<td>' + escapeHtml(formatDateTime(item.updated_at)) + '</td>' +
+          '<td>' + escapeHtml(formatDateTime(item.sent_at)) + '</td>' +
+          '<td>' + (canCancel
+            ? '<button class="danger" type="button" data-cancel-id="' + escapeHtml(item.id) + '">Cancelar</button>'
+            : '<span class="muted">--</span>') + '</td>' +
+        '</tr>';
+      }).join('');
+
+      els.tableWrap.innerHTML =
+        '<table>' +
+          '<thead>' +
+            '<tr>' +
+              '<th>ID</th>' +
+              '<th>Estado</th>' +
+              '<th>Mensaje</th>' +
+              '<th>Destino</th>' +
+              '<th>Quien lanzo</th>' +
+              '<th>Creado</th>' +
+              '<th>Programado</th>' +
+              '<th>Actualizado</th>' +
+              '<th>Enviado</th>' +
+              '<th>Accion</th>' +
+            '</tr>' +
+          '</thead>' +
+          '<tbody>' + rows + '</tbody>' +
+        '</table>';
+
+      els.tableWrap.querySelectorAll('button[data-cancel-id]').forEach(button => {
+        button.addEventListener('click', () => cancelItem(button.dataset.cancelId, button));
+      });
+    }
+
+    async function loadSession() {
+      const data = await fetchJson('/auth/me');
+      state.user = data.user;
+      els.sessionBadge.textContent = data.user.name + ' | ' + String(data.user.role || '').toUpperCase();
+    }
+
+    async function loadQueue() {
+      if (state.loading) {
+        return;
+      }
+
+      state.loading = true;
+      els.refreshBtn.disabled = true;
+      els.errorText.hidden = true;
+      els.errorText.textContent = '';
+
+      try {
+        const params = new URLSearchParams({
+          limit: els.limitSelect.value
+        });
+
+        if (els.statusFilter.value) {
+          params.set('status', els.statusFilter.value);
+        }
+
+        const data = await fetchJson('/api/message-queue?' + params.toString());
+        state.items = data.items || [];
+        renderStats(data.stats || {});
+        renderTable();
+        els.lastRefresh.textContent = 'Actualizado ' + new Date().toLocaleTimeString('es-AR');
+      } catch (error) {
+        els.errorText.hidden = false;
+        els.errorText.textContent = error.message;
+      } finally {
+        state.loading = false;
+        els.refreshBtn.disabled = false;
+      }
+    }
+
+    async function cancelItem(id, button) {
+      if (!window.confirm('Cancelar el mensaje #' + id + '?')) {
+        return;
+      }
+
+      button.disabled = true;
+      button.textContent = 'Cancelando';
+
+      try {
+        await fetchJson('/api/message-queue/' + encodeURIComponent(id) + '/cancel', {
+          method: 'POST'
+        });
+        await loadQueue();
+      } catch (error) {
+        els.errorText.hidden = false;
+        els.errorText.textContent = error.message;
+        button.disabled = false;
+        button.textContent = 'Cancelar';
+      }
+    }
+
+    async function logout() {
+      await fetch('/auth/logout', { method: 'POST' }).catch(() => { });
+      window.location.href = '/login';
+    }
+
+    els.refreshBtn.addEventListener('click', loadQueue);
+    els.statusFilter.addEventListener('change', loadQueue);
+    els.limitSelect.addEventListener('change', loadQueue);
+    els.logoutBtn.addEventListener('click', logout);
+
+    (async function boot() {
+      try {
+        await loadSession();
+        await loadQueue();
+        setInterval(loadQueue, 15000);
+      } catch (error) {
+        els.lastRefresh.textContent = error.message;
+      }
+    })();
+  </script>
+</body>
+
+</html>
