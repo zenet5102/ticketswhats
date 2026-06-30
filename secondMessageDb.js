@@ -473,6 +473,37 @@ async function getWhatsAppChatOwner(chatId, phone) {
   return normalizeOwnerUsername(rows[0] && rows[0].owner_username);
 }
 
+async function resolveWhatsAppChatAlias(chatId) {
+  const cleanChatId = String(chatId || '').trim();
+
+  if (!isLidChatId(cleanChatId)) {
+    return null;
+  }
+
+  const database = await getPool();
+  const [rows] = await database.execute(`
+    SELECT chat_id, phone, contact_name, owner_username
+    FROM ${messagesTableSql}
+    WHERE id LIKE ?
+      AND chat_id <> ?
+      AND LOWER(chat_id) NOT LIKE '%@lid'
+      AND chat_id <> 'status@broadcast'
+    ORDER BY timestamp_ts DESC, created_at DESC, id DESC
+    LIMIT 1
+  `, [`true_${cleanChatId}_%`, cleanChatId]);
+
+  if (!rows[0] || !rows[0].chat_id) {
+    return null;
+  }
+
+  return {
+    chatId: rows[0].chat_id,
+    phone: normalizeMessagePhone(rows[0].phone || rows[0].chat_id, rows[0].chat_id),
+    contactName: rows[0].contact_name || '',
+    ownerUsername: normalizeOwnerUsername(rows[0].owner_username)
+  };
+}
+
 async function listWhatsAppConversations(limit = 100, options = {}) {
   const safeLimit = Math.min(Math.max(Number(limit) || 100, 1), 1000);
   const ownerUsername = normalizeOwnerUsername(options.ownerUsername || options.owner_username);
@@ -1297,6 +1328,7 @@ module.exports = {
   getPool,
   getPhantomBajaSyncStatus,
   getWhatsAppChatOwner,
+  resolveWhatsAppChatAlias,
   listPhantomBajaClients,
   listMessageQueueItems,
   listWhatsAppChatPhones,

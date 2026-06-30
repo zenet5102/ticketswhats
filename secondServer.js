@@ -45,6 +45,7 @@ const {
   pingDatabase,
   releaseMessageQueueItem,
   replacePhantomBajaClients,
+  resolveWhatsAppChatAlias,
   saveWhatsAppMessage
 } = require('./secondMessageDb');
 
@@ -655,8 +656,10 @@ async function storeWhatsAppMessage(message, source = 'whatsapp-second') {
 
   const contactInfo = await getMessageContactInfo(message, chatId);
   const mediaInfo = await getMessageMediaInfo(message);
-  const phone = contactInfo.contactPhone || normalizeChatPhone(chatId);
-  const ownerUsername = await getWhatsAppChatOwner(chatId, phone);
+  const chatAlias = !message.fromMe ? await resolveWhatsAppChatAlias(chatId) : null;
+  const storageChatId = chatAlias && chatAlias.chatId ? chatAlias.chatId : chatId;
+  const phone = contactInfo.contactPhone || (chatAlias && chatAlias.phone) || normalizeChatPhone(storageChatId);
+  const ownerUsername = (chatAlias && chatAlias.ownerUsername) || await getWhatsAppChatOwner(storageChatId, phone);
   const rawBody = String(message.body || message.caption || '').trim();
   const body = rawBody || (mediaInfo.mediaMime
     ? `[${getMediaLabel(mediaInfo.mediaMime, message.type)} sin texto]`
@@ -668,9 +671,9 @@ async function storeWhatsAppMessage(message, source = 'whatsapp-second') {
 
   return saveWhatsAppMessage({
     id: getStoredMessageId(message, chatId, direction),
-    chatId,
+    chatId: storageChatId,
     phone,
-    contactName: contactInfo.contactName,
+    contactName: contactInfo.contactName || (chatAlias && chatAlias.contactName) || '',
     direction,
     body,
     mediaMime: mediaInfo.mediaMime,
