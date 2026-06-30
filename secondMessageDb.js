@@ -38,7 +38,10 @@ function getMysqlSettings() {
     createDatabase: parseBoolean(process.env.SECOND_APP_MYSQL_CREATE_DATABASE, true),
     messagesTable: readEnv('SECOND_APP_MYSQL_MESSAGES_TABLE', 'second_whatsapp_messages'),
     queueTable: readEnv('SECOND_APP_MYSQL_QUEUE_TABLE', 'second_message_queue'),
-    phantomBajaTable: readEnv('SECOND_APP_MYSQL_PHANTOM_BAJA_TABLE', 'second_phantom_baja_clients'),
+    phantomBajaTable: readEnv(
+      'SECOND_APP_MYSQL_PHANTOM_CLIENTS_TABLE',
+      readEnv('SECOND_APP_MYSQL_PHANTOM_BAJA_TABLE', 'second_phantom_clients')
+    ),
     queueSendingTimeoutMinutes: parsePositiveInteger(
       process.env.SECOND_MESSAGE_QUEUE_SENDING_TIMEOUT_MINUTES,
       2
@@ -61,7 +64,7 @@ function escapeIdentifier(value, label = 'identificador') {
 const databaseNameSql = escapeIdentifier(settings.database, 'base de datos');
 const messagesTableSql = escapeIdentifier(settings.messagesTable, 'tabla');
 const queueTableSql = escapeIdentifier(settings.queueTable, 'tabla de cola');
-const phantomBajaTableSql = escapeIdentifier(settings.phantomBajaTable, 'tabla de clientes baja');
+const phantomBajaTableSql = escapeIdentifier(settings.phantomBajaTable, 'tabla de clientes Phantom');
 
 function createConnectionConfig(includeDatabase = true) {
   const config = {
@@ -180,12 +183,40 @@ async function initializeMessageDatabase(databasePool) {
   await databasePool.query(`
     CREATE TABLE IF NOT EXISTS ${phantomBajaTableSql} (
       id VARCHAR(191) NOT NULL,
+      apellido VARCHAR(255) NULL,
+      nombre VARCHAR(255) NULL,
       razon_social VARCHAR(255) NULL,
+      documento VARCHAR(64) NULL,
+      cuit VARCHAR(64) NULL,
+      categoria VARCHAR(64) NULL,
+      condicion VARCHAR(64) NULL,
+      direccion VARCHAR(255) NULL,
+      dir_numero VARCHAR(64) NULL,
+      barrio VARCHAR(191) NULL,
+      ciudad VARCHAR(191) NULL,
       deuda VARCHAR(64) NULL,
       estado VARCHAR(64) NULL,
       movil VARCHAR(255) NULL,
       telefono VARCHAR(255) NULL,
+      email VARCHAR(255) NULL,
+      id_externo VARCHAR(191) NULL,
+      perfil VARCHAR(191) NULL,
+      television VARCHAR(191) NULL,
+      telefonia VARCHAR(191) NULL,
+      otros VARCHAR(191) NULL,
+      bonificaciones TEXT NULL,
+      mac VARCHAR(191) NULL,
+      usuario VARCHAR(191) NULL,
+      router VARCHAR(191) NULL,
+      olt VARCHAR(191) NULL,
+      fecha_ultimo_cambio VARCHAR(64) NULL,
+      fecha_alta VARCHAR(64) NULL,
+      fecha_instalacion VARCHAR(64) NULL,
+      fecha_ultima_mod VARCHAR(64) NULL,
+      detalle_ultimo_cambio TEXT NULL,
       fecha_ultima_factura VARCHAR(64) NULL,
+      fecha_ultimo_mov VARCHAR(64) NULL,
+      suc_id VARCHAR(64) NULL,
       comprobantes_adeudados VARCHAR(191) NULL,
       raw_json LONGTEXT NOT NULL,
       synced_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -214,6 +245,34 @@ async function initializeMessageDatabase(databasePool) {
     'KEY idx_second_queue_owner (owner_username, status)'
   );
   await ensureTableColumn(databasePool, phantomBajaTableSql, 'raw_json', 'LONGTEXT NOT NULL');
+  await ensureTableColumn(databasePool, phantomBajaTableSql, 'apellido', 'VARCHAR(255) NULL');
+  await ensureTableColumn(databasePool, phantomBajaTableSql, 'nombre', 'VARCHAR(255) NULL');
+  await ensureTableColumn(databasePool, phantomBajaTableSql, 'documento', 'VARCHAR(64) NULL');
+  await ensureTableColumn(databasePool, phantomBajaTableSql, 'cuit', 'VARCHAR(64) NULL');
+  await ensureTableColumn(databasePool, phantomBajaTableSql, 'categoria', 'VARCHAR(64) NULL');
+  await ensureTableColumn(databasePool, phantomBajaTableSql, 'condicion', 'VARCHAR(64) NULL');
+  await ensureTableColumn(databasePool, phantomBajaTableSql, 'direccion', 'VARCHAR(255) NULL');
+  await ensureTableColumn(databasePool, phantomBajaTableSql, 'dir_numero', 'VARCHAR(64) NULL');
+  await ensureTableColumn(databasePool, phantomBajaTableSql, 'barrio', 'VARCHAR(191) NULL');
+  await ensureTableColumn(databasePool, phantomBajaTableSql, 'ciudad', 'VARCHAR(191) NULL');
+  await ensureTableColumn(databasePool, phantomBajaTableSql, 'email', 'VARCHAR(255) NULL');
+  await ensureTableColumn(databasePool, phantomBajaTableSql, 'id_externo', 'VARCHAR(191) NULL');
+  await ensureTableColumn(databasePool, phantomBajaTableSql, 'perfil', 'VARCHAR(191) NULL');
+  await ensureTableColumn(databasePool, phantomBajaTableSql, 'television', 'VARCHAR(191) NULL');
+  await ensureTableColumn(databasePool, phantomBajaTableSql, 'telefonia', 'VARCHAR(191) NULL');
+  await ensureTableColumn(databasePool, phantomBajaTableSql, 'otros', 'VARCHAR(191) NULL');
+  await ensureTableColumn(databasePool, phantomBajaTableSql, 'bonificaciones', 'TEXT NULL');
+  await ensureTableColumn(databasePool, phantomBajaTableSql, 'mac', 'VARCHAR(191) NULL');
+  await ensureTableColumn(databasePool, phantomBajaTableSql, 'usuario', 'VARCHAR(191) NULL');
+  await ensureTableColumn(databasePool, phantomBajaTableSql, 'router', 'VARCHAR(191) NULL');
+  await ensureTableColumn(databasePool, phantomBajaTableSql, 'olt', 'VARCHAR(191) NULL');
+  await ensureTableColumn(databasePool, phantomBajaTableSql, 'fecha_ultimo_cambio', 'VARCHAR(64) NULL');
+  await ensureTableColumn(databasePool, phantomBajaTableSql, 'fecha_alta', 'VARCHAR(64) NULL');
+  await ensureTableColumn(databasePool, phantomBajaTableSql, 'fecha_instalacion', 'VARCHAR(64) NULL');
+  await ensureTableColumn(databasePool, phantomBajaTableSql, 'fecha_ultima_mod', 'VARCHAR(64) NULL');
+  await ensureTableColumn(databasePool, phantomBajaTableSql, 'detalle_ultimo_cambio', 'TEXT NULL');
+  await ensureTableColumn(databasePool, phantomBajaTableSql, 'fecha_ultimo_mov', 'VARCHAR(64) NULL');
+  await ensureTableColumn(databasePool, phantomBajaTableSql, 'suc_id', 'VARCHAR(64) NULL');
 }
 
 async function getPool() {
@@ -886,22 +945,75 @@ async function listMessageQueueItems(options = {}) {
 }
 
 function normalizePhantomBajaRow(row = {}, fallbackIndex = 0) {
-  const id = String(row.id || row.ID || row.Id || row.IDA || row.ida || row.ClienteID || row.Cliente_Id || row.Codigo || row.CodigoCliente || '').trim() ||
+  const id = getPhantomField(row, ['id', 'ID', 'Id', 'IDA', 'ida', 'ClienteID', 'Cliente_Id', 'Codigo', 'CodigoCliente']) ||
     `row:${fallbackIndex}`;
 
   return {
     id,
-    razonSocial: String(row.razonSocial || row.razon_social || row.RS || row.RazonSocial || row.Razon_Social || row['Razon Social'] || row.Razon || '').trim(),
-    deuda: String(row.deuda || row.balance || row.Balance_CC || row.Balance || row.Saldo || '').trim(),
-    estado: String(row.estado || row.Estado || 'Baja').trim(),
-    movil: String(row.movil || row.Movil || row['Móvil'] || row.Celular || row.celular || row.Mobile || row.TelefonoMovil || row.TelMovil || row.Movi || row.movi || '').trim(),
-    telefono: String(row.telefono || row.Telefono || row['Teléfono'] || row.Tel || row.tel || row.Telefono1 || row.Telefono_1 || '').trim(),
-    fechaUltimaFactura: String(row.fechaUltimaFactura || row.fecha_ultima_factura || row.Fecha_Ultima_Factura || '').trim(),
-    fechaUltimoCambio: String(row.fechaUltimoCambio || row.fecha_ultimo_cambio || row.Fecha_Ultimo_Cambio || '').trim(),
-    fechaInstalacion: String(row.fechaInstalacion || row.fecha_instalacion || row.Fecha_Instalacion || '').trim(),
-    comprobantesAdeudados: String(row.comprobantesAdeudados || row.C_Comprobantes_Adeudados || row.Fecha_Ultimo_Mov || row.ComprobantesAdeudados || row.Comprobantes_Adeudados || '').trim(),
+    apellido: getPhantomField(row, ['apellido', 'Apellido']),
+    nombre: getPhantomField(row, ['nombre', 'Nombre']),
+    razonSocial: getPhantomField(row, ['razonSocial', 'razon_social', 'RS', 'RazonSocial', 'Razon_Social', 'Razon Social', 'Razon']),
+    documento: getPhantomField(row, ['documento', 'Documento']),
+    cuit: getPhantomField(row, ['cuit', 'CUIT']),
+    categoria: getPhantomField(row, ['categoria', 'Categoria']),
+    condicion: getPhantomField(row, ['condicion', 'Condicion']),
+    direccion: getPhantomField(row, ['direccion', 'Direccion']),
+    dirNumero: getPhantomField(row, ['dirNumero', 'dir_numero', 'Dir_Numero']),
+    barrio: getPhantomField(row, ['barrio', 'Barrio']),
+    ciudad: getPhantomField(row, ['ciudad', 'Ciudad']),
+    deuda: getPhantomField(row, ['deuda', 'balance', 'Balance_CC', 'Balance', 'Saldo']),
+    estado: getPhantomField(row, ['estado', 'Estado']),
+    movil: getPhantomField(row, ['movil', 'Movil', 'Móvil', 'MÃ³vil', 'Celular', 'celular', 'Mobile', 'TelefonoMovil', 'TelMovil', 'Movi', 'movi']),
+    telefono: getPhantomField(row, ['telefono', 'Telefono', 'Teléfono', 'TelÃ©fono', 'Tel', 'tel', 'Telefono1', 'Telefono_1']),
+    email: getPhantomField(row, ['email', 'Email']),
+    idExterno: getPhantomField(row, ['idExterno', 'id_externo', 'IDExterno']),
+    perfil: getPhantomField(row, ['perfil', 'Perfil']),
+    television: getPhantomField(row, ['television', 'Television']),
+    telefonia: getPhantomField(row, ['telefonia', 'Telefonia']),
+    otros: getPhantomField(row, ['otros', 'Otros']),
+    bonificaciones: getPhantomField(row, ['bonificaciones', 'Bonificaciones']),
+    mac: getPhantomField(row, ['mac', 'Mac']),
+    usuario: getPhantomField(row, ['usuario', 'Usuario']),
+    router: getPhantomField(row, ['router', 'Router']),
+    olt: getPhantomField(row, ['olt', 'OLT']),
+    fechaUltimaFactura: getPhantomField(row, ['fechaUltimaFactura', 'fecha_ultima_factura', 'Fecha_Ultima_Factura']),
+    fechaUltimoCambio: getPhantomField(row, ['fechaUltimoCambio', 'fecha_ultimo_cambio', 'Fecha_Ultimo_Cambio']),
+    fechaAlta: getPhantomField(row, ['fechaAlta', 'fecha_alta', 'Fecha_Alta']),
+    fechaInstalacion: getPhantomField(row, ['fechaInstalacion', 'fecha_instalacion', 'Fecha_Instalacion']),
+    fechaUltimaMod: getPhantomField(row, ['fechaUltimaMod', 'fecha_ultima_mod', 'Fecha_Ultima_Mod']),
+    detalleUltimoCambio: getPhantomField(row, ['detalleUltimoCambio', 'detalle_ultimo_cambio', 'Detalle_Ultimo_Cambio']),
+    fechaUltimoMov: getPhantomField(row, ['fechaUltimoMov', 'fecha_ultimo_mov', 'Fecha_Ultimo_Mov']),
+    sucId: getPhantomField(row, ['sucId', 'suc_id', 'Suc_ID']),
+    comprobantesAdeudados: getPhantomField(row, ['comprobantesAdeudados', 'comprobantes_adeudados', 'C_Comprobantes_Adeudados', 'ComprobantesAdeudados', 'Comprobantes_Adeudados']),
     raw: row.raw && typeof row.raw === 'object' ? row.raw : row
   };
+}
+
+function getPhantomField(row = {}, keys = []) {
+  const sources = [
+    row,
+    row && row.raw && typeof row.raw === 'object' ? row.raw : null
+  ].filter(Boolean);
+
+  for (const key of keys) {
+    for (const source of sources) {
+      if (source[key] !== undefined && source[key] !== null && source[key] !== '') {
+        return String(source[key]).trim();
+      }
+    }
+  }
+
+  return '';
+}
+
+function chunkRows(rows = [], size = 500) {
+  const chunks = [];
+
+  for (let index = 0; index < rows.length; index += size) {
+    chunks.push(rows.slice(index, index + size));
+  }
+
+  return chunks;
 }
 
 function parsePhantomBajaDbRow(row = {}) {
@@ -916,14 +1028,40 @@ function parsePhantomBajaDbRow(row = {}) {
   return {
     ...raw,
     id: row.id,
+    apellido: row.apellido || raw.apellido || raw.Apellido || '',
+    nombre: row.nombre || raw.nombre || raw.Nombre || '',
     razonSocial: row.razon_social || raw.razonSocial || raw.razon_social || '',
+    documento: row.documento || raw.documento || raw.Documento || '',
+    cuit: row.cuit || raw.cuit || raw.CUIT || '',
+    categoria: row.categoria || raw.categoria || raw.Categoria || '',
+    condicion: row.condicion || raw.condicion || raw.Condicion || '',
+    direccion: row.direccion || raw.direccion || raw.Direccion || '',
+    dirNumero: row.dir_numero || raw.dirNumero || raw.dir_numero || raw.Dir_Numero || '',
+    barrio: row.barrio || raw.barrio || raw.Barrio || '',
+    ciudad: row.ciudad || raw.ciudad || raw.Ciudad || '',
     deuda: row.deuda || raw.deuda || '',
-    estado: row.estado || raw.estado || 'Baja',
+    estado: row.estado || raw.estado || raw.Estado || '',
     movil: row.movil || raw.movil || '',
     telefono: row.telefono || raw.telefono || '',
+    email: row.email || raw.email || raw.Email || '',
+    idExterno: row.id_externo || raw.idExterno || raw.id_externo || raw.IDExterno || '',
+    perfil: row.perfil || raw.perfil || raw.Perfil || '',
+    television: row.television || raw.television || raw.Television || '',
+    telefonia: row.telefonia || raw.telefonia || raw.Telefonia || '',
+    otros: row.otros || raw.otros || raw.Otros || '',
+    bonificaciones: row.bonificaciones || raw.bonificaciones || raw.Bonificaciones || '',
+    mac: row.mac || raw.mac || raw.Mac || '',
+    usuario: row.usuario || raw.usuario || raw.Usuario || '',
+    router: row.router || raw.router || raw.Router || '',
+    olt: row.olt || raw.olt || raw.OLT || '',
     fechaUltimaFactura: row.fecha_ultima_factura || raw.fechaUltimaFactura || raw.fecha_ultima_factura || '',
-    fechaUltimoCambio: raw.fechaUltimoCambio || raw.fecha_ultimo_cambio || raw.Fecha_Ultimo_Cambio || '',
-    fechaInstalacion: raw.fechaInstalacion || raw.fecha_instalacion || raw.Fecha_Instalacion || '',
+    fechaUltimoCambio: row.fecha_ultimo_cambio || raw.fechaUltimoCambio || raw.fecha_ultimo_cambio || raw.Fecha_Ultimo_Cambio || '',
+    fechaAlta: row.fecha_alta || raw.fechaAlta || raw.fecha_alta || raw.Fecha_Alta || '',
+    fechaInstalacion: row.fecha_instalacion || raw.fechaInstalacion || raw.fecha_instalacion || raw.Fecha_Instalacion || '',
+    fechaUltimaMod: row.fecha_ultima_mod || raw.fechaUltimaMod || raw.fecha_ultima_mod || raw.Fecha_Ultima_Mod || '',
+    detalleUltimoCambio: row.detalle_ultimo_cambio || raw.detalleUltimoCambio || raw.detalle_ultimo_cambio || raw.Detalle_Ultimo_Cambio || '',
+    fechaUltimoMov: row.fecha_ultimo_mov || raw.fechaUltimoMov || raw.fecha_ultimo_mov || raw.Fecha_Ultimo_Mov || '',
+    sucId: row.suc_id || raw.sucId || raw.suc_id || raw.Suc_ID || '',
     comprobantesAdeudados: row.comprobantes_adeudados || raw.comprobantesAdeudados || raw.comprobantes_adeudados || '',
     syncedAt: row.synced_at
   };
@@ -939,15 +1077,43 @@ async function replacePhantomBajaClients(rows = [], syncedAt = new Date()) {
     await connection.beginTransaction();
     await connection.query(`DELETE FROM ${phantomBajaTableSql}`);
 
-    if (normalizedRows.length) {
-      const values = normalizedRows.map(row => [
+    for (const chunk of chunkRows(normalizedRows, 500)) {
+      const values = chunk.map(row => [
         row.id,
+        row.apellido || null,
+        row.nombre || null,
         row.razonSocial || null,
+        row.documento || null,
+        row.cuit || null,
+        row.categoria || null,
+        row.condicion || null,
+        row.direccion || null,
+        row.dirNumero || null,
+        row.barrio || null,
+        row.ciudad || null,
         row.deuda || null,
-        row.estado || 'Baja',
+        row.estado || null,
         row.movil || null,
         row.telefono || null,
+        row.email || null,
+        row.idExterno || null,
+        row.perfil || null,
+        row.television || null,
+        row.telefonia || null,
+        row.otros || null,
+        row.bonificaciones || null,
+        row.mac || null,
+        row.usuario || null,
+        row.router || null,
+        row.olt || null,
+        row.fechaUltimoCambio || null,
+        row.fechaAlta || null,
+        row.fechaInstalacion || null,
+        row.fechaUltimaMod || null,
+        row.detalleUltimoCambio || null,
         row.fechaUltimaFactura || null,
+        row.fechaUltimoMov || null,
+        row.sucId || null,
         row.comprobantesAdeudados || null,
         JSON.stringify(row.raw || row),
         syncedAtValue
@@ -956,12 +1122,40 @@ async function replacePhantomBajaClients(rows = [], syncedAt = new Date()) {
       await connection.query(`
         INSERT INTO ${phantomBajaTableSql} (
           id,
+          apellido,
+          nombre,
           razon_social,
+          documento,
+          cuit,
+          categoria,
+          condicion,
+          direccion,
+          dir_numero,
+          barrio,
+          ciudad,
           deuda,
           estado,
           movil,
           telefono,
+          email,
+          id_externo,
+          perfil,
+          television,
+          telefonia,
+          otros,
+          bonificaciones,
+          mac,
+          usuario,
+          router,
+          olt,
+          fecha_ultimo_cambio,
+          fecha_alta,
+          fecha_instalacion,
+          fecha_ultima_mod,
+          detalle_ultimo_cambio,
           fecha_ultima_factura,
+          fecha_ultimo_mov,
+          suc_id,
           comprobantes_adeudados,
           raw_json,
           synced_at
@@ -985,6 +1179,10 @@ async function listPhantomBajaClients(options = {}) {
   const safeOffset = Math.max(Number(options.offset) || 0, 0);
   const sortKey = String(options.sortKey || '').trim();
   const sortDirection = String(options.sortDirection || '').toLowerCase() === 'asc' ? 'ASC' : 'DESC';
+  const estado = String(options.estado || '').trim();
+  const excludeEstados = Array.isArray(options.excludeEstados)
+    ? options.excludeEstados.map(item => String(item || '').trim()).filter(Boolean)
+    : [];
   const sortExpressions = {
     id: 'CAST(id AS UNSIGNED)',
     razonSocial: 'razon_social',
@@ -996,15 +1194,30 @@ async function listPhantomBajaClients(options = {}) {
     fechaInstalacion: 'COALESCE(JSON_UNQUOTE(JSON_EXTRACT(raw_json, "$.Fecha_Instalacion")), JSON_UNQUOTE(JSON_EXTRACT(raw_json, "$.fechaInstalacion")), JSON_UNQUOTE(JSON_EXTRACT(raw_json, "$.fecha_instalacion")))'
   };
   const orderExpression = sortExpressions[sortKey] || 'CAST(id AS UNSIGNED)';
+  const whereParts = [];
+  const params = [];
+
+  if (estado) {
+    whereParts.push('estado = ?');
+    params.push(estado);
+  }
+
+  if (excludeEstados.length) {
+    whereParts.push(`(estado IS NULL OR estado = '' OR estado NOT IN (${excludeEstados.map(() => '?').join(', ')}))`);
+    params.push(...excludeEstados);
+  }
+
+  const whereSql = whereParts.length ? `WHERE ${whereParts.join(' AND ')}` : '';
   const database = await getPool();
-  const [[countRow]] = await database.query(`SELECT COUNT(*) AS total FROM ${phantomBajaTableSql}`);
+  const [[countRow]] = await database.query(`SELECT COUNT(*) AS total FROM ${phantomBajaTableSql} ${whereSql}`, params);
   const [rows] = await database.query(`
     SELECT *
     FROM ${phantomBajaTableSql}
+    ${whereSql}
     ORDER BY ${orderExpression} ${sortDirection}, CAST(id AS UNSIGNED) DESC, id DESC
     LIMIT ${safeLimit}
     OFFSET ${safeOffset}
-  `);
+  `, params);
 
   const total = Number(countRow && countRow.total || 0);
 

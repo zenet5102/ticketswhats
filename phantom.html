@@ -34,23 +34,42 @@
       font-size: 15px;
     }
 
-    .topbar {
+    .content {
+      width: min(1680px, calc(100% - 32px));
+      margin: 0 auto;
+    }
+
+    .app-shell {
+      min-height: 100vh;
+      display: grid;
+      grid-template-columns: 240px minmax(0, 1fr);
+      grid-template-rows: auto 1fr;
+    }
+
+    .app-header {
+      grid-column: 1 / -1;
       border-bottom: 1px solid var(--line);
       background: var(--panel);
     }
 
-    .topbar-inner,
-    .content {
+    .app-header-inner {
       width: min(1240px, calc(100% - 32px));
-      margin: 0 auto;
-    }
-
-    .topbar-inner {
       min-height: 68px;
+      margin: 0 auto;
       display: flex;
       align-items: center;
       justify-content: space-between;
       gap: 16px;
+    }
+
+    .sidebar {
+      min-height: calc(100vh - 69px);
+      position: sticky;
+      top: 0;
+      border-right: 1px solid var(--line);
+      background: var(--panel);
+      padding: 16px 12px;
+      align-self: start;
     }
 
     h1 {
@@ -65,16 +84,47 @@
       font-size: 13px;
     }
 
+    .actions,
+    .primary-nav {
+      gap: 8px;
+    }
+
     .actions {
       display: flex;
       flex-wrap: wrap;
       justify-content: flex-end;
+    }
+
+    .primary-nav {
+      display: grid;
+    }
+
+    .sidebar-actions {
+      border-top: 1px solid var(--line);
+      margin-top: 12px;
+      padding-top: 12px;
+      display: grid;
       gap: 8px;
+    }
+
+    .nav-group {
+      border-top: 1px solid var(--line);
+      margin-top: 6px;
+      padding-top: 10px;
+      display: grid;
+      gap: 4px;
+    }
+
+    .nav-group-label {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+      padding: 0 12px 2px;
+      text-transform: uppercase;
     }
 
     button,
     .button-link,
-    .nav-trigger,
     .session-chip {
       min-height: 38px;
       border: 1px solid var(--line);
@@ -92,51 +142,28 @@
       text-decoration: none;
     }
 
-    .nav-dropdown {
-      position: relative;
-    }
-
-    .nav-trigger {
-      list-style: none;
-    }
-
-    .nav-trigger::-webkit-details-marker {
-      display: none;
-    }
-
-    .nav-menu {
-      position: absolute;
-      top: calc(100% + 6px);
-      right: 0;
-      min-width: 180px;
-      border: 1px solid var(--line);
+    .nav-link {
+      min-height: 38px;
       border-radius: 8px;
-      background: var(--panel);
-      box-shadow: 0 12px 24px rgba(15, 23, 42, 0.12);
-      padding: 6px;
-      display: grid;
-      gap: 4px;
-      z-index: 5;
-    }
-
-    .nav-dropdown:not([open]) .nav-menu {
-      display: none;
-    }
-
-    .nav-menu a {
-      min-height: 34px;
-      border-radius: 6px;
-      padding: 7px 9px;
-      color: var(--text);
+      color: var(--muted);
+      padding: 0 12px;
       text-decoration: none;
-      display: flex;
+      display: inline-flex;
       align-items: center;
+      justify-content: flex-start;
+      white-space: nowrap;
     }
 
-    .nav-menu a:hover,
-    .nav-menu a.active {
+    .nav-group .nav-link {
+      min-height: 34px;
+      padding-left: 22px;
+    }
+
+    .nav-link:hover,
+    .nav-link.active {
       background: var(--accent-soft);
       color: var(--accent);
+      font-weight: 700;
     }
 
     .session-chip {
@@ -317,7 +344,7 @@
     .mobile-options {
       display: grid;
       gap: 6px;
-      min-width: 150px;
+      min-width: 230px;
     }
 
     .mobile-option {
@@ -339,7 +366,7 @@
     }
 
     .mobile-option input[type="text"] {
-      width: min(170px, 36vw);
+      width: 170px;
       min-height: 30px;
       padding: 5px 7px;
       font-size: 13px;
@@ -450,9 +477,9 @@
     }
 
     table {
-      width: 100%;
+      width: max-content;
       border-collapse: collapse;
-      min-width: 720px;
+      min-width: 1760px;
     }
 
     th,
@@ -461,7 +488,9 @@
       padding: 9px 10px;
       text-align: left;
       vertical-align: top;
-      overflow-wrap: anywhere;
+      white-space: nowrap;
+      overflow-wrap: normal;
+      word-break: normal;
     }
 
     th {
@@ -490,7 +519,7 @@
       font-weight: 700;
       text-align: left;
       text-transform: inherit;
-      white-space: normal;
+      white-space: nowrap;
     }
 
     .sort-button:disabled {
@@ -516,10 +545,21 @@
     }
 
     @media (max-width: 860px) {
-      .topbar-inner {
+      .app-shell {
+        display: block;
+      }
+
+      .app-header-inner {
         align-items: stretch;
         flex-direction: column;
         padding: 14px 0;
+      }
+
+      .sidebar {
+        min-height: 0;
+        position: static;
+        border-right: 0;
+        border-bottom: 1px solid var(--line);
       }
 
       .actions {
@@ -528,15 +568,8 @@
 
       .actions button,
       .actions .button-link,
-      .actions .nav-dropdown,
-      .actions .nav-trigger,
       .actions .session-chip {
         flex: 1 1 calc(50% - 8px);
-      }
-
-      .nav-menu {
-        left: 0;
-        right: 0;
       }
 
       .status-grid {
@@ -563,31 +596,37 @@
 </head>
 
 <body>
-  <header class="topbar">
-    <div class="topbar-inner">
-      <div>
-        <h1 id="pageTitle">Clientes Phantom</h1>
-        <div class="subtitle" id="lastRefresh">Cargando...</div>
+  <div class="app-shell">
+    <header class="app-header">
+      <div class="app-header-inner">
+        <div>
+          <h1 id="pageTitle">Clientes Phantom</h1>
+          <div class="subtitle" id="lastRefresh">Cargando...</div>
+        </div>
+        <div class="actions">
+          <span id="sessionBadge" class="session-chip">Sesion</span>
+          <button id="logoutBtn" type="button">Salir</button>
+        </div>
       </div>
-      <div class="actions">
-        <a class="button-link" href="/mensajes">Mensajes</a>
-        <a class="button-link" href="/cola">Cola</a>
-        <details class="nav-dropdown">
-          <summary class="nav-trigger">Clientes</summary>
-          <div class="nav-menu">
-            <a id="navSuspendidos" href="/phantom/suspendidos">Suspendidos</a>
-            <a id="navBaja" href="/phantom/baja">Baja</a>
-          </div>
-        </details>
-        <a id="usersLink" class="button-link" href="/usuarios" hidden>Usuarios</a>
-        <span id="sessionBadge" class="session-chip">Sesion</span>
+    </header>
+    <aside class="sidebar">
+      <nav class="primary-nav" aria-label="Navegacion principal">
+        <a class="nav-link" href="/mensajes">Mensajes</a>
+        <a class="nav-link" href="/cola">Cola</a>
+        <div class="nav-group" aria-label="Clientes">
+          <div class="nav-group-label">Clientes</div>
+          <a id="navSuspendidos" class="nav-link" href="/phantom/suspendidos">Suspendidos</a>
+          <a id="navBaja" class="nav-link" href="/phantom/baja">Baja</a>
+          <a id="navActivos" class="nav-link" href="/phantom/activos">Activos</a>
+        </div>
+        <a id="usersLink" class="nav-link" href="/usuarios" hidden>Usuarios</a>
+      </nav>
+      <div class="sidebar-actions">
         <button id="refreshBtn" class="primary" type="button">Actualizar</button>
-        <button id="logoutBtn" type="button">Salir</button>
       </div>
-    </div>
-  </header>
+    </aside>
 
-  <main class="content">
+    <main class="content">
     <section class="status-grid" aria-label="Estado">
       <div class="metric">
         <div class="metric-label">Estado</div>
@@ -658,7 +697,8 @@
         <div class="empty">Sin consulta ejecutada.</div>
       </div>
     </section>
-  </main>
+    </main>
+  </div>
 
   <script>
     const state = {
@@ -674,7 +714,11 @@
       sortIndex: -1,
       sortDirection: 'asc',
       searchQuery: '',
-      activeEstado: window.location.pathname.toLowerCase().includes('/baja') ? 'Baja' : 'Suspendido',
+      activeEstado: window.location.pathname.toLowerCase().includes('/baja')
+        ? 'Baja'
+        : window.location.pathname.toLowerCase().includes('/activos') || window.location.pathname.toLowerCase().includes('/clientes')
+          ? 'Activo'
+          : 'Suspendido',
       hasNextPage: false,
       whatsappChecks: new Map()
     };
@@ -689,6 +733,7 @@
       logoutBtn: document.getElementById('logoutBtn'),
       messageTemplate: document.getElementById('messageTemplate'),
       navBaja: document.getElementById('navBaja'),
+      navActivos: document.getElementById('navActivos'),
       navSuspendidos: document.getElementById('navSuspendidos'),
       newTemplateBtn: document.getElementById('newTemplateBtn'),
       nextPageBtn: document.getElementById('nextPageBtn'),
@@ -1546,13 +1591,9 @@
           }
 
           state.offset = 0;
-          if (state.activeEstado === 'Baja') {
-            loadData(0).catch(error => {
-              els.errorText.textContent = error.message;
-            });
-          } else {
-            renderCurrentPage();
-          }
+          loadData(0).catch(error => {
+            els.errorText.textContent = error.message;
+          });
         });
       });
 
@@ -1870,10 +1911,17 @@
 
     function renderPageHeader() {
       const isBaja = state.activeEstado === 'Baja';
-      els.pageTitle.textContent = isBaja ? 'Clientes baja' : 'Clientes suspendidos';
-      document.title = isBaja ? 'Clientes baja' : 'Clientes suspendidos';
+      const isActivo = state.activeEstado === 'Activo';
+      const title = isBaja
+        ? 'Clientes baja'
+        : isActivo
+          ? 'Clientes activos'
+          : 'Clientes suspendidos';
+      els.pageTitle.textContent = title;
+      document.title = title;
       els.navBaja.classList.toggle('active', isBaja);
-      els.navSuspendidos.classList.toggle('active', !isBaja);
+      els.navActivos.classList.toggle('active', isActivo);
+      els.navSuspendidos.classList.toggle('active', !isBaja && !isActivo);
     }
 
     async function loadData(nextOffset = 0) {
@@ -1887,13 +1935,16 @@
 
       try {
         const params = new URLSearchParams({
-          estado: state.activeEstado,
           limit: String(state.limit),
           offset: String(state.offset)
         });
         const sortColumn = getActiveTableColumns()[state.sortIndex];
 
-        if (state.activeEstado === 'Baja' && sortColumn && sortColumn.sortKey) {
+        if (state.activeEstado) {
+          params.set('estado', state.activeEstado);
+        }
+
+        if (sortColumn && sortColumn.sortKey) {
           params.set('sortKey', sortColumn.sortKey);
           params.set('sortDirection', state.sortDirection);
         }

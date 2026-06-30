@@ -33,23 +33,42 @@
       font-size: 15px;
     }
 
-    .topbar {
+    .content {
+      width: min(1440px, calc(100% - 32px));
+      margin: 0 auto;
+    }
+
+    .app-shell {
+      min-height: 100vh;
+      display: grid;
+      grid-template-columns: 240px minmax(0, 1fr);
+      grid-template-rows: auto 1fr;
+    }
+
+    .app-header {
+      grid-column: 1 / -1;
       border-bottom: 1px solid var(--line);
       background: var(--panel);
     }
 
-    .topbar-inner,
-    .content {
+    .app-header-inner {
       width: min(1180px, calc(100% - 32px));
-      margin: 0 auto;
-    }
-
-    .topbar-inner {
       min-height: 68px;
+      margin: 0 auto;
       display: flex;
       align-items: center;
       justify-content: space-between;
       gap: 16px;
+    }
+
+    .sidebar {
+      min-height: calc(100vh - 69px);
+      position: sticky;
+      top: 0;
+      border-right: 1px solid var(--line);
+      background: var(--panel);
+      padding: 16px 12px;
+      align-self: start;
     }
 
     h1 {
@@ -65,11 +84,35 @@
       font-size: 13px;
     }
 
+    .actions,
+    .primary-nav {
+      gap: 8px;
+    }
+
     .actions {
       display: flex;
       flex-wrap: wrap;
       justify-content: flex-end;
-      gap: 8px;
+    }
+
+    .primary-nav {
+      display: grid;
+    }
+
+    .nav-group {
+      border-top: 1px solid var(--line);
+      margin-top: 6px;
+      padding-top: 10px;
+      display: grid;
+      gap: 4px;
+    }
+
+    .nav-group-label {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+      padding: 0 12px 2px;
+      text-transform: uppercase;
     }
 
     button,
@@ -88,6 +131,30 @@
       gap: 8px;
       white-space: nowrap;
       text-decoration: none;
+    }
+
+    .nav-link {
+      min-height: 38px;
+      border-radius: 8px;
+      color: var(--muted);
+      padding: 0 12px;
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+      justify-content: flex-start;
+      white-space: nowrap;
+    }
+
+    .nav-group .nav-link {
+      min-height: 34px;
+      padding-left: 22px;
+    }
+
+    .nav-link:hover,
+    .nav-link.active {
+      background: var(--soft-blue);
+      color: var(--accent);
+      font-weight: 700;
     }
 
     button.primary {
@@ -227,9 +294,9 @@
     }
 
     table {
-      width: 100%;
+      width: max-content;
       border-collapse: collapse;
-      min-width: 860px;
+      min-width: 960px;
     }
 
     th,
@@ -322,10 +389,21 @@
     }
 
     @media (max-width: 860px) {
-      .topbar-inner {
-        align-items: flex-start;
+      .app-shell {
+        display: block;
+      }
+
+      .app-header-inner {
+        align-items: stretch;
         flex-direction: column;
         padding: 14px 0;
+      }
+
+      .sidebar {
+        min-height: 0;
+        position: static;
+        border-right: 0;
+        border-bottom: 1px solid var(--line);
       }
 
       .actions {
@@ -339,27 +417,37 @@
   </style>
 </head>
 <body>
-  <header class="topbar">
-    <div class="topbar-inner">
-      <div>
-        <h1>Usuarios</h1>
-        <div class="subtitle" id="summary">Cargando...</div>
+  <div class="app-shell">
+    <header class="app-header">
+      <div class="app-header-inner">
+        <div>
+          <h1>Usuarios</h1>
+          <div class="subtitle" id="summary">Cargando...</div>
+        </div>
+        <div class="actions">
+          <span id="sessionBadge" class="session-chip">Sesion</span>
+          <button id="logoutBtn" type="button" title="Cerrar sesion">
+            <span aria-hidden="true">&#9211;</span>
+            Salir
+          </button>
+        </div>
       </div>
-      <div class="actions">
-        <a class="button-link" href="/dashboard" title="Volver al monitor">
-          <span aria-hidden="true">&#8592;</span>
-          Volver
-        </a>
-        <span id="sessionBadge" class="session-chip">Sesion</span>
-        <button id="logoutBtn" type="button" title="Cerrar sesion">
-          <span aria-hidden="true">&#9211;</span>
-          Salir
-        </button>
-      </div>
-    </div>
-  </header>
+    </header>
+    <aside class="sidebar">
+      <nav class="primary-nav" aria-label="Navegacion principal">
+        <a class="nav-link" href="/mensajes">Mensajes</a>
+        <a class="nav-link" href="/cola">Cola</a>
+        <div class="nav-group" aria-label="Clientes">
+          <div class="nav-group-label">Clientes</div>
+          <a class="nav-link" href="/phantom/suspendidos">Suspendidos</a>
+          <a class="nav-link" href="/phantom/baja">Baja</a>
+          <a class="nav-link" href="/phantom/activos">Activos</a>
+        </div>
+        <a class="nav-link active" href="/usuarios">Usuarios</a>
+      </nav>
+    </aside>
 
-  <main class="content">
+    <main class="content">
     <section class="layout" aria-label="Gestion de usuarios">
       <section class="panel">
         <div class="panel-head">
@@ -424,7 +512,8 @@
         </div>
       </section>
     </section>
-  </main>
+    </main>
+  </div>
 
   <div class="toast" id="toast"></div>
 

@@ -34,23 +34,42 @@
       font-size: 15px;
     }
 
-    .topbar {
+    .content {
+      width: min(1680px, calc(100% - 32px));
+      margin: 0 auto;
+    }
+
+    .app-shell {
+      min-height: 100vh;
+      display: grid;
+      grid-template-columns: 240px minmax(0, 1fr);
+      grid-template-rows: auto 1fr;
+    }
+
+    .app-header {
+      grid-column: 1 / -1;
       border-bottom: 1px solid var(--line);
       background: var(--panel);
     }
 
-    .topbar-inner,
-    .content {
+    .app-header-inner {
       width: min(1240px, calc(100% - 32px));
-      margin: 0 auto;
-    }
-
-    .topbar-inner {
       min-height: 68px;
+      margin: 0 auto;
       display: flex;
       align-items: center;
       justify-content: space-between;
       gap: 16px;
+    }
+
+    .sidebar {
+      min-height: calc(100vh - 69px);
+      position: sticky;
+      top: 0;
+      border-right: 1px solid var(--line);
+      background: var(--panel);
+      padding: 16px 12px;
+      align-self: start;
     }
 
     h1 {
@@ -66,11 +85,49 @@
     }
 
     .actions,
+    .primary-nav,
+    .table-controls {
+      gap: 8px;
+    }
+
+    .actions {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+
     .table-controls {
       display: flex;
       flex-wrap: wrap;
       justify-content: flex-end;
+    }
+
+    .primary-nav {
+      display: grid;
+    }
+
+    .sidebar-actions {
+      border-top: 1px solid var(--line);
+      margin-top: 12px;
+      padding-top: 12px;
+      display: grid;
       gap: 8px;
+    }
+
+    .nav-group {
+      border-top: 1px solid var(--line);
+      margin-top: 6px;
+      padding-top: 10px;
+      display: grid;
+      gap: 4px;
+    }
+
+    .nav-group-label {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+      padding: 0 12px 2px;
+      text-transform: uppercase;
     }
 
     button,
@@ -93,6 +150,38 @@
       text-decoration: none;
     }
 
+    .nav-link {
+      min-height: 38px;
+      border-radius: 8px;
+      color: var(--muted);
+      padding: 0 12px;
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+      justify-content: flex-start;
+      white-space: nowrap;
+    }
+
+    .nav-group .nav-link {
+      min-height: 34px;
+      padding-left: 22px;
+    }
+
+    .nav-link:hover,
+    .nav-link.active {
+      background: var(--accent-soft);
+      color: var(--accent);
+      font-weight: 700;
+    }
+
+    .session-chip {
+      color: var(--muted);
+      cursor: default;
+      background: #f8fafc;
+      font-size: 13px;
+      font-weight: 700;
+    }
+
     button.primary {
       border-color: var(--accent);
       background: var(--accent);
@@ -113,12 +202,14 @@
     .content {
       padding: 22px 0 32px;
       display: grid;
+      align-content: start;
       gap: 16px;
     }
 
     .status-grid {
       display: grid;
       grid-template-columns: repeat(4, minmax(0, 1fr));
+      align-items: start;
       gap: 12px;
     }
 
@@ -130,7 +221,7 @@
     }
 
     .metric {
-      padding: 14px;
+      padding: 10px 12px;
     }
 
     .metric-label,
@@ -140,7 +231,7 @@
     }
 
     .metric-value {
-      margin-top: 6px;
+      margin-top: 4px;
       font-size: 24px;
       font-weight: 800;
     }
@@ -165,9 +256,9 @@
     }
 
     table {
-      width: 100%;
+      width: max-content;
       border-collapse: collapse;
-      min-width: 1120px;
+      min-width: 1320px;
     }
 
     th,
@@ -176,6 +267,7 @@
       padding: 10px 12px;
       text-align: left;
       vertical-align: top;
+      white-space: nowrap;
     }
 
     th {
@@ -224,7 +316,9 @@
       color: var(--muted);
       font-size: 13px;
       line-height: 1.35;
-      word-break: break-word;
+      white-space: normal;
+      word-break: normal;
+      overflow-wrap: anywhere;
     }
 
     .empty,
@@ -238,7 +332,23 @@
     }
 
     @media (max-width: 760px) {
-      .topbar-inner,
+      .app-shell {
+        display: block;
+      }
+
+      .app-header-inner {
+        align-items: stretch;
+        flex-direction: column;
+        padding: 14px 0;
+      }
+
+      .sidebar {
+        min-height: 0;
+        position: static;
+        border-right: 0;
+        border-bottom: 1px solid var(--line);
+      }
+
       .panel-head {
         align-items: stretch;
         flex-direction: column;
@@ -249,6 +359,10 @@
         justify-content: flex-start;
       }
 
+      .actions {
+        justify-content: stretch;
+      }
+
       .status-grid {
         grid-template-columns: 1fr;
       }
@@ -257,23 +371,37 @@
 </head>
 
 <body>
-  <header class="topbar">
-    <div class="topbar-inner">
-      <div>
-        <h1>Cola de mensajes</h1>
-        <div class="subtitle" id="lastRefresh">Cargando...</div>
+  <div class="app-shell">
+    <header class="app-header">
+      <div class="app-header-inner">
+        <div>
+          <h1>Cola de mensajes</h1>
+          <div class="subtitle" id="lastRefresh">Cargando...</div>
+        </div>
+        <div class="actions">
+          <span id="sessionBadge" class="session-chip">Sesion</span>
+          <button id="logoutBtn" type="button">Salir</button>
+        </div>
       </div>
-      <div class="actions">
-        <a class="button-link" href="/mensajes">Mensajes</a>
-        <a class="button-link" href="/phantom/baja">Clientes baja</a>
-        <span id="sessionBadge" class="session-chip">Sesion</span>
+    </header>
+    <aside class="sidebar">
+      <nav class="primary-nav" aria-label="Navegacion principal">
+        <a class="nav-link" href="/mensajes">Mensajes</a>
+        <a class="nav-link active" href="/cola">Cola</a>
+        <div class="nav-group" aria-label="Clientes">
+          <div class="nav-group-label">Clientes</div>
+          <a class="nav-link" href="/phantom/suspendidos">Suspendidos</a>
+          <a class="nav-link" href="/phantom/baja">Baja</a>
+          <a class="nav-link" href="/phantom/activos">Activos</a>
+        </div>
+        <a id="usersLink" class="nav-link" href="/usuarios" hidden>Usuarios</a>
+      </nav>
+      <div class="sidebar-actions">
         <button id="refreshBtn" class="primary" type="button">Actualizar</button>
-        <button id="logoutBtn" type="button">Salir</button>
       </div>
-    </div>
-  </header>
+    </aside>
 
-  <main class="content">
+    <main class="content">
     <section class="status-grid" aria-label="Resumen">
       <div class="metric">
         <div class="metric-label">Pendientes</div>
@@ -321,7 +449,8 @@
         <div class="empty">Cargando cola...</div>
       </div>
     </section>
-  </main>
+    </main>
+  </div>
 
   <script>
     const state = {
@@ -343,7 +472,8 @@
       sentCount: document.getElementById('sentCount'),
       sessionBadge: document.getElementById('sessionBadge'),
       statusFilter: document.getElementById('statusFilter'),
-      tableWrap: document.getElementById('tableWrap')
+      tableWrap: document.getElementById('tableWrap'),
+      usersLink: document.getElementById('usersLink')
     };
 
     function escapeHtml(value) {
@@ -503,6 +633,7 @@
       const data = await fetchJson('/auth/me');
       state.user = data.user;
       els.sessionBadge.textContent = data.user.name + ' | ' + String(data.user.role || '').toUpperCase();
+      els.usersLink.hidden = data.user.role !== 'admin';
     }
 
     async function loadQueue() {

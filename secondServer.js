@@ -1758,20 +1758,26 @@ async function fetchPhantomConsultaMasivaRows(options = {}) {
         : parseNonNegativeInteger(process.env.PHANTOM_CONSULTA_OFFSET, 0);
     const balanceCC = parsePositiveInteger(process.env.PHANTOM_CONSULTA_BALANCE_CC, 1);
     const compAdeudados = parsePositiveInteger(process.env.PHANTOM_CONSULTA_COMP_ADEUDADOS, 1);
-    const estado = normalizePhantomEstado(
-    options.estado,
+    const allEstados = options.allEstados === true || options.allStates === true;
+    const estado = allEstados ? '' : normalizePhantomEstado(
+      options.estado,
       process.env.PHANTOM_CONSULTA_ESTADO || 'Suspendido'
     );
-    const consultaUrl = buildPhantomUrl(baseUrl, {
+    const consultaParams = {
       action: 'Consulta_Masiva_Datos',
       JSON: 1,
       Desc: desc,
       Limit: limit,
       Offset: offset,
       BalanceCC: balanceCC,
-      CompAdeudados: compAdeudados,
-      Estado: estado
-    });
+      CompAdeudados: compAdeudados
+    };
+
+    if (!allEstados) {
+      consultaParams.Estado = estado;
+    }
+
+    const consultaUrl = buildPhantomUrl(baseUrl, consultaParams);
     const consultaResponse = await fetch(consultaUrl, {
       method: 'POST',
       headers: getPhantomHeaders({
@@ -1799,7 +1805,7 @@ async function fetchPhantomConsultaMasivaRows(options = {}) {
     }
 
     const rawRows = extractPhantomRows(payload);
-    const shouldFilterDebt = estado.toLowerCase() !== 'baja';
+    const shouldFilterDebt = !allEstados && estado.toLowerCase() !== 'baja';
     const rows = formatPhantomClientRows(rawRows, {
       filterDebt: shouldFilterDebt
     });
@@ -1822,17 +1828,21 @@ async function fetchPhantomConsultaMasivaRows(options = {}) {
 async function handlePhantomConsultaMasiva(req, res) {
   try {
     const requestBody = req.body && typeof req.body === 'object' ? req.body : {};
-    const estado = normalizePhantomEstado(
-      req.query.estado ?? requestBody.estado,
-      process.env.PHANTOM_CONSULTA_ESTADO || 'Suspendido'
-    );
+    const rawEstado = req.query.estado ?? requestBody.estado;
+    const estado = rawEstado === undefined || rawEstado === null
+      ? ''
+      : normalizePhantomEstado(rawEstado, '');
     const requestedLimit = req.query.limit ?? requestBody.limit;
     const requestedOffset = req.query.offset ?? requestBody.offset;
     const requestedPage = req.query.page ?? requestBody.page;
     const sortKey = req.query.sortKey ?? requestBody.sortKey;
     const sortDirection = req.query.sortDirection ?? requestBody.sortDirection;
+    const excludeEstados = String(req.query.excludeEstados ?? requestBody.excludeEstados ?? '')
+      .split(',')
+      .map(item => item.trim())
+      .filter(Boolean);
 
-    if (estado.toLowerCase() === 'baja') {
+    if (estado || excludeEstados.length) {
       const defaultLimit = parsePositiveInteger(process.env.PHANTOM_CONSULTA_LIMIT, 10);
       const limit = Math.min(parsePositiveInteger(requestedLimit, defaultLimit), 500);
       const page = parsePositiveInteger(requestedPage, 0);
@@ -1842,6 +1852,8 @@ async function handlePhantomConsultaMasiva(req, res) {
           ? (page - 1) * limit
           : 0;
       const result = await listPhantomBajaClients({
+        estado,
+        excludeEstados,
         limit,
         offset,
         sortKey,
@@ -1861,6 +1873,7 @@ async function handlePhantomConsultaMasiva(req, res) {
           hasNextPage: result.hasNextPage
         },
         estado,
+        excludeEstados,
         source: 'db',
         sync: {
           ...phantomBajaSyncState,
@@ -1963,7 +1976,7 @@ async function syncPhantomBajaClients(reason = 'scheduled') {
   phantomBajaSyncState.running = true;
   phantomBajaSyncState.lastRunStartedAt = nowIso();
   phantomBajaSyncState.lastError = null;
-  console.log(`[PHANTOM BAJA] Sincronizando clientes baja (${reason})`);
+  console.log(`[PHANTOM] Sincronizando clientes (${reason})`);
 
   const startedAt = new Date();
   const allRows = [];
@@ -1973,7 +1986,7 @@ async function syncPhantomBajaClients(reason = 'scheduled') {
   try {
     while (true) {
       const result = await fetchPhantomConsultaMasivaRows({
-        estado: 'Baja',
+        allEstados: true,
         limit: phantomBajaSyncLimit,
         offset
       });
@@ -1987,7 +2000,7 @@ async function syncPhantomBajaClients(reason = 'scheduled') {
       page += 1;
 
       if (page > 10000) {
-        throw new Error('Corte de seguridad: demasiadas paginas sincronizando Baja');
+        throw new Error('Corte de seguridad: demasiadas paginas sincronizando clientes Phantom');
       }
     }
 
@@ -2002,14 +2015,14 @@ async function syncPhantomBajaClients(reason = 'scheduled') {
 
     phantomBajaSyncState.lastResult = result;
     phantomBajaSyncState.lastError = null;
-    console.log(`[PHANTOM BAJA] Sincronizacion completa: ${saved} registros en ${page} pagina(s)`);
+    console.log(`[PHANTOM] Sincronizacion completa: ${saved} registros en ${page} pagina(s)`);
     return result;
   } catch (error) {
     phantomBajaSyncState.lastError = {
       message: error.message,
       at: nowIso()
     };
-    console.error('[PHANTOM BAJA] Error sincronizando:', error);
+    console.error('[PHANTOM] Error sincronizando:', error);
     throw error;
   } finally {
     phantomBajaSyncState.lastRunFinishedAt = nowIso();
@@ -2037,7 +2050,7 @@ function scheduleNextPhantomBajaSync() {
 function startPhantomBajaSyncScheduler() {
   phantomBajaSyncState.active = true;
   scheduleNextPhantomBajaSync();
-  console.log(`Sync clientes Baja activo todos los dias a las ${String(phantomBajaSyncHour).padStart(2, '0')}:${String(phantomBajaSyncMinute).padStart(2, '0')}.`);
+  console.log(`Sync clientes Phantom activo todos los dias a las ${String(phantomBajaSyncHour).padStart(2, '0')}:${String(phantomBajaSyncMinute).padStart(2, '0')}.`);
 }
 
 function listAvailableSecondUserGroups() {
@@ -2257,6 +2270,14 @@ app.get('/phantom', requireLoggedIn, (req, res) => {
 });
 
 app.get('/phantom/suspendidos', requireLoggedIn, (req, res) => {
+  sendHtmlFile(res, 'phantom.html');
+});
+
+app.get('/phantom/activos', requireLoggedIn, (req, res) => {
+  sendHtmlFile(res, 'phantom.html');
+});
+
+app.get('/phantom/clientes', requireLoggedIn, (req, res) => {
   sendHtmlFile(res, 'phantom.html');
 });
 
@@ -2634,8 +2655,8 @@ initializeWhatsAppClient().catch(() => { });
 startSecondMessageQueueScheduler();
 startPhantomBajaSyncScheduler();
 syncPhantomBajaClients('startup')
-  .then(result => console.log('[PHANTOM BAJA] Corrida inicial:', result))
-  .catch(error => console.error('[PHANTOM BAJA] Error corrida inicial:', error));
+  .then(result => console.log('[PHANTOM] Corrida inicial:', result))
+  .catch(error => console.error('[PHANTOM] Error corrida inicial:', error));
 processSecondMessageQueue()
   .then(result => console.log('[QUEUE] Corrida inicial:', result))
   .catch(error => console.error('[QUEUE] Error corrida inicial:', error));

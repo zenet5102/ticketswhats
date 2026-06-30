@@ -36,23 +36,42 @@
       font-size: 15px;
     }
 
-    .topbar {
+    .content {
+      width: min(1680px, calc(100% - 32px));
+      margin: 0 auto;
+    }
+
+    .app-shell {
+      min-height: 100vh;
+      display: grid;
+      grid-template-columns: 240px minmax(0, 1fr);
+      grid-template-rows: auto 1fr;
+    }
+
+    .app-header {
+      grid-column: 1 / -1;
       border-bottom: 1px solid var(--line);
       background: var(--panel);
     }
 
-    .topbar-inner,
-    .content {
-      width: min(1240px, calc(100% - 32px));
-      margin: 0 auto;
-    }
-
-    .topbar-inner {
+    .app-header-inner {
+      width: min(1680px, calc(100% - 32px));
       min-height: 68px;
+      margin: 0 auto;
       display: flex;
       align-items: center;
       justify-content: space-between;
       gap: 16px;
+    }
+
+    .sidebar {
+      min-height: calc(100vh - 69px);
+      position: sticky;
+      top: 0;
+      border-right: 1px solid var(--line);
+      background: var(--panel);
+      padding: 16px 12px;
+      align-self: start;
     }
 
     h1 {
@@ -67,16 +86,39 @@
       font-size: 13px;
     }
 
+    .actions,
+    .primary-nav {
+      gap: 8px;
+    }
+
     .actions {
       display: flex;
       flex-wrap: wrap;
       justify-content: flex-end;
-      gap: 8px;
+    }
+
+    .primary-nav {
+      display: grid;
+    }
+
+    .nav-group {
+      border-top: 1px solid var(--line);
+      margin-top: 6px;
+      padding-top: 10px;
+      display: grid;
+      gap: 4px;
+    }
+
+    .nav-group-label {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+      padding: 0 12px 2px;
+      text-transform: uppercase;
     }
 
     button,
-    .button-like,
-    .nav-trigger {
+    .button-like {
       min-height: 38px;
       border: 1px solid var(--line);
       border-radius: 8px;
@@ -93,50 +135,36 @@
       text-decoration: none;
     }
 
-    .nav-dropdown {
-      position: relative;
-    }
-
-    .nav-trigger {
-      list-style: none;
-    }
-
-    .nav-trigger::-webkit-details-marker {
-      display: none;
-    }
-
-    .nav-menu {
-      position: absolute;
-      top: calc(100% + 6px);
-      right: 0;
-      min-width: 180px;
-      border: 1px solid var(--line);
+    .nav-link {
+      min-height: 38px;
       border-radius: 8px;
-      background: var(--panel);
-      box-shadow: 0 12px 24px rgba(15, 23, 42, 0.12);
-      padding: 6px;
-      display: grid;
-      gap: 4px;
-      z-index: 5;
-    }
-
-    .nav-dropdown:not([open]) .nav-menu {
-      display: none;
-    }
-
-    .nav-menu a {
-      min-height: 34px;
-      border-radius: 6px;
-      padding: 7px 9px;
-      color: var(--text);
+      color: var(--muted);
+      padding: 0 12px;
       text-decoration: none;
-      display: flex;
+      display: inline-flex;
       align-items: center;
+      justify-content: flex-start;
+      white-space: nowrap;
     }
 
-    .nav-menu a:hover {
+    .nav-group .nav-link {
+      min-height: 34px;
+      padding-left: 22px;
+    }
+
+    .nav-link:hover,
+    .nav-link.active {
       background: var(--accent-soft);
       color: var(--accent);
+      font-weight: 700;
+    }
+
+    .session-chip {
+      color: var(--muted);
+      cursor: default;
+      background: #f8fafc;
+      font-size: 13px;
+      font-weight: 700;
     }
 
     button.primary {
@@ -204,6 +232,20 @@
       padding: 14px;
     }
 
+    .metric-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 12px;
+    }
+
+    .metric-actions button {
+      min-height: 34px;
+      flex: 1 1 110px;
+      padding: 0 10px;
+      font-size: 13px;
+    }
+
     .metric-label {
       color: var(--muted);
       font-size: 12px;
@@ -262,7 +304,7 @@
 
     .layout {
       display: grid;
-      grid-template-columns: 330px minmax(0, 1fr);
+      grid-template-columns: 380px minmax(0, 1fr);
       gap: 14px;
       align-items: start;
     }
@@ -525,10 +567,21 @@
     }
 
     @media (max-width: 900px) {
-      .topbar-inner {
+      .app-shell {
+        display: block;
+      }
+
+      .app-header-inner {
         align-items: stretch;
         flex-direction: column;
         padding: 14px 0;
+      }
+
+      .sidebar {
+        min-height: 0;
+        position: static;
+        border-right: 0;
+        border-bottom: 1px solid var(--line);
       }
 
       .actions {
@@ -536,15 +589,8 @@
       }
 
       .actions button,
-      .actions .button-like,
-      .actions .nav-dropdown,
-      .actions .nav-trigger {
+      .actions .button-like {
         flex: 1 1 calc(50% - 8px);
-      }
-
-      .nav-menu {
-        left: 0;
-        right: 0;
       }
 
       .status-grid,
@@ -563,9 +609,8 @@
 
     @media (max-width: 520px) {
 
-      .topbar-inner,
       .content {
-        width: min(100% - 20px, 1240px);
+        width: min(100% - 20px, 1680px);
       }
 
       .new-chat {
@@ -616,37 +661,44 @@
 </head>
 
 <body>
-  <header class="topbar">
-    <div class="topbar-inner">
-      <div>
-        <h1>WhatsApp 2</h1>
-        <div class="subtitle" id="lastRefresh">Cargando...</div>
+  <div class="app-shell">
+    <header class="app-header">
+      <div class="app-header-inner">
+        <div>
+          <h1>WhatsApp 2</h1>
+          <div class="subtitle" id="lastRefresh">Cargando...</div>
+        </div>
+        <div class="actions">
+          <span id="sessionBadge" class="button-like session-chip">Sesion</span>
+          <button id="logoutBtn" type="button">Salir</button>
+        </div>
       </div>
-      <div class="actions">
-        <span id="sessionBadge" class="button-like">Sesion</span>
-        <a id="usersLink" class="button-like" href="/usuarios" hidden>Usuarios</a>
-        <a class="button-like" href="/cola">Cola</a>
-        <details class="nav-dropdown">
-          <summary class="nav-trigger">Clientes</summary>
-          <div class="nav-menu">
-            <a href="/phantom/suspendidos">Suspendidos</a>
-            <a href="/phantom/baja">Baja</a>
-          </div>
-        </details>
-        <button id="refreshBtn" type="button">Actualizar</button>
-        <button id="reconnectBtn" type="button">Reconectar</button>
-        <button id="resetAuthBtn" class="danger" type="button">Reset QR</button>
-        <button id="logoutBtn" type="button">Salir</button>
-      </div>
-    </div>
-  </header>
+    </header>
+    <aside class="sidebar">
+      <nav class="primary-nav" aria-label="Navegacion principal">
+        <a class="nav-link active" href="/mensajes">Mensajes</a>
+        <a class="nav-link" href="/cola">Cola</a>
+        <div class="nav-group" aria-label="Clientes">
+          <div class="nav-group-label">Clientes</div>
+          <a class="nav-link" href="/phantom/suspendidos">Suspendidos</a>
+          <a class="nav-link" href="/phantom/baja">Baja</a>
+          <a class="nav-link" href="/phantom/activos">Activos</a>
+        </div>
+        <a id="usersLink" class="nav-link" href="/usuarios" hidden>Usuarios</a>
+      </nav>
+    </aside>
 
-  <main class="content">
+    <main class="content">
     <section class="status-grid" aria-label="Estado">
       <div class="metric">
         <div class="metric-label">WhatsApp</div>
         <div class="metric-value" id="whatsappState">--</div>
         <div class="metric-detail" id="whatsappDetail">--</div>
+        <div class="metric-actions" aria-label="Acciones de conexion">
+          <button id="refreshBtn" type="button">Actualizar</button>
+          <button id="reconnectBtn" type="button">Reconectar</button>
+          <button id="resetAuthBtn" class="danger" type="button">Reset QR</button>
+        </div>
       </div>
       <div class="metric">
         <div class="metric-label">MySQL</div>
@@ -707,7 +759,8 @@
         </form>
       </section>
     </section>
-  </main>
+    </main>
+  </div>
   <div id="imageModal" class="modal">
     <span class="close" onclick="closeImageModal()">&times;</span>
     <img id="modalImage" class="modal-content">
