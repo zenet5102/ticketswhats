@@ -1921,6 +1921,7 @@ async function handlePhantomConsultaMasiva(req, res) {
     const requestedPage = req.query.page ?? requestBody.page;
     const sortKey = req.query.sortKey ?? requestBody.sortKey;
     const sortDirection = req.query.sortDirection ?? requestBody.sortDirection;
+    const search = req.query.search ?? requestBody.search;
     const excludeEstados = String(req.query.excludeEstados ?? requestBody.excludeEstados ?? '')
       .split(',')
       .map(item => item.trim())
@@ -1938,6 +1939,7 @@ async function handlePhantomConsultaMasiva(req, res) {
       const result = await listPhantomBajaClients({
         estado,
         excludeEstados,
+        search,
         limit,
         offset,
         sortKey,

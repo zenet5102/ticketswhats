@@ -1180,6 +1180,7 @@ async function listPhantomBajaClients(options = {}) {
   const sortKey = String(options.sortKey || '').trim();
   const sortDirection = String(options.sortDirection || '').toLowerCase() === 'asc' ? 'ASC' : 'DESC';
   const estado = String(options.estado || '').trim();
+  const search = String(options.search || '').trim();
   const excludeEstados = Array.isArray(options.excludeEstados)
     ? options.excludeEstados.map(item => String(item || '').trim()).filter(Boolean)
     : [];
@@ -1205,6 +1206,32 @@ async function listPhantomBajaClients(options = {}) {
   if (excludeEstados.length) {
     whereParts.push(`(estado IS NULL OR estado = '' OR estado NOT IN (${excludeEstados.map(() => '?').join(', ')}))`);
     params.push(...excludeEstados);
+  }
+
+  if (search) {
+    const terms = search.split(/\s+/).map(item => item.trim()).filter(Boolean).slice(0, 6);
+
+    for (const term of terms) {
+      const like = `%${term}%`;
+      whereParts.push(`(
+        id LIKE ?
+        OR razon_social LIKE ?
+        OR apellido LIKE ?
+        OR nombre LIKE ?
+        OR documento LIKE ?
+        OR cuit LIKE ?
+        OR movil LIKE ?
+        OR telefono LIKE ?
+        OR email LIKE ?
+        OR direccion LIKE ?
+        OR ciudad LIKE ?
+        OR estado LIKE ?
+        OR id_externo LIKE ?
+        OR usuario LIKE ?
+        OR raw_json LIKE ?
+      )`);
+      params.push(like, like, like, like, like, like, like, like, like, like, like, like, like, like, like);
+    }
   }
 
   const whereSql = whereParts.length ? `WHERE ${whereParts.join(' AND ')}` : '';

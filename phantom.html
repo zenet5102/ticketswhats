@@ -714,6 +714,8 @@
       sortIndex: -1,
       sortDirection: 'asc',
       searchQuery: '',
+      searchTimer: null,
+      totalRows: 0,
       activeEstado: window.location.pathname.toLowerCase().includes('/baja')
         ? 'Baja'
         : window.location.pathname.toLowerCase().includes('/activos') || window.location.pathname.toLowerCase().includes('/clientes')
@@ -905,18 +907,7 @@
     }
 
     function getFilteredRows() {
-      const query = normalizeSearchText(state.searchQuery);
-
-      if (!query) {
-        return state.rows.slice();
-      }
-
-      const terms = query.split(/\s+/).filter(Boolean);
-
-      return state.rows.filter(row => {
-        const text = getRowSearchText(row);
-        return terms.every(term => text.includes(term));
-      });
+      return state.rows.slice();
     }
 
     function getSortedRows() {
@@ -939,7 +930,6 @@
     }
 
     function renderPagination() {
-      const total = getFilteredRows().length;
       const page = getPageNumber();
       els.pageBadge.textContent = 'Pagina ' + page;
       els.prevPageBtn.disabled = state.loading || state.offset <= 0;
@@ -1864,15 +1854,12 @@
       clampOffset();
 
       const visibleRows = getVisibleRows();
-      const filteredTotal = getFilteredRows().length;
-      const total = state.rows.length;
+      const total = Number(state.totalRows || state.rows.length);
       const page = getPageNumber();
       const rangeStart = visibleRows.length ? state.offset + 1 : 0;
       const rangeEnd = state.offset + visibleRows.length;
 
-      els.rowCount.textContent = state.searchQuery
-        ? String(filteredTotal) + '/' + String(total)
-        : String(total);
+      els.rowCount.textContent = String(total);
       els.rowDetail.textContent = visibleRows.length
         ? `Estado ${state.activeEstado} | Pagina ${page} | ${rangeStart}-${rangeEnd}`
         : state.searchQuery
@@ -2145,6 +2132,10 @@
           params.set('estado', state.activeEstado);
         }
 
+        if (state.searchQuery.trim()) {
+          params.set('search', state.searchQuery.trim());
+        }
+
         if (sortColumn && sortColumn.sortKey) {
           params.set('sortKey', sortColumn.sortKey);
           params.set('sortDirection', state.sortDirection);
@@ -2155,6 +2146,7 @@
         });
 
         state.rows = data.rows || [];
+        state.totalRows = Number(data.pagination && data.pagination.total || state.rows.length);
         state.hasNextPage = Boolean(data.pagination && data.pagination.hasNextPage);
         els.statusValue.textContent = 'OK';
         els.statusDetail.textContent = 'Consulta ' + (data.estado || state.activeEstado);
@@ -2354,7 +2346,12 @@
     els.clientSearch.addEventListener('input', () => {
       state.searchQuery = els.clientSearch.value;
       state.offset = 0;
-      renderCurrentPage();
+      clearTimeout(state.searchTimer);
+      state.searchTimer = setTimeout(() => {
+        loadData(0).catch(error => {
+          els.errorText.textContent = error.message;
+        });
+      }, 250);
     });
     els.newTemplateBtn.addEventListener('click', startNewTemplate);
     els.deleteTemplateBtn.addEventListener('click', () => {
