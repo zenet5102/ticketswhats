@@ -479,7 +479,7 @@
     table {
       width: max-content;
       border-collapse: collapse;
-      min-width: 1760px;
+      min-width: 1880px;
     }
 
     th,
@@ -720,6 +720,7 @@
           ? 'Activo'
           : 'Suspendido',
       hasNextPage: false,
+      napChecks: new Map(),
       whatsappChecks: new Map()
     };
 
@@ -827,6 +828,12 @@
         keys: [],
         value: row => getWhatsAppCheckText(row),
         render: (row, index) => renderWhatsAppCheck(row, index)
+      },
+      {
+        label: 'NAP',
+        keys: [],
+        value: row => getNapCheckText(row),
+        render: (row, index) => renderNapCheck(row, index)
       },
       {
         label: 'Encolar',
@@ -1365,6 +1372,186 @@
       return check.exists ? 'Existe' : 'No existe';
     }
 
+    function getNapCheckKey(row) {
+      const id = getRowId(row);
+      return id ? 'client:' + id : '';
+    }
+
+    function getNapCheckText(row) {
+      const key = getNapCheckKey(row);
+      const check = key ? state.napChecks.get(key) : null;
+
+      if (!key) {
+        return 'Sin ID';
+      }
+
+      if (!check) {
+        return 'Sin verificar';
+      }
+
+      if (check.loading) {
+        return 'Consultando';
+      }
+
+      if (check.error) {
+        return 'Error';
+      }
+
+      return check.summary || 'OK';
+    }
+
+    function firstPayloadObject(value) {
+      if (Array.isArray(value)) {
+        return value.find(item => item && typeof item === 'object' && !Array.isArray(item)) || {};
+      }
+
+      if (value && typeof value === 'object') {
+        const candidates = [
+          value.data,
+          value.result,
+          value.resultado,
+          value.response,
+          value.respuesta,
+          value.cliente,
+          value.Cliente
+        ];
+
+        for (const candidate of candidates) {
+          const nested = firstPayloadObject(candidate);
+
+          if (nested && Object.keys(nested).length) {
+            return nested;
+          }
+        }
+
+        return value;
+      }
+
+      return {};
+    }
+
+    function getPayloadField(payload, keys) {
+      const row = firstPayloadObject(payload);
+
+      for (const key of keys) {
+        if (row[key] !== undefined && row[key] !== null && row[key] !== '') {
+          return String(row[key]).trim();
+        }
+      }
+
+      return '';
+    }
+
+    function getExplicitField(row, keys) {
+      if (!row || typeof row !== 'object' || Array.isArray(row)) {
+        return { exists: false, value: '' };
+      }
+
+      for (const key of keys) {
+        if (Object.prototype.hasOwnProperty.call(row, key)) {
+          return {
+            exists: true,
+            value: row[key] === undefined || row[key] === null ? '' : String(row[key]).trim()
+          };
+        }
+      }
+
+      return { exists: false, value: '' };
+    }
+
+    function isEmptyNapBox(value) {
+      const text = String(value === undefined || value === null ? '' : value).trim();
+      return !text || text === '-';
+    }
+
+    function getRowNapBox(row) {
+      return getExplicitField(row, ['ID_Caja_NAP', 'idCajaNap', 'id_caja_nap']);
+    }
+
+    function extractNapTotal(detail) {
+      const match = String(detail || '').match(/Total\s*:\s*([0-9]+)/i);
+      return match ? match[1] : '';
+    }
+
+    function summarizeNapPayload(payload) {
+      const detail = getPayloadField(payload, ['Estado_Nap_Detalle', 'Estado_NAP_Detalle', 'estadoNapDetalle']);
+      const total = extractNapTotal(detail);
+      const caja = getPayloadField(payload, ['ID_Caja_NAP', 'idCajaNap']);
+      const boca = getPayloadField(payload, ['Boca_Caja_NAP', 'bocaCajaNap']);
+      const nap = getPayloadField(payload, ['NAP_Nomenclatura', 'NAP_Alias', 'napNomenclatura', 'napAlias']);
+      const estado = getPayloadField(payload, ['Estado_NAP', 'estadoNap']);
+
+      if (isEmptyNapBox(caja)) {
+        return {
+          summary: 'No tiene caja',
+          detail: '',
+          total,
+          caja: '',
+          boca,
+          nap,
+          estado
+        };
+      }
+
+      const main = [
+        nap || (caja ? 'Caja ' + caja : ''),
+        boca ? 'Puerto asignado ' + boca : '',
+        total ? 'Total en caja ' + total : ''
+      ].filter(Boolean).join(' | ');
+
+      return {
+        summary: main || estado || 'Sin datos NAP',
+        detail: detail || estado || '',
+        total,
+        caja,
+        boca,
+        nap,
+        estado
+      };
+    }
+
+    function renderNapCheck(row, index) {
+      const id = getRowId(row);
+
+      if (!id) {
+        return '<span class="badge bad">Sin ID</span>';
+      }
+
+      const rowCaja = getRowNapBox(row);
+
+      if (rowCaja.exists && isEmptyNapBox(rowCaja.value)) {
+        return '<span class="badge">No tiene caja</span>';
+      }
+
+      const key = getNapCheckKey(row);
+      const check = state.napChecks.get(key);
+
+      if (check && check.loading) {
+        return '<button type="button" disabled>Consultando</button>';
+      }
+
+      if (check && check.error) {
+        return '<button type="button" data-check-nap-index="' + index + '">Reintentar</button>' +
+          '<div class="queue-item-detail">' + escapeHtml(check.error) + '</div>';
+      }
+
+      if (check) {
+        const badgeClass = 'badge ' + (check.total ? 'good' : '');
+
+        if (check.caja) {
+          const href = 'http://192.168.200.14:5594/Phantom/Includes/reportes.php?Reporte=Abonados_porNAP&IDN=' +
+            encodeURIComponent(check.caja);
+          return '<a class="' + badgeClass + '" href="' + escapeHtml(href) + '" target="_blank" rel="noopener noreferrer">' +
+            escapeHtml(check.summary || 'OK') +
+            '</a>';
+        }
+
+        return '<span class="' + badgeClass + '">' + escapeHtml(check.summary || 'OK') + '</span>';
+      }
+
+      return '<button type="button" data-check-nap-index="' + index + '">Ver NAP</button>';
+    }
+
     function renderWhatsAppCheck(row, index) {
       const phone = getRowChatPhone(row);
 
@@ -1453,6 +1640,7 @@
       const enqueueIndex = activeColumns.findIndex(column => column.label === 'Encolar');
       const chatIndex = activeColumns.findIndex(column => column.label === 'Chat');
       const whatsappIndex = activeColumns.findIndex(column => column.label === 'WhatsApp');
+      const napIndex = activeColumns.findIndex(column => column.label === 'NAP');
 
       if (enqueueIndex >= 0 && tableRow.children[enqueueIndex]) {
         tableRow.children[enqueueIndex].innerHTML = renderQueueAction(row, index);
@@ -1473,6 +1661,15 @@
 
         if (button) {
           attachWhatsAppCheckButton(button, rows);
+        }
+      }
+
+      if (napIndex >= 0 && tableRow.children[napIndex]) {
+        tableRow.children[napIndex].innerHTML = renderNapCheck(row, index);
+        const button = tableRow.children[napIndex].querySelector('button[data-check-nap-index]');
+
+        if (button) {
+          attachNapCheckButton(button, rows);
         }
       }
     }
@@ -1603,6 +1800,10 @@
 
       els.resultWrap.querySelectorAll('button[data-check-whatsapp-index]').forEach(button => {
         attachWhatsAppCheckButton(button, rows);
+      });
+
+      els.resultWrap.querySelectorAll('button[data-check-nap-index]').forEach(button => {
+        attachNapCheckButton(button, rows);
       });
 
       els.resultWrap.querySelectorAll('input[data-mobile-index]').forEach(input => {
@@ -2001,11 +2202,62 @@
       renderCurrentPage();
     }
 
+    async function checkNapRow(row, button, rows) {
+      const id = getRowId(row);
+
+      if (!id) {
+        return;
+      }
+
+      const rowCaja = getRowNapBox(row);
+      const key = getNapCheckKey(row);
+
+      if (rowCaja.exists && isEmptyNapBox(rowCaja.value)) {
+        state.napChecks.set(key, {
+          loading: false,
+          summary: 'No tiene caja',
+          caja: ''
+        });
+        renderCurrentPage();
+        return;
+      }
+
+      state.napChecks.set(key, { loading: true });
+      renderCurrentPage();
+
+      try {
+        const params = new URLSearchParams({ IDA: id });
+        const data = await fetchJson('/api/phantom/cliente-avanzada?' + params.toString());
+        const summary = summarizeNapPayload(data.data);
+        state.napChecks.set(key, {
+          loading: false,
+          ...summary
+        });
+      } catch (error) {
+        state.napChecks.set(key, {
+          loading: false,
+          error: error.message
+        });
+      }
+
+      renderCurrentPage();
+    }
+
     function attachWhatsAppCheckButton(button, rows) {
       button.addEventListener('click', () => {
         const index = Number.parseInt(button.dataset.checkWhatsappIndex, 10);
         const row = rows[index];
         checkWhatsAppRow(row, button, rows).catch(error => {
+          els.queueStatus.textContent = error.message;
+        });
+      });
+    }
+
+    function attachNapCheckButton(button, rows) {
+      button.addEventListener('click', () => {
+        const index = Number.parseInt(button.dataset.checkNapIndex, 10);
+        const row = rows[index];
+        checkNapRow(row, button, rows).catch(error => {
           els.queueStatus.textContent = error.message;
         });
       });

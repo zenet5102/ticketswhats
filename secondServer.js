@@ -1825,6 +1825,90 @@ async function fetchPhantomConsultaMasivaRows(options = {}) {
   };
 }
 
+function assertRequiredPhantomValue(value, label) {
+  const text = String(value === undefined || value === null ? '' : value).trim();
+
+  if (!text) {
+    throw new Error(`Falta ${label}`);
+  }
+
+  return text;
+}
+
+function assertPhantomNumberValue(value, label) {
+  const text = assertRequiredPhantomValue(value, label);
+  const parsed = Number(String(text).replace(',', '.'));
+
+  if (!Number.isFinite(parsed)) {
+    throw new Error(`${label} invalido`);
+  }
+
+  return text;
+}
+
+async function fetchPhantomAction(action, options = {}) {
+  const { baseUrl, token } = await createPhantomToken();
+  const params = {
+    action,
+    token,
+    ...(options.query || {})
+  };
+  const phantomUrl = buildPhantomUrl(baseUrl, params);
+  const fetchOptions = {
+    method: options.method || 'POST',
+    headers: getPhantomHeaders({
+      Accept: 'application/json',
+      'Content-Type': 'application/json',
+      ...(options.headers || {})
+    })
+  };
+
+  if (fetchOptions.method !== 'GET') {
+    fetchOptions.body = JSON.stringify(options.body || {});
+  }
+
+  const response = await fetch(phantomUrl, fetchOptions);
+  const text = await response.text();
+
+  if (!response.ok) {
+    throw new Error(`Error consultando Phantom: ${formatPhantomError(response.status, text)}`);
+  }
+
+  const payload = parsePhantomPayload(text);
+  const phantomCode = payload && typeof payload === 'object' ? Number(payload.code) : NaN;
+
+  if (Number.isFinite(phantomCode) && phantomCode >= 400) {
+    throw new Error(`Error consultando Phantom: ${payload.message || payload.error || payload.msg || `code ${payload.code}`}`);
+  }
+
+  return payload;
+}
+
+async function fetchPhantomNapAvailability(options = {}) {
+  return fetchPhantomAction('Consultar_Disponibilidad_NAP', {
+    method: 'POST',
+    body: {
+      Latitud: assertPhantomNumberValue(options.latitud ?? options.Latitud, 'Latitud'),
+      Longitud: assertPhantomNumberValue(options.longitud ?? options.Longitud, 'Longitud'),
+      DistanciaDrop: assertPhantomNumberValue(options.distanciaDrop ?? options.DistanciaDrop, 'DistanciaDrop')
+    }
+  });
+}
+
+async function fetchPhantomAdvancedClient(options = {}) {
+  const ida = assertRequiredPhantomValue(options.ida ?? options.IDA ?? options.id ?? options.cliente, 'IDA');
+
+  return fetchPhantomAction('Consulta_Cliente_Avanzada', {
+    method: 'POST',
+    query: {
+      JSON: 1,
+      IDA: ida,
+      InfoFTTH: 1,
+      ImporteProductos: 1
+    }
+  });
+}
+
 async function handlePhantomConsultaMasiva(req, res) {
   try {
     const requestBody = req.body && typeof req.body === 'object' ? req.body : {};
@@ -2574,6 +2658,48 @@ app.post('/api/messages/send', requirePrivileged, async (req, res) => {
 
 app.get('/api/phantom/consulta-masiva', requireLoggedIn, handlePhantomConsultaMasiva);
 app.post('/api/phantom/consulta-masiva', requireLoggedIn, handlePhantomConsultaMasiva);
+app.post('/api/phantom/disponibilidad-nap', requireLoggedIn, async (req, res) => {
+  try {
+    res.json({
+      success: true,
+      data: await fetchPhantomNapAvailability(req.body || {}),
+      receivedAt: new Date().toISOString()
+    });
+  } catch (error) {
+    res.status(400).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+app.get('/api/phantom/cliente-avanzada', requireLoggedIn, async (req, res) => {
+  try {
+    res.json({
+      success: true,
+      data: await fetchPhantomAdvancedClient(req.query || {}),
+      receivedAt: new Date().toISOString()
+    });
+  } catch (error) {
+    res.status(400).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+app.post('/api/phantom/cliente-avanzada', requireLoggedIn, async (req, res) => {
+  try {
+    res.json({
+      success: true,
+      data: await fetchPhantomAdvancedClient(req.body || {}),
+      receivedAt: new Date().toISOString()
+    });
+  } catch (error) {
+    res.status(400).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
 app.get('/api/phantom/baja/sync-status', requireLoggedIn, async (req, res) => {
   try {
     res.json({
