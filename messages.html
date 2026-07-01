@@ -1440,6 +1440,28 @@
       els.replyMessage.focus();
     }
 
+    function applyInitialComposerParams() {
+      const params = new URLSearchParams(window.location.search);
+      const phone = params.get('phone') || params.get('telefono') || params.get('movil') || '';
+      const message = params.get('message') || params.get('template') || params.get('msg') || '';
+
+      if (phone) {
+        els.phoneInput.value = phone;
+        const normalizedPhone = normalizeNewChatPhone(phone);
+
+        if (normalizedPhone) {
+          state.selectedChatId = `${normalizedPhone}@c.us`;
+          renderChatHeader(null);
+          renderMessages([]);
+          setComposerEnabled(true);
+        }
+      }
+
+      if (message) {
+        els.replyMessage.value = message;
+      }
+    }
+
     async function sendReply(event) {
       event.preventDefault();
 
@@ -1517,6 +1539,7 @@
         return;
       }
 
+      applyInitialComposerParams();
       refreshAll();
       setInterval(refreshAll, 3000);
     }

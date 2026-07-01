@@ -1,6 +1,7 @@
 const { config } = require('./config');
 const {
   closeDb,
+  getNextAutomaticMessageTemplate,
   getNextTicket,
   listTickets,
   markMessageError,
@@ -19,7 +20,8 @@ const {
   isInProcessStatus,
   isResolvedStatus
 } = require('./ticketApi');
-const { getMessageTemplate, isAutomaticReminderEnabled } = require('./settings');
+const { getMessageTemplate, getTicketResponseQuestion, isAutomaticReminderEnabled } = require('./settings');
+const { formatQuestionText } = require('./ticketResponseFlow');
 
 let cycleRunning = false;
 const schedulerState = {
@@ -60,6 +62,15 @@ function renderMessage(template, nextTicket, currentTicket) {
   return String(template).replace(/\{([a-zA-Z0-9_]+)\}/g, (match, key) => {
     return values[key] === undefined || values[key] === null ? match : String(values[key]);
   });
+}
+
+function getAutomaticMessageDefaultBody() {
+  const baseMessage = getMessageTemplate();
+  const questionText = formatQuestionText(getTicketResponseQuestion());
+
+  return questionText && !baseMessage.includes(questionText)
+    ? `${baseMessage}\n\n${questionText}`
+    : baseMessage;
 }
 
 function isTicketSpecificSendError(error) {
@@ -300,7 +311,8 @@ async function notifyNextTicket(currentTicket, options = {}) {
     };
   }
 
-  const message = renderMessage(getMessageTemplate(), nextTicket, currentTicket);
+  const messageTemplate = options.messageTemplate || getMessageTemplate();
+  const message = renderMessage(messageTemplate, nextTicket, currentTicket);
 
   try {
     await options.sendWhatsApp(nextTicket.phone, message, 'ticket', {
@@ -615,11 +627,13 @@ async function runTicketCycle(options = {}) {
 
   try {
     const date = options.date || getTodayDateString();
+    const messageTemplate = getNextAutomaticMessageTemplate(getAutomaticMessageDefaultBody()).body;
     const sync = await syncTickets(date);
     const phones = await refreshTicketPhones(date);
     const statuses = await refreshTicketStatuses({
       ...options,
-      date
+      date,
+      messageTemplate
     });
     const result = { sync, phones, statuses };
     schedulerState.lastResult = result;

@@ -4,6 +4,7 @@ const { DatabaseSync } = require('node:sqlite');
 const { config } = require('./config');
 
 let db;
+let fallbackAutomaticMessageTemplateCursor = null;
 
 function getDb() {
   if (db) {
@@ -114,6 +115,25 @@ function initializeDatabase(database = getDb()) {
     CREATE INDEX IF NOT EXISTS idx_ticket_response_actions_chat
       ON ticket_response_actions (chat_id, status, created_at);
 
+    CREATE TABLE IF NOT EXISTS app_state (
+      key TEXT PRIMARY KEY,
+      value TEXT,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS automatic_message_templates (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      body TEXT NOT NULL,
+      active INTEGER NOT NULL DEFAULT 1,
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_automatic_message_templates_order
+      ON automatic_message_templates (active, sort_order, id);
+
   `);
 
   ensureColumn(database, 'razon_social', 'TEXT');
@@ -125,6 +145,8 @@ function initializeDatabase(database = getDb()) {
   ensureWhatsAppMessageColumn(database, 'media_data', 'TEXT');
   ensureWhatsAppMessageColumn(database, 'media_filename', 'TEXT');
   ensureUserColumn(database, 'groups_json', "TEXT NOT NULL DEFAULT '[]'");
+  ensureAutomaticMessageTemplateColumn(database, 'active', 'INTEGER NOT NULL DEFAULT 1');
+  ensureAutomaticMessageTemplateColumn(database, 'sort_order', 'INTEGER NOT NULL DEFAULT 0');
 }
 
 function ensureColumn(database, columnName, definition) {
@@ -152,6 +174,171 @@ function ensureUserColumn(database, columnName, definition) {
   if (!exists) {
     database.exec(`ALTER TABLE users ADD COLUMN ${columnName} ${definition}`);
   }
+}
+
+function ensureAutomaticMessageTemplateColumn(database, columnName, definition) {
+  const columns = database.prepare('PRAGMA table_info(automatic_message_templates)').all();
+  const exists = columns.some(column => column.name === columnName);
+
+  if (!exists) {
+    database.exec(`ALTER TABLE automatic_message_templates ADD COLUMN ${columnName} ${definition}`);
+  }
+}
+
+function getAppState(key, fallback = null) {
+  const row = getDb().prepare('SELECT value FROM app_state WHERE key = ?').get(String(key || ''));
+  return row ? row.value : fallback;
+}
+
+function setAppState(key, value) {
+  getDb().prepare(`
+    INSERT INTO app_state (key, value, updated_at)
+    VALUES (?, ?, CURRENT_TIMESTAMP)
+    ON CONFLICT(key) DO UPDATE SET
+      value = excluded.value,
+      updated_at = CURRENT_TIMESTAMP
+  `).run(String(key || ''), String(value ?? ''));
+}
+
+function normalizeAutomaticTemplateInput(input = {}, fallback = {}) {
+  const name = String(input.name ?? fallback.name ?? 'Template').trim().slice(0, 120) || 'Template';
+  const body = String(input.body ?? input.template ?? fallback.body ?? '').trim();
+
+  if (!body) {
+    throw new Error('El template no puede estar vacio');
+  }
+
+  return {
+    name,
+    body,
+    active: input.active === undefined ? (fallback.active !== false) : Boolean(input.active)
+  };
+}
+
+function listAutomaticMessageTemplates({ includeInactive = true } = {}) {
+  const where = includeInactive ? '' : 'WHERE active = 1';
+  return getDb().prepare(`
+    SELECT id, name, body, active, sort_order, created_at, updated_at
+    FROM automatic_message_templates
+    ${where}
+    ORDER BY sort_order ASC, id ASC
+  `).all().map(row => ({
+    ...row,
+    active: Boolean(row.active)
+  }));
+}
+
+function createAutomaticMessageTemplate(input = {}) {
+  const data = normalizeAutomaticTemplateInput(input);
+  const database = getDb();
+  const orderRow = database.prepare('SELECT COALESCE(MAX(sort_order), -1) + 1 AS next_order FROM automatic_message_templates').get();
+  const result = database.prepare(`
+    INSERT INTO automatic_message_templates (name, body, active, sort_order)
+    VALUES (?, ?, ?, ?)
+  `).run(data.name, data.body, data.active ? 1 : 0, Number(orderRow.next_order || 0));
+
+  return getAutomaticMessageTemplate(Number(result.lastInsertRowid));
+}
+
+function getAutomaticMessageTemplate(id) {
+  const row = getDb().prepare(`
+    SELECT id, name, body, active, sort_order, created_at, updated_at
+    FROM automatic_message_templates
+    WHERE id = ?
+  `).get(Number(id));
+
+  return row ? { ...row, active: Boolean(row.active) } : null;
+}
+
+function updateAutomaticMessageTemplate(id, input = {}) {
+  const current = getAutomaticMessageTemplate(id);
+
+  if (!current) {
+    throw new Error('Template no encontrado');
+  }
+
+  const data = normalizeAutomaticTemplateInput(input, current);
+  getDb().prepare(`
+    UPDATE automatic_message_templates
+    SET name = ?,
+        body = ?,
+        active = ?,
+        updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `).run(data.name, data.body, data.active ? 1 : 0, Number(id));
+
+  return getAutomaticMessageTemplate(id);
+}
+
+function deleteAutomaticMessageTemplate(id) {
+  const template = getAutomaticMessageTemplate(id);
+
+  if (!template) {
+    throw new Error('Template no encontrado');
+  }
+
+  const count = getDb().prepare('SELECT COUNT(*) AS total FROM automatic_message_templates').get();
+
+  if (Number(count.total || 0) <= 1) {
+    throw new Error('Debe quedar al menos un template');
+  }
+
+  getDb().prepare('DELETE FROM automatic_message_templates WHERE id = ?').run(Number(id));
+  return template;
+}
+
+function ensureAutomaticMessageTemplate(defaultBody) {
+  const activeTemplates = listAutomaticMessageTemplates({ includeInactive: false });
+
+  if (activeTemplates.length) {
+    return activeTemplates;
+  }
+
+  const existing = listAutomaticMessageTemplates();
+
+  if (existing.length) {
+    const first = existing[0];
+    getDb().prepare(`
+      UPDATE automatic_message_templates
+      SET active = 1,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(first.id);
+    return listAutomaticMessageTemplates({ includeInactive: false });
+  }
+
+  createAutomaticMessageTemplate({
+    name: 'Template 1',
+    body: defaultBody || config.messageTemplate,
+    active: true
+  });
+
+  return listAutomaticMessageTemplates({ includeInactive: false });
+}
+
+function getNextAutomaticMessageTemplate(defaultBody) {
+  const templates = ensureAutomaticMessageTemplate(defaultBody);
+  const storedCursor = fallbackAutomaticMessageTemplateCursor !== null
+    ? fallbackAutomaticMessageTemplateCursor
+    : getAppState('automatic_message_template_cursor', '0');
+  const cursor = Number.parseInt(storedCursor, 10);
+  const index = (Number.isFinite(cursor) ? cursor : 0) % templates.length;
+  const template = templates[index];
+  const nextCursor = (index + 1) % templates.length;
+
+  try {
+    setAppState('automatic_message_template_cursor', nextCursor);
+    fallbackAutomaticMessageTemplateCursor = null;
+  } catch (error) {
+    fallbackAutomaticMessageTemplateCursor = nextCursor;
+    console.warn(`No se pudo guardar el cursor de templates automaticos. Se usa cursor en memoria: ${error.message}`);
+  }
+
+  return {
+    ...template,
+    index,
+    total: templates.length
+  };
 }
 
 function upsertTickets(tickets) {
@@ -810,13 +997,19 @@ module.exports = {
   closeDb,
   completeTicketResponseAction,
   createTicketResponseAction,
+  createAutomaticMessageTemplate,
+  deleteAutomaticMessageTemplate,
+  ensureAutomaticMessageTemplate,
+  getAutomaticMessageTemplate,
   getDb,
+  getNextAutomaticMessageTemplate,
   getNextTicket,
   getPendingTicketResponseActionByChat,
   getTicket,
   getTicketGroupName,
   filterTicketsByGroups,
   listTicketGroups,
+  listAutomaticMessageTemplates,
   listWhatsAppChatPhones,
   listWhatsAppConversations,
   listWhatsAppMessages,
@@ -826,6 +1019,7 @@ module.exports = {
   normalizeChatPhone,
   pruneTicketsForDate,
   saveWhatsAppMessage,
+  updateAutomaticMessageTemplate,
   updateTicketClientInfo,
   updateTicketStatus,
   updateTicketPhone,

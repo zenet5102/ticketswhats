@@ -66,6 +66,22 @@ function getTicketResponseQuestion() {
   };
 }
 
+function getTicketResponseReply(action) {
+  const settings = readSettings();
+  const configured = settings.ticketResponseReplies || {};
+  const replies = {
+    confirm_visit:
+      'Gracias por confirmar. Este atento al telefono, pronto nos comunicaremos.',
+    request_reschedule:
+      'Perfecto, en breve uno de nuestros representantes se comunicara.',
+    default:
+      'No pudimos interpretar tu respuesta. Por favor responde 1 para confirmar o 2 para reprogramar.',
+    ...configured
+  };
+
+  return String(replies[action] || replies.default || '').trim();
+}
+
 function getNotificationChannelReply() {
   const settings = readSettings();
   const supportPhone = String(
@@ -99,6 +115,7 @@ function setMessageTemplate(messageTemplate) {
 
 module.exports = {
   getNotificationChannelReply,
+  getTicketResponseReply,
   getTicketResponseQuestion,
   isAutomaticReminderEnabled,
   getMessageTemplate,

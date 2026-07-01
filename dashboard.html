@@ -195,21 +195,6 @@
       margin-bottom: 10px;
     }
 
-    .qr-text {
-      max-width: 100%;
-      overflow: auto;
-      margin: 0;
-      padding: 10px;
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      background: #ffffff;
-      color: #000000;
-      font-family: Consolas, "Courier New", monospace;
-      font-size: 9px;
-      line-height: 1;
-      white-space: pre;
-    }
-
     .qr-actions {
       margin-top: 10px;
       display: flex;
@@ -388,6 +373,55 @@
       display: flex;
       flex-wrap: wrap;
       gap: 6px;
+    }
+
+    .template-modal-layout {
+      display: grid;
+      grid-template-columns: minmax(220px, 0.8fr) minmax(0, 1.2fr);
+      gap: 14px;
+      align-items: start;
+    }
+
+    .template-list,
+    .template-editor {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fbfcfe;
+      padding: 12px;
+      display: grid;
+      gap: 10px;
+    }
+
+    .template-item {
+      width: 100%;
+      justify-content: space-between;
+      min-height: 42px;
+      text-align: left;
+    }
+
+    .template-item.active {
+      border-color: var(--accent);
+      background: var(--soft-blue);
+      color: var(--accent);
+      font-weight: 700;
+    }
+
+    .template-editor input {
+      width: 100%;
+      min-height: 38px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 0 10px;
+      color: var(--text);
+      font: inherit;
+      background: #ffffff;
+    }
+
+    .template-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+      flex-wrap: wrap;
     }
 
     .modal-backdrop {
@@ -894,6 +928,10 @@
       .topbar-session {
         margin-left: 0;
       }
+
+      .template-modal-layout {
+        grid-template-columns: 1fr;
+      }
     }
   </style>
 </head>
@@ -999,9 +1037,9 @@
         <div class="qr-title">Vincular WhatsApp</div>
         <div class="qr-detail" id="whatsappQrDetail">Escanea este codigo desde WhatsApp para conectar la sesion.</div>
         <div class="qr-actions">
-          <button id="whatsappReconnectBtn" type="button" title="Volver a intentar conexion y mostrar QR">
+          <button id="whatsappReconnectBtn" type="button" title="Reconectar WhatsApp y generar QR si hace falta">
             <span aria-hidden="true">&#8635;</span>
-            Mostrar QR
+            Reconectar
           </button>
           <button id="whatsappResetAuthBtn" type="button"
             title="Borrar la sesion local de WhatsApp y generar un QR nuevo">
@@ -1009,7 +1047,6 @@
             Borrar sesion
           </button>
         </div>
-        <pre class="qr-text" id="whatsappQrText" aria-label="QR en texto"></pre>
       </div>
     </section>
 
@@ -1022,6 +1059,10 @@
             <span class="switch-track" aria-hidden="true"></span>
             <span id="autoReminderText">Recordatorios</span>
           </label>
+          <button id="templatesBtn" type="button" title="Editar templates automaticos">
+            <span aria-hidden="true">&#9776;</span>
+            Templates
+          </button>
         </div>
       </div>
       <div class="message-form">
@@ -1053,6 +1094,45 @@
   </main>
 
   <div class="toast" id="toast"></div>
+
+  <div id="templatesModal" class="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="templatesTitle"
+    hidden>
+    <section class="modal">
+      <div class="modal-head">
+        <div>
+          <div id="templatesTitle" class="modal-title">Templates automaticos</div>
+          <div id="templatesSummary" class="modal-subtitle">Mensajes que alterna el cron.</div>
+        </div>
+        <button id="templatesCloseBtn" class="modal-close" type="button" title="Cerrar"
+          aria-label="Cerrar">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="template-modal-layout">
+          <section class="template-list">
+            <div id="templatesList"></div>
+            <button id="newTemplateBtn" type="button">
+              <span aria-hidden="true">+</span>
+              Nuevo
+            </button>
+          </section>
+          <section class="template-editor">
+            <input id="templateName" type="text" maxlength="120" placeholder="Nombre del template">
+            <textarea id="templateBody" spellcheck="true"></textarea>
+            <label class="switch-row" title="Usar este template en el cron">
+              <input id="templateActive" type="checkbox">
+              <span class="switch-track" aria-hidden="true"></span>
+              <span>Activo</span>
+            </label>
+            <div class="placeholder-list" id="templatePlaceholders"></div>
+            <div class="template-actions">
+              <button id="deleteTemplateBtn" type="button">Eliminar</button>
+              <button id="saveTemplateBtn" class="primary" type="button">Guardar</button>
+            </div>
+          </section>
+        </div>
+      </div>
+    </section>
+  </div>
 
   <div id="transferModal" class="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="transferTitle" hidden>
     <section class="modal">
@@ -1111,7 +1191,10 @@
       messageNotificationReady: false,
       messageNotificationStartedAt: 0,
       lastIncomingByChat: new Map(),
-      notificationAudioContext: null
+      notificationAudioContext: null,
+      automaticTemplates: [],
+      selectedTemplateId: '',
+      automaticTemplateDefault: ''
     };
 
     const els = {
@@ -1153,6 +1236,18 @@
       transferSelectedUser: document.getElementById('transferSelectedUser'),
       transferSummary: document.getElementById('transferSummary'),
       transferUsername: document.getElementById('transferUsername'),
+      deleteTemplateBtn: document.getElementById('deleteTemplateBtn'),
+      newTemplateBtn: document.getElementById('newTemplateBtn'),
+      saveTemplateBtn: document.getElementById('saveTemplateBtn'),
+      templateActive: document.getElementById('templateActive'),
+      templateBody: document.getElementById('templateBody'),
+      templateName: document.getElementById('templateName'),
+      templatePlaceholders: document.getElementById('templatePlaceholders'),
+      templatesBtn: document.getElementById('templatesBtn'),
+      templatesCloseBtn: document.getElementById('templatesCloseBtn'),
+      templatesList: document.getElementById('templatesList'),
+      templatesModal: document.getElementById('templatesModal'),
+      templatesSummary: document.getElementById('templatesSummary'),
       transferUsersList: document.getElementById('transferUsersList'),
       usersBtn: document.getElementById('usersBtn'),
       whatsappBadge: document.getElementById('whatsappBadge'),
@@ -1161,8 +1256,7 @@
       whatsappQrPanel: document.getElementById('whatsappQrPanel'),
       whatsappReconnectBtn: document.getElementById('whatsappReconnectBtn'),
       whatsappResetAuthBtn: document.getElementById('whatsappResetAuthBtn'),
-      whatsappTopbarReconnectBtn: document.getElementById('whatsappTopbarReconnectBtn'),
-      whatsappQrText: document.getElementById('whatsappQrText')
+      whatsappTopbarReconnectBtn: document.getElementById('whatsappTopbarReconnectBtn')
     };
 
     function toDateInputValue(date) {
@@ -1278,12 +1372,11 @@
         } else {
           els.whatsappQrImage.removeAttribute('src');
         }
-        els.whatsappQrText.textContent = payload.whatsappReady ? '' : whatsapp.qrText || '';
         els.whatsappQrDetail.textContent = payload.whatsappReady
           ? 'WhatsApp esta conectado. Usa estos controles solo si necesitas vincular de nuevo.'
           : whatsapp.qrSvg
             ? 'Escanea este codigo desde WhatsApp para conectar la sesion.'
-            : 'Si no aparece el QR, toca Mostrar QR para reiniciar la conexion de WhatsApp.';
+            : 'Si no aparece el QR, toca Reconectar para reiniciar la conexion de WhatsApp.';
         els.whatsappReconnectBtn.hidden = !canReconnectWhatsApp;
         els.whatsappReconnectBtn.disabled = !canReconnectWhatsApp;
         els.whatsappResetAuthBtn.hidden = !canReconnectWhatsApp;
@@ -1292,7 +1385,6 @@
         els.whatsappQrPanel.hidden = true;
         els.whatsappQrImage.hidden = false;
         els.whatsappQrImage.removeAttribute('src');
-        els.whatsappQrText.textContent = '';
         els.whatsappReconnectBtn.hidden = true;
         els.whatsappResetAuthBtn.hidden = true;
       }
@@ -1406,6 +1498,33 @@
       return String(left.external_id || '').localeCompare(String(right.external_id || ''));
     }
 
+    function renderMessageTemplateForTicket(ticket) {
+      const values = {
+        delegacion: ticket.delegacion,
+        external_id: ticket.external_id,
+        hora: ticket.start_time,
+        razon_social: ticket.razon_social || '',
+        cliente: ticket.razon_social || '',
+        start: ticket.start,
+        status: ticket.status || '',
+        previous_external_id: '',
+        previous_hora: ''
+      };
+
+      return String(els.messageTemplate.value || '').replace(/\{([a-zA-Z0-9_]+)\}/g, (match, key) => {
+        return values[key] === undefined || values[key] === null ? match : String(values[key]);
+      });
+    }
+
+    function getTicketMessageUrl(ticket) {
+      const params = new URLSearchParams({
+        phone: ticket.phone || '',
+        message: renderMessageTemplateForTicket(ticket)
+      });
+
+      return '/mensajes?' + params.toString();
+    }
+
     function renderGroupCard(group) {
       const inProcess = group.tickets.filter(ticket => String(ticket.status || '').toLowerCase().includes('proceso')).length;
       const sent = group.tickets.filter(ticket => ticket.message_sent_at).length;
@@ -1444,7 +1563,7 @@
 
     function renderTicketRow(ticket) {
       const phoneCell = ticket.phone
-        ? '<span class="mono">' + escapeHtml(ticket.phone) + '</span>'
+        ? '<a class="mono" href="' + escapeHtml(getTicketMessageUrl(ticket)) + '" title="Abrir mensajes con template">' + escapeHtml(ticket.phone) + '</a>'
         : badge('Sin movil', 'bad');
       const messageCell = ticket.message_sent_at
         ? badge('Enviado', 'good') + '<div class="muted">' + escapeHtml(formatDateTime(ticket.message_sent_at)) + '</div>'
@@ -1931,7 +2050,7 @@
       els.sessionBadge.textContent = user.name + ' | ' + roleLabel;
 
       const fullAccess = hasFullAccess();
-      [els.syncBtn, els.statusBtn, els.phonesBtn, els.runBtn, els.saveMessageBtn, els.whatsappTopbarReconnectBtn].forEach(button => {
+      [els.syncBtn, els.statusBtn, els.phonesBtn, els.runBtn, els.saveMessageBtn, els.templatesBtn, els.whatsappTopbarReconnectBtn].forEach(button => {
         button.hidden = !fullAccess;
       });
       els.usersBtn.hidden = user.role !== 'admin';
@@ -2018,6 +2137,7 @@
       els.syncBtn.disabled = disabled || !fullAccess;
       els.phonesBtn.disabled = disabled || !fullAccess;
       els.saveMessageBtn.disabled = disabled || !fullAccess;
+      els.templatesBtn.disabled = disabled || !fullAccess;
       els.autoReminderSwitch.disabled = disabled || !canManageAutomaticReminder();
       els.whatsappReconnectBtn.disabled = disabled || !fullAccess;
       els.whatsappResetAuthBtn.disabled = disabled || !fullAccess;
@@ -2140,6 +2260,138 @@
         els.messageStatus.textContent = 'Cambios sin guardar';
       }
     });
+
+    function getSelectedAutomaticTemplate() {
+      return state.automaticTemplates.find(template => String(template.id) === String(state.selectedTemplateId)) || null;
+    }
+
+    function renderAutomaticTemplates() {
+      const activeCount = state.automaticTemplates.filter(template => template.active).length;
+      els.templatesSummary.textContent = state.automaticTemplates.length + ' templates | Activos: ' + activeCount;
+
+      if (!state.automaticTemplates.length) {
+        els.templatesList.innerHTML = '<div class="muted">Sin templates.</div>';
+      } else {
+        els.templatesList.innerHTML = state.automaticTemplates.map(template => {
+          const active = String(template.id) === String(state.selectedTemplateId) ? ' active' : '';
+          const status = template.active ? 'Activo' : 'Pausado';
+          return '<button class="template-item' + active + '" type="button" data-template-id="' + template.id + '">' +
+            '<span>' + escapeHtml(template.name || ('Template ' + template.id)) + '</span>' +
+            '<span class="badge">' + escapeHtml(status) + '</span>' +
+            '</button>';
+        }).join('');
+
+        els.templatesList.querySelectorAll('button[data-template-id]').forEach(button => {
+          button.addEventListener('click', () => {
+            state.selectedTemplateId = button.dataset.templateId;
+            renderAutomaticTemplates();
+          });
+        });
+      }
+
+      const selected = getSelectedAutomaticTemplate();
+      els.templateName.value = selected ? selected.name : '';
+      els.templateBody.value = selected ? selected.body : '';
+      els.templateActive.checked = selected ? selected.active : true;
+      els.deleteTemplateBtn.disabled = !selected || state.automaticTemplates.length <= 1;
+      els.saveTemplateBtn.textContent = selected ? 'Guardar' : 'Crear';
+    }
+
+    async function loadAutomaticTemplates(preferredId) {
+      const data = await fetchJson('/settings/automatic-message-templates');
+      state.automaticTemplates = data.templates || [];
+      state.automaticTemplateDefault = data.defaultTemplate || els.messageTemplate.value || '';
+      state.selectedTemplateId = preferredId ||
+        (state.automaticTemplates.some(template => String(template.id) === String(state.selectedTemplateId)) ? state.selectedTemplateId : '') ||
+        (state.automaticTemplates[0] && state.automaticTemplates[0].id) ||
+        '';
+      els.templatePlaceholders.innerHTML = (data.placeholders || []).map(name => {
+        return '<span class="badge blue">{' + escapeHtml(name) + '}</span>';
+      }).join('');
+      renderAutomaticTemplates();
+    }
+
+    async function openTemplatesModal() {
+      if (!hasFullAccess()) {
+        return;
+      }
+
+      els.templatesModal.hidden = false;
+      try {
+        await loadAutomaticTemplates();
+      } catch (error) {
+        showToast(error.message);
+      }
+    }
+
+    function closeTemplatesModal() {
+      els.templatesModal.hidden = true;
+    }
+
+    function startNewAutomaticTemplate() {
+      state.selectedTemplateId = '';
+      renderAutomaticTemplates();
+      els.templateName.value = 'Template ' + (state.automaticTemplates.length + 1);
+      els.templateBody.value = state.automaticTemplateDefault || els.messageTemplate.value || '';
+      els.templateActive.checked = true;
+      els.templateName.focus();
+    }
+
+    async function saveAutomaticTemplate() {
+      const selected = getSelectedAutomaticTemplate();
+      const url = selected
+        ? '/settings/automatic-message-templates/' + encodeURIComponent(selected.id)
+        : '/settings/automatic-message-templates';
+      const method = selected ? 'PUT' : 'POST';
+      const data = await fetchJson(url, {
+        method,
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          name: els.templateName.value,
+          body: els.templateBody.value,
+          active: els.templateActive.checked
+        })
+      });
+
+      state.automaticTemplates = data.templates || [];
+      state.selectedTemplateId = data.template && data.template.id || state.selectedTemplateId;
+      renderAutomaticTemplates();
+      showToast('Template guardado');
+    }
+
+    async function deleteAutomaticTemplate() {
+      const selected = getSelectedAutomaticTemplate();
+
+      if (!selected || !window.confirm('Eliminar template ' + (selected.name || selected.id) + '?')) {
+        return;
+      }
+
+      const data = await fetchJson('/settings/automatic-message-templates/' + encodeURIComponent(selected.id), {
+        method: 'DELETE'
+      });
+      state.automaticTemplates = data.templates || [];
+      state.selectedTemplateId = state.automaticTemplates[0] && state.automaticTemplates[0].id || '';
+      renderAutomaticTemplates();
+      showToast('Template eliminado');
+    }
+
+    els.templatesBtn.addEventListener('click', openTemplatesModal);
+    els.templatesCloseBtn.addEventListener('click', closeTemplatesModal);
+    els.newTemplateBtn.addEventListener('click', startNewAutomaticTemplate);
+    els.saveTemplateBtn.addEventListener('click', () => {
+      saveAutomaticTemplate().catch(error => showToast(error.message));
+    });
+    els.deleteTemplateBtn.addEventListener('click', () => {
+      deleteAutomaticTemplate().catch(error => showToast(error.message));
+    });
+    els.templatesModal.addEventListener('click', event => {
+      if (event.target === els.templatesModal) {
+        closeTemplatesModal();
+      }
+    });
+
     els.autoReminderSwitch.addEventListener('change', () => {
       if (!canManageAutomaticReminder()) {
         showToast('Solo admin puede pausar recordatorios automaticos');

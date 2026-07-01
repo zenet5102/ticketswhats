@@ -17,18 +17,24 @@ const {
 } = require('./auth');
 const {
   createTicketResponseAction,
+  createAutomaticMessageTemplate,
+  deleteAutomaticMessageTemplate,
+  ensureAutomaticMessageTemplate,
   filterTicketsByGroups,
+  listAutomaticMessageTemplates,
   listTickets,
   listTicketGroups,
   listWhatsAppChatPhones,
   listWhatsAppConversations,
   listWhatsAppMessages,
   normalizeChatPhone,
-  saveWhatsAppMessage
+  saveWhatsAppMessage,
+  updateAutomaticMessageTemplate
 } = require('./db');
 const {
   getMessageTemplate,
   getNotificationChannelReply,
+  getTicketResponseReply,
   getTicketResponseQuestion,
   isAutomaticReminderEnabled,
   setAutomaticReminderEnabled,
@@ -992,6 +998,17 @@ async function processIncomingTicketResponse(storedMessage) {
     console.log(
       `Respuesta de ticket ${result.completedAction.ticket_external_id}: ${result.selectedOption.label}`
     );
+    const reply = getTicketResponseReply(result.selectedOption.action);
+
+    if (reply) {
+      await sendWhatsApp(storedMessage.chat_id, reply, 'ticket-response');
+    }
+  } else if (result && result.matched === false) {
+    const reply = getTicketResponseReply('default');
+
+    if (reply) {
+      await sendWhatsApp(storedMessage.chat_id, reply, 'ticket-response');
+    }
   } else if (!result && !incomingMessageMatchesAnyTicket(storedMessage)) {
     const sent = await sendNotificationChannelReply(storedMessage);
 
@@ -1124,12 +1141,26 @@ function buildTicketQuestionContext(message, options = {}) {
     return null;
   }
 
+  const cleanMessage = String(message || '').trim();
+  const fullMessage = cleanMessage.includes(questionText)
+    ? cleanMessage
+    : `${cleanMessage}\n\n${questionText}`;
+
   return {
     ticketExternalId,
     question,
     text: questionText,
-    fullMessage: `${message}\n\n${questionText}`
+    fullMessage
   };
+}
+
+function getAutomaticMessageDefaultBody() {
+  const questionText = formatQuestionText(getTicketResponseQuestion());
+  const baseMessage = getMessageTemplate();
+
+  return questionText && !baseMessage.includes(questionText)
+    ? `${baseMessage}\n\n${questionText}`
+    : baseMessage;
 }
 
 async function sendWhatsApp(phone, message, source = 'bot', options = {}) {
@@ -1425,6 +1456,65 @@ app.post('/settings/message-template', requirePrivileged, (req, res) => {
     res.json({ success: true, template, automaticReminderEnabled });
   } catch (error) {
     res.status(400).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+app.get('/settings/automatic-message-templates', requireLoggedIn, (req, res) => {
+  const defaultBody = getAutomaticMessageDefaultBody();
+  ensureAutomaticMessageTemplate(defaultBody);
+  res.json({
+    success: true,
+    templates: listAutomaticMessageTemplates(),
+    defaultTemplate: defaultBody,
+    placeholders: [
+      'external_id',
+      'razon_social',
+      'cliente',
+      'delegacion',
+      'hora',
+      'start',
+      'status',
+      'previous_external_id',
+      'previous_hora'
+    ]
+  });
+});
+
+app.post('/settings/automatic-message-templates', requirePrivileged, (req, res) => {
+  try {
+    const template = createAutomaticMessageTemplate(req.body || {});
+    res.status(201).json({ success: true, template, templates: listAutomaticMessageTemplates() });
+  } catch (error) {
+    res.status(400).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+app.put('/settings/automatic-message-templates/:id', requirePrivileged, (req, res) => {
+  try {
+    const template = updateAutomaticMessageTemplate(req.params.id, req.body || {});
+    res.json({ success: true, template, templates: listAutomaticMessageTemplates() });
+  } catch (error) {
+    const status = error.message === 'Template no encontrado' ? 404 : 400;
+    res.status(status).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+app.delete('/settings/automatic-message-templates/:id', requirePrivileged, (req, res) => {
+  try {
+    const template = deleteAutomaticMessageTemplate(req.params.id);
+    res.json({ success: true, template, templates: listAutomaticMessageTemplates() });
+  } catch (error) {
+    const status = error.message === 'Template no encontrado' ? 404 : 400;
+    res.status(status).json({
       success: false,
       error: error.message
     });
