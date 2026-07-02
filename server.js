@@ -617,15 +617,35 @@ function canReadChat(user, chatId) {
   }
 
   const phones = getVisibleTicketPhones(user);
-  const chatPhone = normalizeChatPhone(chatId);
+  const candidatePhones = [
+    chatId,
+    ...listWhatsAppChatPhones(chatId)
+  ].map(value => normalizeChatPhone(value));
 
-  if (chatPhone && phones.has(chatPhone)) {
+  return candidatePhones.some(candidatePhone => candidatePhone && phones.has(candidatePhone));
+}
+
+function canSendToTarget(user, chatId, phone) {
+  if (user && user.isAdmin) {
     return true;
   }
 
-  return listWhatsAppChatPhones(chatId)
-    .map(phone => normalizeChatPhone(phone))
-    .some(phone => phone && phones.has(phone));
+  const cleanChatId = String(chatId || '').trim();
+  const cleanPhone = normalizeChatPhone(phone || cleanChatId);
+
+  if (!cleanPhone) {
+    return false;
+  }
+
+  if (cleanChatId) {
+    if (canReadChat(user, cleanChatId)) {
+      return true;
+    }
+
+    return normalizeChatPhone(cleanChatId) === cleanPhone && getVisibleTicketPhones(user).has(cleanPhone);
+  }
+
+  return getVisibleTicketPhones(user).has(cleanPhone);
 }
 
 function getIncomingMessagePhones(storedMessage) {
@@ -1341,6 +1361,13 @@ app.post('/messages/send', requirePrivileged, async (req, res) => {
       return res.status(400).json({
         success: false,
         error: 'Faltan telefono o mensaje'
+      });
+    }
+
+    if (!canSendToTarget(req.user, targetChatId, targetPhone || target)) {
+      return res.status(403).json({
+        success: false,
+        error: 'Chat fuera de los grupos asignados'
       });
     }
 

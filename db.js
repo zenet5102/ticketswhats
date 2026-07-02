@@ -759,12 +759,34 @@ function completeTicketResponseAction(id, response = {}) {
 }
 
 function normalizeChatPhone(value) {
-  return String(value || '')
+  let phone = String(value || '')
     .replace(/@c\.us$/i, '')
     .replace(/@s\.whatsapp\.net$/i, '')
     .replace(/@lid$/i, '')
     .replace(/@g\.us$/i, '')
     .replace(/\D/g, '');
+
+  if (!phone) {
+    return '';
+  }
+
+  if (phone.startsWith('549')) {
+    return phone;
+  }
+
+  if (phone.startsWith('54')) {
+    return `549${phone.slice(2).replace(/^15/, '')}`;
+  }
+
+  phone = phone.replace(/^0+/, '');
+
+  if (/^1115\d{8}$/.test(phone)) {
+    phone = `11${phone.slice(4)}`;
+  } else if (phone.startsWith('15') && phone.length >= 10) {
+    phone = `11${phone.slice(2)}`;
+  }
+
+  return `549${phone}`;
 }
 
 function isLidChatId(value) {
