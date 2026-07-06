@@ -29,7 +29,8 @@ const {
   listWhatsAppMessages,
   normalizeChatPhone,
   saveWhatsAppMessage,
-  updateAutomaticMessageTemplate
+  updateAutomaticMessageTemplate,
+  updateWhatsAppMessageAck
 } = require('./db');
 const {
   getMessageTemplate,
@@ -770,6 +771,15 @@ function attachWhatsAppEvents(instance) {
     storeWhatsAppMessage(message, 'whatsapp').catch(error => {
       console.warn('No se pudo guardar mensaje creado:', error.message);
     });
+  });
+
+  instance.on('message_ack', (message, ack) => {
+    try {
+      const messageId = message && message.id && message.id._serialized;
+      updateWhatsAppMessageAck(messageId, ack);
+    } catch (error) {
+      console.warn('No se pudo actualizar estado del mensaje:', error.message);
+    }
   });
 }
 

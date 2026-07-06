@@ -46,7 +46,8 @@ const {
   releaseMessageQueueItem,
   replacePhantomBajaClients,
   resolveWhatsAppChatAlias,
-  saveWhatsAppMessage
+  saveWhatsAppMessage,
+  updateWhatsAppMessageAck
 } = require('./secondMessageDb');
 
 const app = express();
@@ -775,6 +776,13 @@ function attachWhatsAppEvents(instance) {
   instance.on('message_create', message => {
     storeWhatsAppMessage(message, 'whatsapp-second').catch(error => {
       console.warn('No se pudo guardar mensaje creado secundario:', error.message);
+    });
+  });
+
+  instance.on('message_ack', (message, ack) => {
+    const messageId = message && message.id && message.id._serialized;
+    updateWhatsAppMessageAck(messageId, ack).catch(error => {
+      console.warn('No se pudo actualizar estado del mensaje secundario:', error.message);
     });
   });
 }

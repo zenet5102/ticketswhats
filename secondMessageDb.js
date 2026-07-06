@@ -364,6 +364,23 @@ async function getWhatsAppMessage(id) {
   return rows[0] || null;
 }
 
+async function updateWhatsAppMessageAck(id, ack) {
+  const cleanId = String(id || '').trim();
+  const parsedAck = Number(ack);
+
+  if (!cleanId || !Number.isFinite(parsedAck)) {
+    return null;
+  }
+
+  const database = await getPool();
+  await database.execute(
+    `UPDATE ${messagesTableSql} SET ack = ? WHERE id = ?`,
+    [parsedAck, cleanId]
+  );
+
+  return getWhatsAppMessage(cleanId);
+}
+
 async function saveWhatsAppMessage(message = {}) {
   const chatId = String(message.chatId || '').trim();
   const direction = message.direction === 'incoming' ? 'incoming' : 'outgoing';
@@ -1341,5 +1358,6 @@ module.exports = {
   pingDatabase,
   releaseMessageQueueItem,
   replacePhantomBajaClients,
-  saveWhatsAppMessage
+  saveWhatsAppMessage,
+  updateWhatsAppMessageAck
 };

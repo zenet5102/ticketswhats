@@ -812,6 +812,23 @@ function getWhatsAppMessage(id) {
   `).get(id);
 }
 
+function updateWhatsAppMessageAck(id, ack) {
+  const cleanId = String(id || '').trim();
+  const parsedAck = Number(ack);
+
+  if (!cleanId || !Number.isFinite(parsedAck)) {
+    return null;
+  }
+
+  getDb().prepare(`
+    UPDATE whatsapp_messages
+    SET ack = ?
+    WHERE id = ?
+  `).run(parsedAck, cleanId);
+
+  return getWhatsAppMessage(cleanId);
+}
+
 function saveWhatsAppMessage(message = {}) {
   const chatId = String(message.chatId || '').trim();
   const direction = message.direction === 'incoming' ? 'incoming' : 'outgoing';
@@ -1042,6 +1059,7 @@ module.exports = {
   pruneTicketsForDate,
   saveWhatsAppMessage,
   updateAutomaticMessageTemplate,
+  updateWhatsAppMessageAck,
   updateTicketClientInfo,
   updateTicketStatus,
   updateTicketPhone,

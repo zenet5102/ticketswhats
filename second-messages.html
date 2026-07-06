@@ -514,11 +514,30 @@
       text-decoration: none;
     }
 
-    .message-time {
+    .message-meta {
       margin-top: 6px;
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 6px;
       color: var(--muted);
       font-size: 12px;
+    }
+
+    .message-ack {
+      min-width: 18px;
+      font-weight: 800;
       text-align: right;
+      color: var(--muted);
+      line-height: 1;
+    }
+
+    .message-ack.read {
+      color: #0ea5e9;
+    }
+
+    .message-ack.error {
+      color: var(--bad);
     }
 
     .composer {
@@ -1165,13 +1184,42 @@
               ${outgoing ? '' : `<div class="message-person">${escapeHtml(getMessagePerson(message, conversation))}</div>`}
               ${media}
               ${body ? `<div class="message-text">${escapeHtml(body)}</div>` : ''}
-              <div class="message-time">${escapeHtml(formatDateTime(message.timestamp_ts))}</div>
+              <div class="message-meta">
+                <span class="message-time">${escapeHtml(formatDateTime(message.timestamp_ts))}</span>
+                ${renderAck(message, outgoing)}
+              </div>
             </div>
           </div>
         `;
       }).join('');
 
       els.messageList.scrollTop = els.messageList.scrollHeight;
+    }
+
+    function renderAck(message, outgoing) {
+      if (!outgoing) {
+        return '';
+      }
+
+      const ack = Number(message && message.ack);
+
+      if (ack === -1) {
+        return '<span class="message-ack error" title="Error de envio">!</span>';
+      }
+
+      if (ack >= 3) {
+        return '<span class="message-ack read" title="Leido">&#10003;&#10003;</span>';
+      }
+
+      if (ack >= 2) {
+        return '<span class="message-ack" title="Entregado">&#10003;&#10003;</span>';
+      }
+
+      if (ack >= 1) {
+        return '<span class="message-ack" title="Enviado">&#10003;</span>';
+      }
+
+      return '<span class="message-ack" title="Enviando">...</span>';
     }
 
     async function loadSession() {
