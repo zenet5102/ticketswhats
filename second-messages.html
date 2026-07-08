@@ -800,7 +800,8 @@
       draftPhone: '',
       draftName: '',
       mediaLimitBytes: 15 * 1024 * 1024,
-      loading: false
+      loading: false,
+      renderedMessagesChatId: ''
     };
 
     const els = {
@@ -1166,34 +1167,108 @@
       return name || number || '--';
     }
 
+    function getMessageKey(message, index) {
+      return String(
+        message && message.id ||
+        `${message && message.chat_id || ''}|${message && message.timestamp_ts || ''}|${message && message.direction || ''}|${index}`
+      );
+    }
+
+    function getMessageRenderKey(message) {
+      return JSON.stringify([
+        message && message.body || '',
+        message && message.media_mime || '',
+        message && message.media_data || '',
+        message && message.media_filename || '',
+        message && message.ack,
+        message && message.direction || '',
+        message && message.from_me,
+        message && message.timestamp_ts || ''
+      ]);
+    }
+
+    function isMessageListNearBottom() {
+      return els.messageList.scrollHeight - els.messageList.scrollTop - els.messageList.clientHeight < 96;
+    }
+
+    function isMediaActivelyPlaying(row) {
+      const media = row && row.querySelector('audio, video');
+      return Boolean(media && !media.paused && !media.ended);
+    }
+
+    function renderMessageRow(message, conversation, index) {
+      const outgoing = message.direction === 'outgoing' || Number(message.from_me) === 1;
+      const media = renderMessageMedia(message);
+      const body = isMediaPlaceholder(message.body) && media ? '' : message.body;
+      const key = getMessageKey(message, index);
+      const renderKey = getMessageRenderKey(message);
+
+      return `
+        <div class="message-row ${outgoing ? 'outgoing' : 'incoming'}" data-message-key="${escapeHtml(key)}" data-render-key="${escapeHtml(renderKey)}">
+          <div class="bubble">
+            ${outgoing ? '' : `<div class="message-person">${escapeHtml(getMessagePerson(message, conversation))}</div>`}
+            ${media}
+            ${body ? `<div class="message-text">${escapeHtml(body)}</div>` : ''}
+            <div class="message-meta">
+              <span class="message-time">${escapeHtml(formatDateTime(message.timestamp_ts))}</span>
+              ${renderAck(message, outgoing)}
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
     function renderMessages(messages) {
+      const activeChatId = state.selectedChatId || (state.draftPhone ? `draft:${state.draftPhone}` : '');
+
+      if (state.renderedMessagesChatId !== activeChatId) {
+        els.messageList.innerHTML = '';
+        state.renderedMessagesChatId = activeChatId;
+      }
+
       if (!messages.length) {
         els.messageList.innerHTML = '<div class="empty">Sin mensajes para este chat.</div>';
         return;
       }
 
       const conversation = getSelectedConversation();
-      els.messageList.innerHTML = messages.map(message => {
-        const outgoing = message.direction === 'outgoing' || Number(message.from_me) === 1;
-        const media = renderMessageMedia(message);
-        const body = isMediaPlaceholder(message.body) && media ? '' : message.body;
+      const shouldStickToBottom = isMessageListNearBottom() || Boolean(els.messageList.querySelector('.empty'));
+      const existingRows = new Map(Array.from(els.messageList.querySelectorAll('.message-row[data-message-key]')).map(row => [row.dataset.messageKey, row]));
+      const nextKeys = new Set();
+      const empty = els.messageList.querySelector('.empty');
 
-        return `
-          <div class="message-row ${outgoing ? 'outgoing' : 'incoming'}">
-            <div class="bubble">
-              ${outgoing ? '' : `<div class="message-person">${escapeHtml(getMessagePerson(message, conversation))}</div>`}
-              ${media}
-              ${body ? `<div class="message-text">${escapeHtml(body)}</div>` : ''}
-              <div class="message-meta">
-                <span class="message-time">${escapeHtml(formatDateTime(message.timestamp_ts))}</span>
-                ${renderAck(message, outgoing)}
-              </div>
-            </div>
-          </div>
-        `;
-      }).join('');
+      if (empty) {
+        empty.remove();
+      }
 
-      els.messageList.scrollTop = els.messageList.scrollHeight;
+      messages.forEach((message, index) => {
+        const key = getMessageKey(message, index);
+        const renderKey = getMessageRenderKey(message);
+        const existingRow = existingRows.get(key);
+        nextKeys.add(key);
+
+        if (!existingRow) {
+          els.messageList.insertAdjacentHTML('beforeend', renderMessageRow(message, conversation, index));
+          return;
+        }
+
+        if (existingRow.dataset.renderKey !== renderKey && !isMediaActivelyPlaying(existingRow)) {
+          existingRow.outerHTML = renderMessageRow(message, conversation, index);
+          return;
+        }
+
+        els.messageList.appendChild(existingRow);
+      });
+
+      for (const [key, row] of existingRows) {
+        if (!nextKeys.has(key)) {
+          row.remove();
+        }
+      }
+
+      if (shouldStickToBottom) {
+        els.messageList.scrollTop = els.messageList.scrollHeight;
+      }
     }
 
     function renderAck(message, outgoing) {

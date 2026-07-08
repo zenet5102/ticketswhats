@@ -707,7 +707,8 @@
       messageNotificationReady: false,
       messageNotificationStartedAt: 0,
       lastIncomingByChat: new Map(),
-      notificationAudioContext: null
+      notificationAudioContext: null,
+      renderedMessagesChatId: ''
     };
 
     const els = {
@@ -1312,44 +1313,117 @@
       }
     }
 
+    function getMessageKey(message, index) {
+      return String(
+        message && message.id ||
+        `${message && message.chat_id || ''}|${message && message.timestamp_ts || ''}|${message && message.direction || ''}|${index}`
+      );
+    }
+
+    function getMessageRenderKey(message) {
+      return JSON.stringify([
+        message && message.body || '',
+        message && message.media_mime || '',
+        message && message.media_data || '',
+        message && message.media_filename || '',
+        message && message.ack,
+        message && message.direction || '',
+        message && message.from_me,
+        message && message.timestamp_ts || ''
+      ]);
+    }
+
+    function isMessageListNearBottom() {
+      return els.messageList.scrollHeight - els.messageList.scrollTop - els.messageList.clientHeight < 96;
+    }
+
+    function isMediaActivelyPlaying(row) {
+      const media = row && row.querySelector('audio, video');
+      return Boolean(media && !media.paused && !media.ended);
+    }
+
+    function renderMessageRow(message, index) {
+      const direction = message.direction === 'outgoing' ? 'outgoing' : 'incoming';
+      const conversation = state.conversations.find(item => item.chat_id === message.chat_id);
+      const media = renderMessageMedia(message);
+      const body = String(message.body || '').trim();
+      const showBody = body && (!media || !isMediaPlaceholder(body));
+      const personPrefix = direction === 'outgoing' ? 'Para' : 'De';
+      const key = getMessageKey(message, index);
+      const renderKey = getMessageRenderKey(message);
+
+      return `
+        <div class="message-row ${direction}" data-message-key="${escapeHtml(key)}" data-render-key="${escapeHtml(renderKey)}">
+          <div class="bubble">
+            <div class="message-person">${personPrefix}: ${escapeHtml(getMessagePerson(message, conversation))}</div>
+            ${media}
+            ${showBody ? `<div class="message-text">${escapeHtml(body)}</div>` : ''}
+            <div class="message-meta">
+              <span class="message-time">${escapeHtml(formatDateTime(message.timestamp_ts))}</span>
+              ${renderAck(message)}
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
     function renderMessages(messages) {
       if (!state.selectedChatId) {
         els.messageList.innerHTML = '<div class="empty">Sin mensajes seleccionados.</div>';
+        state.renderedMessagesChatId = '';
         setComposerEnabled(false);
         return;
       }
 
       setComposerEnabled(true);
 
+      if (state.renderedMessagesChatId !== state.selectedChatId) {
+        els.messageList.innerHTML = '';
+        state.renderedMessagesChatId = state.selectedChatId;
+      }
+
       if (!messages.length) {
         els.messageList.innerHTML = '<div class="empty">Sin mensajes en esta conversacion.</div>';
         return;
       }
 
-      els.messageList.innerHTML = messages.map(message => {
-        const direction = message.direction === 'outgoing' ? 'outgoing' : 'incoming';
-        const conversation = state.conversations.find(item => item.chat_id === message.chat_id);
-        const media = renderMessageMedia(message);
-        const body = String(message.body || '').trim();
-        const showBody = body && (!media || !isMediaPlaceholder(body));
-        const personPrefix = direction === 'outgoing' ? 'Para' : 'De';
+      const shouldStickToBottom = isMessageListNearBottom() || Boolean(els.messageList.querySelector('.empty'));
+      const existingRows = new Map(Array.from(els.messageList.querySelectorAll('.message-row[data-message-key]')).map(row => [row.dataset.messageKey, row]));
+      const nextKeys = new Set();
+      const empty = els.messageList.querySelector('.empty');
 
-        return `
-          <div class="message-row ${direction}">
-            <div class="bubble">
-              <div class="message-person">${personPrefix}: ${escapeHtml(getMessagePerson(message, conversation))}</div>
-              ${media}
-              ${showBody ? `<div class="message-text">${escapeHtml(body)}</div>` : ''}
-              <div class="message-meta">
-                <span class="message-time">${escapeHtml(formatDateTime(message.timestamp_ts))}</span>
-                ${renderAck(message)}
-              </div>
-            </div>
-          </div>
-        `;
-      }).join('');
+      if (empty) {
+        empty.remove();
+      }
 
-      els.messageList.scrollTop = els.messageList.scrollHeight;
+      messages.forEach((message, index) => {
+        const key = getMessageKey(message, index);
+        const renderKey = getMessageRenderKey(message);
+        const existingRow = existingRows.get(key);
+        nextKeys.add(key);
+
+        if (!existingRow) {
+          els.messageList.insertAdjacentHTML('beforeend', renderMessageRow(message, index));
+          return;
+        }
+
+        if (existingRow.dataset.renderKey !== renderKey && !isMediaActivelyPlaying(existingRow)) {
+          existingRow.outerHTML = renderMessageRow(message, index);
+          return;
+        }
+
+        els.messageList.appendChild(existingRow);
+      });
+
+      for (const [key, row] of existingRows) {
+        if (!nextKeys.has(key)) {
+          row.remove();
+        }
+      }
+
+      if (shouldStickToBottom) {
+        els.messageList.scrollTop = els.messageList.scrollHeight;
+      }
     }
 
     function renderAck(message) {
