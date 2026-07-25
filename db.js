@@ -875,6 +875,10 @@ function isLidChatId(value) {
   return /@lid$/i.test(String(value || '').trim());
 }
 
+function isDirectPhoneChatId(value) {
+  return /@(c\.us|s\.whatsapp\.net)$/i.test(String(value || '').trim());
+}
+
 function normalizeMessagePhone(phone, chatId) {
   const normalized = normalizeChatPhone(phone);
   const lidUser = isLidChatId(chatId) ? normalizeChatPhone(chatId) : '';
@@ -1135,13 +1139,118 @@ function dedupeVisualMessages(rows) {
     .sort((left, right) => {
       const timeDelta = Number(left.timestamp_ts || 0) - Number(right.timestamp_ts || 0);
       return timeDelta || String(left.id || '').localeCompare(String(right.id || ''));
-    });
+  });
+}
+
+function findDirectChatAliases(database, directChatIds) {
+  const cleanDirectChatIds = Array.from(new Set(
+    (Array.isArray(directChatIds) ? directChatIds : [])
+      .map(chatId => String(chatId || '').trim())
+      .filter(isDirectPhoneChatId)
+  ));
+
+  if (!cleanDirectChatIds.length) {
+    return new Map();
+  }
+
+  const rows = database.prepare(`
+    SELECT
+      lid.chat_id AS lid_chat_id,
+      direct.chat_id AS direct_chat_id,
+      COUNT(*) AS matching_messages,
+      MAX(direct.timestamp_ts) AS last_match_ts
+    FROM whatsapp_messages lid
+    JOIN whatsapp_messages direct
+      ON direct.direction = 'outgoing'
+      AND lid.direction = 'outgoing'
+      AND direct.body = lid.body
+      AND direct.chat_id IN (${cleanDirectChatIds.map(() => '?').join(',')})
+      AND ABS(direct.timestamp_ts - lid.timestamp_ts) <= 5000
+    WHERE LOWER(lid.chat_id) LIKE '%@lid'
+      AND lid.chat_id <> 'status@broadcast'
+      AND direct.chat_id <> 'status@broadcast'
+    GROUP BY lid.chat_id, direct.chat_id
+    HAVING matching_messages >= 1
+    ORDER BY matching_messages DESC, last_match_ts DESC
+  `).all(...cleanDirectChatIds);
+
+  const aliases = new Map();
+
+  for (const row of rows) {
+    const lidChatId = String(row.lid_chat_id || '').trim();
+    const directChatId = String(row.direct_chat_id || '').trim();
+
+    if (lidChatId && directChatId && !aliases.has(lidChatId)) {
+      aliases.set(lidChatId, directChatId);
+    }
+  }
+
+  return aliases;
 }
 
 function listWhatsAppMessages(chatId, limit = 200) {
+  const cleanChatId = String(chatId || '').trim();
   const safeLimit = Math.min(Math.max(Number(limit) || 200, 1), 500);
+  const aliasPhone = isDirectPhoneChatId(cleanChatId) ? normalizeChatPhone(cleanChatId) : '';
 
-  const rows = getDb().prepare(`
+  if (!cleanChatId) {
+    return [];
+  }
+
+  const database = getDb();
+  const chatIds = [cleanChatId];
+  const selectedPhones = listWhatsAppChatPhones(cleanChatId)
+    .map(phone => normalizeChatPhone(phone))
+    .filter(Boolean);
+
+  if (aliasPhone) {
+    const aliasRows = database.prepare(`
+      SELECT DISTINCT chat_id
+      FROM whatsapp_messages
+      WHERE LOWER(chat_id) LIKE '%@lid'
+        AND phone = ?
+        AND chat_id <> 'status@broadcast'
+      ORDER BY chat_id
+    `).all(aliasPhone);
+
+    for (const aliasRow of aliasRows) {
+      const aliasChatId = String(aliasRow.chat_id || '').trim();
+
+      if (aliasChatId && !chatIds.includes(aliasChatId)) {
+        chatIds.push(aliasChatId);
+      }
+    }
+
+    const duplicateAliases = findDirectChatAliases(database, [cleanChatId]);
+
+    for (const aliasChatId of duplicateAliases.keys()) {
+      if (aliasChatId && !chatIds.includes(aliasChatId)) {
+        chatIds.push(aliasChatId);
+      }
+    }
+  }
+
+  if (isLidChatId(cleanChatId) && selectedPhones.length) {
+    const placeholders = selectedPhones.map(() => '?').join(',');
+    const directRows = database.prepare(`
+      SELECT DISTINCT chat_id
+      FROM whatsapp_messages
+      WHERE phone IN (${placeholders})
+        AND LOWER(chat_id) NOT LIKE '%@lid'
+        AND chat_id <> 'status@broadcast'
+      ORDER BY chat_id
+    `).all(...selectedPhones);
+
+    for (const directRow of directRows) {
+      const directChatId = String(directRow.chat_id || '').trim();
+
+      if (directChatId && !chatIds.includes(directChatId)) {
+        chatIds.push(directChatId);
+      }
+    }
+  }
+
+  const rows = database.prepare(`
     SELECT
       id,
       chat_id,
@@ -1166,12 +1275,13 @@ function listWhatsAppMessages(chatId, limit = 200) {
     FROM (
       SELECT *
       FROM whatsapp_messages
-      WHERE chat_id = ?
+      WHERE chat_id IN (${chatIds.map(() => '?').join(',')})
+        AND chat_id <> 'status@broadcast'
       ORDER BY timestamp_ts DESC, created_at DESC, id DESC
       LIMIT ?
     )
     ORDER BY timestamp_ts ASC, created_at ASC, id ASC
-  `).all(chatId, safeLimit);
+  `).all(...chatIds, safeLimit);
 
   return dedupeVisualMessages(rows);
 }
