@@ -4,23 +4,48 @@
     <meta charset="UTF-8">
     <title>Enviar WhatsApp</title>
     <style>
+        :root {
+            --bg: #f6f7f9;
+            --panel: #ffffff;
+            --line: #d9dee7;
+            --text: #17202a;
+            --muted: #657386;
+            --accent: #128c7e;
+            --accent-dark: #075e54;
+            --soft: #edf8f5;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
         body {
-            font-family: Arial, sans-serif;
-            background: #f3f4f6;
-            padding: 40px;
+            min-height: 100vh;
+            margin: 0;
+            display: grid;
+            place-items: center;
+            background:
+                linear-gradient(180deg, rgba(18, 140, 126, 0.09), transparent 260px),
+                var(--bg);
+            color: var(--text);
+            font-family: Arial, Helvetica, sans-serif;
+            font-size: 15px;
+            padding: 24px;
         }
 
         .card {
-            max-width: 450px;
-            margin: auto;
-            background: white;
-            padding: 25px;
-            border-radius: 10px;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.12);
+            width: min(520px, 100%);
+            background: var(--panel);
+            padding: 26px;
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            box-shadow: 0 18px 45px rgba(23, 32, 42, 0.12);
         }
 
         h2 {
-            margin-top: 0;
+            margin: 0 0 18px;
+            font-size: 24px;
+            letter-spacing: 0;
         }
 
         .session-row {
@@ -29,40 +54,56 @@
             justify-content: space-between;
             gap: 10px;
             margin-bottom: 18px;
-            color: #64748b;
+            color: var(--muted);
             font-size: 13px;
-            font-weight: bold;
+            font-weight: 700;
         }
 
         label {
             display: block;
             margin-top: 15px;
-            font-weight: bold;
+            color: var(--muted);
+            font-size: 13px;
+            font-weight: 700;
         }
 
-        input, textarea, button {
+        input, textarea {
             width: 100%;
-            padding: 10px;
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            padding: 10px 12px;
             margin-top: 6px;
-            box-sizing: border-box;
-            font-size: 15px;
+            color: var(--text);
+            font: inherit;
+            line-height: 1.35;
+        }
+
+        input:focus, textarea:focus {
+            outline: 2px solid #bfe8d4;
+            border-color: var(--accent);
         }
 
         textarea {
-            min-height: 120px;
+            min-height: 130px;
+            resize: vertical;
         }
 
         button {
+            min-height: 40px;
             margin-top: 20px;
-            background: #16a34a;
+            border: 1px solid var(--accent);
+            border-radius: 8px;
+            background: var(--accent);
             color: white;
-            border: none;
+            padding: 0 12px;
+            font: inherit;
+            font-weight: 700;
             cursor: pointer;
-            border-radius: 6px;
         }
 
         button:hover {
-            background: #15803d;
+            background: var(--accent-dark);
+            border-color: var(--accent-dark);
         }
 
         .logout {
@@ -70,20 +111,25 @@
             min-width: 82px;
             margin-top: 0;
             background: white;
-            color: #111827;
-            border: 1px solid #d1d5db;
+            color: var(--text);
+            border: 1px solid var(--line);
         }
 
         .logout:hover {
-            background: #f9fafb;
+            background: var(--soft);
+            border-color: #bfe8d4;
         }
 
         .result {
+            min-height: 40px;
             margin-top: 15px;
-            padding: 10px;
-            background: #f1f5f9;
-            border-radius: 6px;
+            padding: 10px 12px;
+            background: var(--soft);
+            border: 1px solid #bfe8d4;
+            border-radius: 8px;
+            color: var(--muted);
             font-size: 14px;
+            line-height: 1.35;
         }
     </style>
 </head>

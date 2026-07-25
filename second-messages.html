@@ -7,21 +7,25 @@
   <title>WhatsApp 2</title>
   <style>
     :root {
-      --bg: #f5f7fb;
+      --bg: #e7f0ed;
       --panel: #ffffff;
-      --line: #d7deea;
-      --text: #17202a;
-      --muted: #66758a;
-      --accent: #2563eb;
-      --accent-soft: #e8f0ff;
-      --good: #11845b;
-      --good-soft: #e6f6ee;
+      --panel-soft: #f7fbf9;
+      --line: #d8e5df;
+      --text: #172722;
+      --muted: #61736d;
+      --accent: #00a884;
+      --accent-dark: #008069;
+      --accent-soft: #d9fdd3;
+      --accent-pale: #eef8f4;
+      --good: #008069;
+      --good-soft: #dff8ea;
       --warn: #a16207;
       --warn-soft: #fff4d6;
       --bad: #bd2c2c;
       --bad-soft: #fde8e8;
       --bubble-in: #ffffff;
-      --bubble-out: #e7f0ff;
+      --bubble-out: #d9fdd3;
+      --chat-bg: #efeae2;
     }
 
     * {
@@ -50,8 +54,9 @@
 
     .app-header {
       grid-column: 1 / -1;
-      border-bottom: 1px solid var(--line);
-      background: var(--panel);
+      border-bottom: 1px solid #006c58;
+      background: var(--accent-dark);
+      color: #ffffff;
     }
 
     .app-header-inner {
@@ -69,7 +74,7 @@
       position: sticky;
       top: 0;
       border-right: 1px solid var(--line);
-      background: var(--panel);
+      background: #f7fbf9;
       padding: 16px 12px;
       align-self: start;
     }
@@ -82,7 +87,7 @@
 
     .subtitle {
       margin-top: 4px;
-      color: var(--muted);
+      color: #d2f4e8;
       font-size: 13px;
     }
 
@@ -154,24 +159,30 @@
 
     .nav-link:hover,
     .nav-link.active {
-      background: var(--accent-soft);
-      color: var(--accent);
+      background: var(--accent-pale);
+      color: var(--accent-dark);
       font-weight: 700;
     }
 
     .session-chip {
-      color: var(--muted);
+      color: #e8fff6;
       cursor: default;
-      background: #f8fafc;
+      background: rgba(255, 255, 255, 0.14);
+      border-color: rgba(255, 255, 255, 0.24);
       font-size: 13px;
       font-weight: 700;
     }
 
     button.primary {
-      border-color: var(--accent);
-      background: var(--accent);
+      border-color: var(--accent-dark);
+      background: var(--accent-dark);
       color: #ffffff;
       font-weight: 700;
+    }
+
+    button.primary:hover {
+      background: #006b59;
+      border-color: #006b59;
     }
 
     button.danger {
@@ -185,7 +196,8 @@
     }
 
     input,
-    textarea {
+    textarea,
+    select {
       width: 100%;
       border: 1px solid var(--line);
       border-radius: 8px;
@@ -197,14 +209,15 @@
     }
 
     input:focus,
-    textarea:focus {
-      outline: 2px solid #bfdbfe;
+    textarea:focus,
+    select:focus {
+      outline: 2px solid #9de7d3;
       border-color: var(--accent);
     }
 
     textarea {
-      min-height: 78px;
-      max-height: 180px;
+      min-height: 56px;
+      max-height: 130px;
       resize: vertical;
     }
 
@@ -230,20 +243,21 @@
     .metric {
       min-height: 88px;
       padding: 14px;
+      border-top: 3px solid var(--accent);
     }
 
     .metric-actions {
       display: flex;
       flex-wrap: wrap;
-      gap: 8px;
-      margin-top: 12px;
+      gap: 6px;
+      margin-top: 10px;
     }
 
     .metric-actions button {
-      min-height: 34px;
-      flex: 1 1 110px;
-      padding: 0 10px;
-      font-size: 13px;
+      min-height: 28px;
+      flex: 1 1 86px;
+      padding: 0 8px;
+      font-size: 12px;
     }
 
     .metric-label {
@@ -304,7 +318,7 @@
 
     .layout {
       display: grid;
-      grid-template-columns: 380px minmax(0, 1fr);
+      grid-template-columns: 340px minmax(0, 1fr) 320px;
       gap: 14px;
       align-items: start;
     }
@@ -317,6 +331,7 @@
       align-items: center;
       justify-content: space-between;
       gap: 10px;
+      background: var(--panel-soft);
     }
 
     .panel-title {
@@ -333,7 +348,7 @@
       font-size: 12px;
       font-weight: 700;
       color: var(--muted);
-      background: #f1f5f9;
+      background: #edf6f2;
       border: 1px solid var(--line);
       white-space: nowrap;
     }
@@ -362,10 +377,11 @@
       gap: 8px;
       padding: 12px;
       border-bottom: 1px solid var(--line);
+      background: var(--panel-soft);
     }
 
     .chat-list {
-      height: 590px;
+      height: 470px;
       overflow: auto;
     }
 
@@ -382,11 +398,17 @@
       gap: 3px;
       padding: 10px 12px;
       text-align: left;
+      cursor: pointer;
     }
 
     .chat-item:hover,
     .chat-item.active {
-      background: var(--accent-soft);
+      background: var(--accent-pale);
+    }
+
+    .chat-item.active {
+      border-left: 4px solid var(--accent);
+      padding-left: 8px;
     }
 
     .chat-top {
@@ -396,12 +418,37 @@
       min-width: 0;
     }
 
+    .chat-name-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      min-width: 0;
+    }
+
     .chat-name {
       font-weight: 700;
       min-width: 0;
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
+    }
+
+    .pin-chat-btn {
+      min-width: 34px;
+      min-height: 28px;
+      flex: 0 0 auto;
+      padding: 0 8px;
+      border-color: #c9ded6;
+      background: #ffffff;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .pin-chat-btn.pinned {
+      border-color: #a7e4c3;
+      background: var(--accent-soft);
+      color: var(--accent-dark);
     }
 
     .chat-time {
@@ -419,6 +466,75 @@
       white-space: nowrap;
     }
 
+    .chat-owner-row {
+      display: flex;
+      min-width: 0;
+    }
+
+    .badge.chat-owner {
+      min-height: 22px;
+      max-width: 100%;
+      padding: 2px 7px;
+      font-size: 11px;
+      justify-content: flex-start;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .client-panel {
+      min-height: 470px;
+    }
+
+    .client-body {
+      padding: 12px;
+      display: grid;
+      gap: 12px;
+    }
+
+    .client-name {
+      font-size: 17px;
+      font-weight: 700;
+      line-height: 1.3;
+      overflow-wrap: anywhere;
+    }
+
+    .client-subtitle {
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.35;
+      overflow-wrap: anywhere;
+    }
+
+    .client-fields {
+      display: grid;
+      gap: 8px;
+    }
+
+    .client-field {
+      border-top: 1px solid var(--line);
+      padding-top: 8px;
+    }
+
+    .client-label {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+      text-transform: uppercase;
+    }
+
+    .client-value {
+      margin-top: 3px;
+      line-height: 1.35;
+      overflow-wrap: anywhere;
+    }
+
+    .ticket-status {
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.35;
+      min-height: 18px;
+    }
+
     .chat-head {
       min-height: 64px;
       border-bottom: 1px solid var(--line);
@@ -427,6 +543,32 @@
       align-items: center;
       justify-content: space-between;
       gap: 12px;
+      background: var(--panel-soft);
+    }
+
+    .chat-actions {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .transfer-controls {
+      display: none;
+      grid-template-columns: minmax(130px, 180px) auto;
+      gap: 8px;
+      align-items: center;
+    }
+
+    .transfer-controls.visible {
+      display: grid;
+    }
+
+    .transfer-controls select {
+      min-height: 38px;
+      padding: 0 10px;
+      font-size: 13px;
     }
 
     .chat-title {
@@ -436,10 +578,13 @@
     }
 
     .messages {
-      height: 456px;
+      height: 340px;
       overflow: auto;
       padding: 16px;
-      background: #eef1f5;
+      background:
+        radial-gradient(circle at 18px 18px, rgba(0, 128, 105, 0.055) 0 1px, transparent 1px 30px),
+        radial-gradient(circle at 46px 42px, rgba(80, 99, 92, 0.04) 0 1px, transparent 1px 34px),
+        var(--chat-bg);
       display: flex;
       flex-direction: column;
       gap: 10px;
@@ -456,17 +601,17 @@
 
     .bubble {
       max-width: min(74%, 580px);
-      border: 1px solid var(--line);
+      border: 1px solid rgba(17, 39, 34, 0.08);
       border-radius: 8px;
       padding: 9px 10px;
       background: var(--bubble-in);
-      box-shadow: 0 1px 1px rgba(15, 23, 42, 0.05);
+      box-shadow: 0 1px 1px rgba(17, 39, 34, 0.12);
       overflow-wrap: anywhere;
     }
 
     .message-row.outgoing .bubble {
       background: var(--bubble-out);
-      border-color: #c8d9ff;
+      border-color: #c3efbd;
     }
 
     .message-person {
@@ -489,7 +634,7 @@
       max-height: 360px;
       object-fit: contain;
       border-radius: 8px;
-      border: 1px solid #c8d9ff;
+      border: 1px solid #c3efbd;
       background: #ffffff;
       margin-bottom: 8px;
     }
@@ -506,7 +651,7 @@
       max-width: 100%;
       border: 1px solid var(--line);
       border-radius: 8px;
-      background: #ffffff;
+      background: #f7fbf9;
       color: var(--muted);
       padding: 8px 10px;
       margin-bottom: 8px;
@@ -533,7 +678,7 @@
     }
 
     .message-ack.read {
-      color: #0ea5e9;
+      color: #34b7f1;
     }
 
     .message-ack.error {
@@ -545,7 +690,7 @@
       padding: 12px;
       display: grid;
       gap: 10px;
-      background: #ffffff;
+      background: #f0f2f5;
     }
 
     .composer-bottom {
@@ -622,7 +767,7 @@
       }
 
       .messages {
-        height: 420px;
+        height: 340px;
       }
     }
 
@@ -675,6 +820,65 @@
       color: white;
       font-size: 40px;
       cursor: pointer;
+    }
+
+    .ticket-modal {
+      display: none;
+      position: fixed;
+      z-index: 10000;
+      inset: 0;
+      background: rgba(17, 39, 34, 0.55);
+      padding: 18px;
+    }
+
+    .ticket-modal.visible {
+      display: grid;
+      place-items: center;
+    }
+
+    .ticket-dialog {
+      width: min(560px, 100%);
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      box-shadow: 0 20px 50px rgba(17, 39, 34, 0.22);
+      overflow: hidden;
+    }
+
+    .ticket-dialog-head {
+      padding: 14px;
+      border-bottom: 1px solid var(--line);
+      background: var(--panel-soft);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+    }
+
+    .ticket-dialog-title {
+      font-weight: 700;
+    }
+
+    .ticket-dialog-body {
+      padding: 14px;
+      display: grid;
+      gap: 12px;
+    }
+
+    .ticket-dialog-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+      padding: 12px 14px 14px;
+      border-top: 1px solid var(--line);
+    }
+
+    .ticket-dialog label {
+      display: grid;
+      gap: 6px;
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 700;
     }
   </style>
 </head>
@@ -760,7 +964,13 @@
             <div class="chat-title" id="chatTitle">Selecciona un chat</div>
             <div class="chat-meta" id="chatMeta">--</div>
           </div>
-          <span class="badge warn" id="chatBadge">Sin chat</span>
+          <div class="chat-actions">
+            <div id="transferControls" class="transfer-controls">
+              <select id="transferOperator" aria-label="Operador"></select>
+              <button id="transferBtn" type="button">Transferir</button>
+            </div>
+            <span class="badge warn" id="chatBadge">Sin chat</span>
+          </div>
         </div>
         <div id="messageList" class="messages">
           <div class="empty">Sin mensajes seleccionados.</div>
@@ -777,12 +987,44 @@
           <div id="sendError" class="error-text"></div>
         </form>
       </section>
+
+      <aside class="panel client-panel">
+        <div class="panel-head">
+          <div class="panel-title">Cliente</div>
+          <span id="clientBadge" class="badge warn">Sin chat</span>
+        </div>
+        <div id="clientBody" class="client-body">
+          <div class="empty">Selecciona un chat.</div>
+        </div>
+      </aside>
     </section>
     </main>
   </div>
   <div id="imageModal" class="modal">
     <span class="close" onclick="closeImageModal()">&times;</span>
     <img id="modalImage" class="modal-content">
+  </div>
+  <div id="ticketModal" class="ticket-modal" aria-hidden="true">
+    <form id="ticketForm" class="ticket-dialog">
+      <div class="ticket-dialog-head">
+        <div class="ticket-dialog-title">Crear ticket de comunicacion</div>
+        <button id="ticketCancelBtn" type="button">Cancelar</button>
+      </div>
+      <div class="ticket-dialog-body">
+        <label>
+          Asunto
+          <input id="ticketSubject" type="text" autocomplete="off" required>
+        </label>
+        <label>
+          Descripcion
+          <textarea id="ticketDescription" required></textarea>
+        </label>
+        <div id="ticketModalStatus" class="ticket-status"></div>
+      </div>
+      <div class="ticket-dialog-actions">
+        <button id="ticketSubmitBtn" class="primary" type="submit">Crear ticket</button>
+      </div>
+    </form>
   </div>
   <script>
     function openImageModal(src) {
@@ -795,10 +1037,19 @@
     }
     const state = {
       auth: null,
+      operators: [],
       conversations: [],
+      pinnedChatIds: [],
       selectedChatId: '',
       draftPhone: '',
       draftName: '',
+      clientDetails: null,
+      clientCandidates: [],
+      clientTickets: [],
+      clientLiveData: null,
+      clientLiveReceivedAt: '',
+      clientLoading: false,
+      clientLoadedFor: '',
       mediaLimitBytes: 15 * 1024 * 1024,
       loading: false,
       renderedMessagesChatId: ''
@@ -811,6 +1062,8 @@
       chatList: document.getElementById('chatList'),
       chatMeta: document.getElementById('chatMeta'),
       chatTitle: document.getElementById('chatTitle'),
+      clientBadge: document.getElementById('clientBadge'),
+      clientBody: document.getElementById('clientBody'),
       clearFileBtn: document.getElementById('clearFileBtn'),
       lastRefresh: document.getElementById('lastRefresh'),
       loadedBadge: document.getElementById('loadedBadge'),
@@ -831,10 +1084,81 @@
       sendError: document.getElementById('sendError'),
       sessionBadge: document.getElementById('sessionBadge'),
       startChatBtn: document.getElementById('startChatBtn'),
+      ticketCancelBtn: document.getElementById('ticketCancelBtn'),
+      ticketDescription: document.getElementById('ticketDescription'),
+      ticketForm: document.getElementById('ticketForm'),
+      ticketModal: document.getElementById('ticketModal'),
+      ticketModalStatus: document.getElementById('ticketModalStatus'),
+      ticketSubject: document.getElementById('ticketSubject'),
+      ticketSubmitBtn: document.getElementById('ticketSubmitBtn'),
+      transferBtn: document.getElementById('transferBtn'),
+      transferControls: document.getElementById('transferControls'),
+      transferOperator: document.getElementById('transferOperator'),
       usersLink: document.getElementById('usersLink'),
       whatsappDetail: document.getElementById('whatsappDetail'),
       whatsappState: document.getElementById('whatsappState')
     };
+
+    function getPinnedStorageKey() {
+      const username = state.auth && state.auth.username || 'anon';
+      return `secondPinnedChats:${username}`;
+    }
+
+    function readPinnedChatIds() {
+      try {
+        const raw = window.localStorage.getItem(getPinnedStorageKey());
+        const parsed = JSON.parse(raw || '[]');
+        return Array.isArray(parsed)
+          ? parsed.map(item => String(item || '').trim()).filter(Boolean)
+          : [];
+      } catch (error) {
+        return [];
+      }
+    }
+
+    function savePinnedChatIds() {
+      try {
+        window.localStorage.setItem(getPinnedStorageKey(), JSON.stringify(state.pinnedChatIds));
+      } catch (error) {
+        // localStorage can be unavailable in restricted browser modes.
+      }
+    }
+
+    function isChatPinned(chatId) {
+      return state.pinnedChatIds.includes(String(chatId || '').trim());
+    }
+
+    function togglePinnedChat(chatId) {
+      const cleanChatId = String(chatId || '').trim();
+
+      if (!cleanChatId) {
+        return;
+      }
+
+      if (isChatPinned(cleanChatId)) {
+        state.pinnedChatIds = state.pinnedChatIds.filter(item => item !== cleanChatId);
+      } else {
+        state.pinnedChatIds = [cleanChatId, ...state.pinnedChatIds].slice(0, 50);
+      }
+
+      savePinnedChatIds();
+      sortConversations();
+      renderConversations();
+    }
+
+    function sortConversations() {
+      const originalIndex = new Map(state.conversations.map((conversation, index) => [conversation.chat_id, index]));
+      state.conversations = [...state.conversations].sort((left, right) => {
+        const leftPinned = isChatPinned(left.chat_id);
+        const rightPinned = isChatPinned(right.chat_id);
+
+        if (leftPinned !== rightPinned) {
+          return leftPinned ? -1 : 1;
+        }
+
+        return (originalIndex.get(left.chat_id) || 0) - (originalIndex.get(right.chat_id) || 0);
+      });
+    }
 
     function escapeHtml(value) {
       return String(value || '')
@@ -851,28 +1175,41 @@
 
     function normalizeNewChatPhone(value) {
       let phone = cleanPhone(value).replace(/^00+/, '');
+      const defaultAreaCode = '11';
 
       if (!phone) {
         return '';
       }
 
       if (phone.startsWith('549')) {
-        return phone;
-      }
+        phone = phone.slice(3);
+      } else if (phone.startsWith('54')) {
+        phone = phone.slice(2);
 
-      if (phone.startsWith('54')) {
-        return '549' + phone.slice(2).replace(/^15/, '');
+        if (phone.startsWith('9')) {
+          phone = phone.slice(1);
+        }
       }
 
       phone = phone.replace(/^0+/, '');
 
-      if (/^1115\d{8}$/.test(phone)) {
-        phone = '11' + phone.slice(4);
-      } else if (phone.startsWith('15') && phone.length >= 10) {
-        phone = '11' + phone.slice(2);
+      if (phone.startsWith('15') && phone.length < 11) {
+        phone = defaultAreaCode + phone.slice(2);
       }
 
-      return '549' + phone;
+      if (phone.length > 10) {
+        for (let areaLength = 2; areaLength <= 4; areaLength += 1) {
+          const prefix = phone.slice(0, areaLength);
+          const rest = phone.slice(areaLength);
+
+          if (rest.startsWith('15') && (prefix + rest.slice(2)).length === 10) {
+            phone = prefix + rest.slice(2);
+            break;
+          }
+        }
+      }
+
+      return phone.length === 10 ? '549' + phone : '';
     }
 
     function getPhoneFromChatId(chatId) {
@@ -883,6 +1220,20 @@
       }
 
       return cleanPhone(text.split('@')[0]);
+    }
+
+    function isTechnicalChatId(value) {
+      return /@(c\.us|s\.whatsapp\.net|lid)$/i.test(String(value || '').trim());
+    }
+
+    function getDisplayChatId(value) {
+      const text = String(value || '').trim();
+
+      if (!text || isTechnicalChatId(text)) {
+        return '';
+      }
+
+      return text;
     }
 
     function getDisplayPhone(phone, chatId) {
@@ -925,7 +1276,10 @@
         return '--';
       }
 
-      return conversation.contact_name || getDisplayPhone(conversation.phone, conversation.chat_id) || conversation.chat_id || '--';
+      return conversation.contact_name ||
+        getDisplayPhone(conversation.phone, conversation.chat_id) ||
+        getDisplayChatId(conversation.chat_id) ||
+        'Cliente';
     }
 
     function getConversationMeta(conversation) {
@@ -934,17 +1288,68 @@
       }
 
       const phone = getDisplayPhone(conversation.phone, conversation.chat_id);
-      const chatId = conversation.chat_id || '';
+      const chatId = getDisplayChatId(conversation.chat_id);
 
-      if (phone && chatId && getPhoneFromChatId(chatId) !== phone) {
+      if (phone && chatId) {
         return `${phone} | ${chatId}`;
       }
 
-      return phone || chatId || '--';
+      return phone || chatId || 'Sin telefono';
     }
 
     function getSelectedConversation() {
       return state.conversations.find(item => item.chat_id === state.selectedChatId) || null;
+    }
+
+    function getOperatorName(username) {
+      const cleanUsername = String(username || '').trim().toLowerCase();
+      const operator = state.operators.find(item => item.username === cleanUsername);
+
+      return operator ? operator.name || operator.username : cleanUsername;
+    }
+
+    function getConversationOwnerText(conversation) {
+      const owner = String(conversation && conversation.owner_username || '').trim();
+      return owner ? getOperatorName(owner) : 'Sin asignar';
+    }
+
+    function getConversationOwnerTone(conversation) {
+      return String(conversation && conversation.owner_username || '').trim() ? 'good' : 'warn';
+    }
+
+    function renderTransferControls() {
+      const conversation = getSelectedConversation();
+      const isAdmin = Boolean(state.auth && state.auth.isAdmin);
+
+      els.transferControls.classList.toggle('visible', isAdmin && Boolean(conversation));
+      els.transferBtn.disabled = !isAdmin || !conversation || !els.transferOperator.value;
+
+      if (!isAdmin) {
+        return;
+      }
+
+      const currentOwner = String(conversation && conversation.owner_username || '').trim();
+      const selectedOwner = String(els.transferOperator.value || currentOwner || '').trim();
+      els.transferOperator.innerHTML = [
+        '<option value="">Operador</option>',
+        ...state.operators.map(operator => {
+          const selected = operator.username === selectedOwner ? ' selected' : '';
+          return `<option value="${escapeHtml(operator.username)}"${selected}>${escapeHtml(operator.name || operator.username)}</option>`;
+        })
+      ].join('');
+
+      els.transferBtn.disabled = !conversation || !els.transferOperator.value;
+    }
+
+    function getSelectedClientLookup() {
+      const conversation = getSelectedConversation();
+      const phone = state.draftPhone || conversation && getDisplayPhone(conversation.phone, conversation.chat_id) || '';
+      const chatId = conversation && conversation.chat_id || '';
+
+      return {
+        phone: cleanPhone(phone),
+        chatId
+      };
     }
 
     async function fetchJson(url, options = {}) {
@@ -962,6 +1367,387 @@
       }
 
       return data;
+    }
+
+    function renderClientField(label, value) {
+      const text = String(value || '').trim();
+
+      if (!text) {
+        return '';
+      }
+
+      return `
+        <div class="client-field">
+          <div class="client-label">${escapeHtml(label)}</div>
+          <div class="client-value">${escapeHtml(text)}</div>
+        </div>
+      `;
+    }
+
+    function findClientValue(source, keys) {
+      const stack = [source].filter(Boolean);
+      const seen = new Set();
+
+      while (stack.length) {
+        const current = stack.shift();
+
+        if (!current || typeof current !== 'object' || seen.has(current)) {
+          continue;
+        }
+
+        seen.add(current);
+
+        for (const key of keys) {
+          if (current[key] !== undefined && current[key] !== null && current[key] !== '') {
+            return String(current[key]).trim();
+          }
+        }
+
+        for (const value of Object.values(current)) {
+          if (value && typeof value === 'object') {
+            stack.push(value);
+          }
+        }
+      }
+
+      return '';
+    }
+
+    function getClientField(client, keys) {
+      return findClientValue(state.clientLiveData, keys) || findClientValue(client, keys);
+    }
+
+    function getClientDisplayName(client) {
+      if (!client) {
+        return '';
+      }
+
+      const fullName = [
+        getClientField(client, ['apellido', 'Apellido']),
+        getClientField(client, ['nombre', 'Nombre'])
+      ].map(value => String(value || '').trim()).filter(Boolean).join(', ');
+      return getClientField(client, ['razonSocial', 'razon_social', 'RazonSocial', 'Razon_Social', 'Razon Social']) ||
+        fullName ||
+        getClientField(client, ['id', 'ID', 'IDA', 'ida']) ||
+        '';
+    }
+
+    function getClientOptionText(client) {
+      const name = getClientDisplayName(client) || 'Cliente';
+      const id = getClientField(client, ['id', 'ID', 'IDA', 'ida']);
+      const phone = getClientField(client, ['movil', 'Movil', 'telefono', 'Telefono']);
+
+      return [name, id ? `ID ${id}` : '', phone].filter(Boolean).join(' | ');
+    }
+
+    function renderClientCandidatesSelector() {
+      if (!state.clientCandidates.length) {
+        return '';
+      }
+
+      return `
+        <select id="clientCandidateSelect" aria-label="Cliente">
+          ${state.clientCandidates.map((client, index) => {
+            const selected = client === state.clientDetails ? ' selected' : '';
+            return `<option value="${index}"${selected}>${escapeHtml(getClientOptionText(client))}</option>`;
+          }).join('')}
+        </select>
+      `;
+    }
+
+    function getTicketDisplayText(ticket) {
+      const body = String(ticket && ticket.body || '').trim();
+      const timestamp = ticket && ticket.timestamp_ts ? formatDateTime(ticket.timestamp_ts) : '';
+
+      return [body, timestamp ? `Registrado ${timestamp}` : ''].filter(Boolean).join(' | ');
+    }
+
+    function renderClientTickets() {
+      if (!state.clientTickets.length) {
+        return '';
+      }
+
+      return `
+        <div class="client-fields">
+          <div class="client-field">
+            <div class="client-label">Ticket de comunicacion</div>
+            <div class="client-value">${escapeHtml(getTicketDisplayText(state.clientTickets[0]))}</div>
+          </div>
+        </div>
+      `;
+    }
+
+    function renderClientDetails() {
+      const lookup = getSelectedClientLookup();
+
+      if (!lookup.phone && !lookup.chatId) {
+        setBadge(els.clientBadge, 'Sin chat', 'warn');
+        els.clientBody.innerHTML = '<div class="empty">Selecciona un chat.</div>';
+        return;
+      }
+
+      if (state.clientLoading) {
+        setBadge(els.clientBadge, 'Buscando', 'warn');
+        els.clientBody.innerHTML = '<div class="empty">Cargando datos del cliente...</div>';
+        return;
+      }
+
+      const client = state.clientDetails;
+
+      if (!client) {
+        setBadge(els.clientBadge, 'No encontrado', 'bad');
+        els.clientBody.innerHTML = `
+          <div>
+            <div class="client-name">${escapeHtml(lookup.phone || lookup.chatId || 'Cliente')}</div>
+            <div class="client-subtitle">No hay datos sincronizados para este telefono.</div>
+          </div>
+          ${renderClientTickets()}
+          <button id="searchClientByPhoneBtn" type="button">Buscar por telefono</button>
+          <button id="createTicketBtn" class="primary" type="button">Generar ticket</button>
+          <div id="ticketStatus" class="ticket-status"></div>
+        `;
+        bindClientActions();
+        return;
+      }
+
+      const estado = getClientField(client, ['estado', 'Estado']);
+      const id = getClientField(client, ['id', 'ID', 'IDA', 'ida']);
+      const documento = getClientField(client, ['documento', 'Documento']);
+      const cuit = getClientField(client, ['cuit', 'CUIT']);
+      const receivedText = state.clientLiveReceivedAt ? `Actualizado ${formatDateTime(state.clientLiveReceivedAt)}` : '';
+
+      setBadge(els.clientBadge, estado || 'Cliente', estado && String(estado).toLowerCase() === 'activo' ? 'good' : 'warn');
+      els.clientBody.innerHTML = `
+        <div>
+          <div class="client-name">${escapeHtml(getClientDisplayName(client) || 'Cliente')}</div>
+          <div class="client-subtitle">${escapeHtml([id ? `ID ${id}` : '', documento, cuit].filter(Boolean).join(' | ') || lookup.phone)}</div>
+          ${receivedText ? `<div class="client-subtitle">${escapeHtml(receivedText)}</div>` : ''}
+        </div>
+        ${state.clientCandidates.length > 1 ? renderClientCandidatesSelector() : ''}
+        ${renderClientTickets()}
+        <div class="client-fields">
+          ${renderClientField('Estado', estado)}
+          ${renderClientField('Deuda', getClientField(client, ['deuda', 'Deuda', 'balance', 'Balance_CC', 'Balance']))}
+          ${renderClientField('Movil', getClientField(client, ['movil', 'Movil', 'Celular', 'celular']))}
+          ${renderClientField('Telefono', getClientField(client, ['telefono', 'Telefono', 'Tel']))}
+          ${renderClientField('Direccion', [
+            getClientField(client, ['direccion', 'Direccion']),
+            getClientField(client, ['dirNumero', 'dir_numero', 'Dir_Numero']),
+            getClientField(client, ['barrio', 'Barrio']),
+            getClientField(client, ['ciudad', 'Ciudad'])
+          ].filter(Boolean).join(' '))}
+          ${renderClientField('Perfil', getClientField(client, ['perfil', 'Perfil']))}
+          ${renderClientField('Factura', getClientField(client, ['fechaUltimaFactura', 'fecha_ultima_factura', 'Fecha_Ultima_Factura']))}
+          ${renderClientField('Comprobantes', getClientField(client, ['comprobantesAdeudados', 'comprobantes_adeudados', 'C_Comprobantes_Adeudados']))}
+        </div>
+        <button id="refreshClientBtn" type="button">Actualizar</button>
+        <button id="createTicketBtn" class="primary" type="button">Generar ticket</button>
+        <div id="ticketStatus" class="ticket-status"></div>
+      `;
+      bindClientActions();
+    }
+
+    function bindClientActions() {
+      const refreshClientBtn = document.getElementById('refreshClientBtn');
+      const searchClientByPhoneBtn = document.getElementById('searchClientByPhoneBtn');
+      const clientCandidateSelect = document.getElementById('clientCandidateSelect');
+      const createTicketBtn = document.getElementById('createTicketBtn');
+      const ticketStatus = document.getElementById('ticketStatus');
+
+      if (searchClientByPhoneBtn) {
+        searchClientByPhoneBtn.addEventListener('click', () => loadClientDetails({ force: true, manual: true }).catch(error => {
+          setBadge(els.clientBadge, 'Error', 'bad');
+          els.clientBody.innerHTML = `<div class="empty">${escapeHtml(error.message)}</div>`;
+        }));
+      }
+
+      if (refreshClientBtn) {
+        refreshClientBtn.addEventListener('click', () => refreshClientDetails().catch(error => {
+          setBadge(els.clientBadge, 'Error', 'bad');
+          els.clientBody.innerHTML = `<div class="empty">${escapeHtml(error.message)}</div>`;
+        }));
+      }
+
+      if (clientCandidateSelect) {
+        clientCandidateSelect.addEventListener('change', () => {
+          const index = Number.parseInt(clientCandidateSelect.value, 10);
+          state.clientDetails = state.clientCandidates[index] || state.clientDetails;
+          state.clientLiveData = null;
+          state.clientLiveReceivedAt = '';
+          renderClientDetails();
+        });
+      }
+
+      if (createTicketBtn) {
+        createTicketBtn.addEventListener('click', () => openTicketModal(ticketStatus).catch(error => {
+          if (ticketStatus) {
+            ticketStatus.textContent = error.message;
+          }
+        }));
+      }
+    }
+
+    function getCommunicationTicketDraft() {
+      const client = state.clientDetails;
+      const id = getClientField(client, ['id', 'ID', 'IDA', 'ida']);
+      const clientName = getClientDisplayName(client) || 'cliente';
+      const conversation = getSelectedConversation();
+      const phone = getSelectedClientLookup().phone;
+      const lastMessage = String(conversation && conversation.body || '').trim();
+      const asunto = `Comunicacion WhatsApp - ${clientName}`;
+      const note = [
+        `Comunicacion registrada desde WhatsApp con ${clientName}.`,
+        phone ? `Telefono: ${phone}.` : '',
+        lastMessage ? `Ultimo mensaje: ${lastMessage}` : ''
+      ].filter(Boolean).join('\n');
+
+      return {
+        id,
+        asunto,
+        note
+      };
+    }
+
+    async function openTicketModal(statusElement) {
+      const draft = getCommunicationTicketDraft();
+
+      if (!draft.id) {
+        throw new Error('Falta IDA del cliente');
+      }
+
+      els.ticketSubject.value = draft.asunto;
+      els.ticketDescription.value = draft.note;
+      els.ticketModalStatus.textContent = '';
+      els.ticketModal.dataset.statusTarget = statusElement ? statusElement.id || '' : '';
+      els.ticketModal.classList.add('visible');
+      els.ticketModal.setAttribute('aria-hidden', 'false');
+      setTimeout(() => els.ticketSubject.focus(), 0);
+    }
+
+    function closeTicketModal() {
+      els.ticketModal.classList.remove('visible');
+      els.ticketModal.setAttribute('aria-hidden', 'true');
+      els.ticketModalStatus.textContent = '';
+    }
+
+    async function createCommunicationTicket(asunto, note, button, statusElement) {
+      const draft = getCommunicationTicketDraft();
+      const id = draft.id;
+
+      if (!id) {
+        throw new Error('Falta IDA del cliente');
+      }
+
+      if (button) {
+        button.disabled = true;
+      }
+
+      if (statusElement) {
+        statusElement.textContent = 'Generando ticket...';
+      }
+
+      try {
+        const conversation = getSelectedConversation();
+        const data = await fetchJson('/api/phantom/tickets/comunicacion', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            IDA: id,
+            Asunto: asunto,
+            Detalle: note,
+            chatId: conversation && conversation.chat_id || '',
+            phone: getSelectedClientLookup().phone,
+            contactName: getClientDisplayName(state.clientDetails) || conversation && conversation.contact_name || ''
+          })
+        });
+
+        if (statusElement) {
+          const ticketNumber = data.ticket && data.ticket.ticketNumber || '';
+          statusElement.textContent = ticketNumber
+            ? `Ticket de comunicacion #${ticketNumber} generado.`
+            : 'Ticket de comunicacion generado.';
+          const panelStatus = document.getElementById('ticketStatus');
+
+          if (panelStatus) {
+            panelStatus.textContent = statusElement.textContent;
+          }
+        }
+        if (data.message) {
+          state.clientTickets = [data.message, ...state.clientTickets].slice(0, 5);
+          renderClientDetails();
+        }
+        await loadMessages();
+        closeTicketModal();
+      } finally {
+        if (button) {
+          button.disabled = false;
+        }
+      }
+    }
+
+    async function loadClientDetails(options = {}) {
+      const lookup = getSelectedClientLookup();
+      const lookupKey = lookup.phone || lookup.chatId;
+
+      if (!lookupKey) {
+        state.clientDetails = null;
+        state.clientCandidates = [];
+        state.clientTickets = [];
+        state.clientLiveData = null;
+        state.clientLiveReceivedAt = '';
+        state.clientLoadedFor = '';
+        renderClientDetails();
+        return;
+      }
+
+      if (!options.force && state.clientLoadedFor === lookupKey) {
+        renderClientDetails();
+        return;
+      }
+
+      state.clientLoading = true;
+      state.clientLoadedFor = lookupKey;
+      renderClientDetails();
+
+      try {
+        const params = lookup.phone
+          ? 'phone=' + encodeURIComponent(lookup.phone)
+          : 'chatId=' + encodeURIComponent(lookup.chatId);
+        const data = await fetchJson('/api/client-details?' + params);
+        state.clientDetails = data.client || null;
+        state.clientCandidates = data.clients || (data.client ? [data.client] : []);
+        state.clientTickets = data.tickets || [];
+        state.clientLiveData = null;
+        state.clientLiveReceivedAt = '';
+      } finally {
+        state.clientLoading = false;
+        renderClientDetails();
+      }
+    }
+
+    async function refreshClientDetails() {
+      await loadClientDetails({ force: true });
+
+      const client = state.clientDetails;
+      const id = getClientField(client, ['id', 'ID', 'IDA', 'ida']);
+
+      if (!client || !id) {
+        return;
+      }
+
+      state.clientLoading = true;
+      renderClientDetails();
+
+      try {
+        const data = await fetchJson('/api/phantom/cliente-avanzada?IDA=' + encodeURIComponent(id));
+        state.clientLiveData = data.data || null;
+        state.clientLiveReceivedAt = data.receivedAt || new Date().toISOString();
+      } finally {
+        state.clientLoading = false;
+        renderClientDetails();
+      }
     }
 
     async function resolveDraftContact(phone, fallbackName = '') {
@@ -1068,8 +1854,10 @@
         ? `${mysql.database}.${mysql.table}`
         : (mysql.lastError || `${mysql.host || '--'}:${mysql.port || '--'}`);
 
-      if (!whatsapp.ready && whatsapp.qrSvg) {
-        els.qrImage.src = whatsapp.qrSvg;
+      const qrSource = whatsapp.qrSvg || whatsapp.qr || '';
+
+      if (!whatsapp.ready && qrSource) {
+        els.qrImage.src = qrSource;
         els.qrPanel.hidden = false;
       } else {
         els.qrPanel.hidden = true;
@@ -1099,30 +1887,64 @@
 
       els.chatList.innerHTML = state.conversations.map(conversation => {
         const active = conversation.chat_id === state.selectedChatId ? ' active' : '';
+        const pinned = isChatPinned(conversation.chat_id);
+        const pinnedClass = pinned ? ' pinned' : '';
+        const pinnedLabel = pinned ? 'Fijado' : 'Fijar';
         const preview = conversation.media_mime && isMediaPlaceholder(conversation.body)
           ? getMediaLabelFromMime(conversation.media_mime)
           : conversation.body;
 
         return `
-          <button class="chat-item${active}" type="button" data-chat-id="${escapeHtml(conversation.chat_id)}">
+          <div class="chat-item${active}" role="button" tabindex="0" data-chat-id="${escapeHtml(conversation.chat_id)}">
             <div class="chat-top">
-              <div class="chat-name">${escapeHtml(getConversationName(conversation))}</div>
+              <div class="chat-name-row">
+                <button class="pin-chat-btn${pinnedClass}" type="button" data-pin-chat-id="${escapeHtml(conversation.chat_id)}" title="${escapeHtml(pinned ? 'Quitar fijado' : 'Fijar chat')}">${escapeHtml(pinnedLabel)}</button>
+                <div class="chat-name">${escapeHtml(getConversationName(conversation))}</div>
+              </div>
               <div class="chat-time">${escapeHtml(formatDateTime(conversation.timestamp_ts))}</div>
             </div>
             <div class="chat-preview">${escapeHtml(preview || '--')}</div>
+            <div class="chat-owner-row">
+              <span class="badge chat-owner ${escapeHtml(getConversationOwnerTone(conversation))}">${escapeHtml(getConversationOwnerText(conversation))}</span>
+            </div>
             <div class="chat-meta">${escapeHtml(getConversationMeta(conversation))}</div>
-          </button>
+          </div>
         `;
       }).join('');
 
+      for (const pinButton of els.chatList.querySelectorAll('.pin-chat-btn')) {
+        pinButton.addEventListener('click', event => {
+          event.stopPropagation();
+          togglePinnedChat(pinButton.dataset.pinChatId || '');
+        });
+      }
+
       for (const button of els.chatList.querySelectorAll('.chat-item')) {
-        button.addEventListener('click', () => {
+        const selectChat = () => {
           state.selectedChatId = button.dataset.chatId || '';
           state.draftPhone = '';
           state.draftName = '';
+          state.clientDetails = null;
+          state.clientCandidates = [];
+          state.clientTickets = [];
+          state.clientLiveData = null;
+          state.clientLiveReceivedAt = '';
+          state.clientLoadedFor = '';
           renderConversations();
           renderChatHeader();
+          loadClientDetails().catch(error => {
+            setBadge(els.clientBadge, 'Error', 'bad');
+            els.clientBody.innerHTML = `<div class="empty">${escapeHtml(error.message)}</div>`;
+          });
           loadMessages();
+        };
+
+        button.addEventListener('click', selectChat);
+        button.addEventListener('keydown', event => {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            selectChat();
+          }
         });
       }
     }
@@ -1137,8 +1959,8 @@
       } else if (state.draftPhone) {
         els.chatTitle.textContent = state.draftName || getDisplayPhone(state.draftPhone, '');
         els.chatMeta.textContent = state.draftName
-          ? `${state.draftName} | ${state.draftPhone}@c.us`
-          : `${state.draftPhone}@c.us`;
+          ? `${state.draftName} | ${state.draftPhone}`
+          : state.draftPhone;
         setBadge(els.chatBadge, 'Nuevo', 'warn');
       } else {
         els.chatTitle.textContent = 'Selecciona un chat';
@@ -1151,6 +1973,8 @@
       els.mediaInput.disabled = !canCompose;
       els.clearFileBtn.disabled = !canCompose || !els.mediaInput.files.length;
       els.sendBtn.disabled = !canCompose;
+      renderTransferControls();
+      renderClientDetails();
     }
 
     function getMessagePerson(message, conversation) {
@@ -1158,7 +1982,7 @@
       const number = getDisplayPhone(
         message.phone || conversation && conversation.phone,
         message.chat_id || conversation && conversation.chat_id
-      ) || message.chat_id || '';
+      ) || getDisplayChatId(message.chat_id || conversation && conversation.chat_id) || '';
 
       if (name && number && name !== number) {
         return `${name} | ${number}`;
@@ -1300,8 +2124,20 @@
     async function loadSession() {
       const data = await fetchJson('/auth/me');
       state.auth = data.user;
+      state.pinnedChatIds = readPinnedChatIds();
       els.sessionBadge.textContent = `${data.user.name} | ${String(data.user.role || '').toUpperCase()}`;
       els.usersLink.hidden = data.user.role !== 'admin';
+    }
+
+    async function loadOperators() {
+      try {
+        const data = await fetchJson('/api/operators');
+        state.operators = data.users || [];
+      } catch (error) {
+        state.operators = [];
+      }
+
+      renderTransferControls();
     }
 
     async function loadStatus() {
@@ -1318,6 +2154,7 @@
       try {
         const data = await fetchJson('/api/chats');
         state.conversations = data.conversations || [];
+        sortConversations();
 
         if (!options.preserveSelection && !state.selectedChatId && !state.draftPhone && state.conversations.length) {
           state.selectedChatId = state.conversations[0].chat_id;
@@ -1331,6 +2168,7 @@
         renderChatHeader();
 
         if (state.selectedChatId) {
+          await loadClientDetails();
           await loadMessages();
         }
       } catch (error) {
@@ -1439,6 +2277,12 @@
         state.selectedChatId = data.chatId || targetChatId;
         state.draftPhone = '';
         state.draftName = '';
+        state.clientDetails = null;
+        state.clientCandidates = [];
+        state.clientTickets = [];
+        state.clientLiveData = null;
+        state.clientLiveReceivedAt = '';
+        state.clientLoadedFor = '';
         els.replyMessage.value = '';
         els.mediaInput.value = '';
         els.sendError.textContent = 'Enviado';
@@ -1452,8 +2296,67 @@
       }
     }
 
+    async function transferSelectedChat() {
+      const conversation = getSelectedConversation();
+      const ownerUsername = String(els.transferOperator.value || '').trim();
+
+      if (!conversation || !ownerUsername) {
+        els.sendError.textContent = 'Selecciona operador';
+        return;
+      }
+
+      els.transferBtn.disabled = true;
+      els.sendError.textContent = 'Transfiriendo...';
+
+      try {
+        await fetchJson('/api/chats/transfer', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            chatId: conversation.chat_id,
+            phone: getDisplayPhone(conversation.phone, conversation.chat_id),
+            ownerUsername
+          })
+        });
+
+        els.sendError.textContent = `Transferido a ${getOperatorName(ownerUsername)}`;
+        await loadConversations({ preserveSelection: true });
+      } catch (error) {
+        els.sendError.textContent = error.message;
+      } finally {
+        els.transferBtn.disabled = false;
+        renderChatHeader();
+      }
+    }
+
     els.refreshBtn.addEventListener('click', () => refreshAll({ preserveSelection: true }));
     els.replyForm.addEventListener('submit', sendReply);
+    els.transferBtn.addEventListener('click', () => transferSelectedChat());
+    els.transferOperator.addEventListener('change', renderTransferControls);
+    els.ticketCancelBtn.addEventListener('click', closeTicketModal);
+    els.ticketModal.addEventListener('click', event => {
+      if (event.target === els.ticketModal) {
+        closeTicketModal();
+      }
+    });
+    els.ticketForm.addEventListener('submit', event => {
+      event.preventDefault();
+      createCommunicationTicket(
+        els.ticketSubject.value.trim(),
+        els.ticketDescription.value.trim(),
+        els.ticketSubmitBtn,
+        els.ticketModalStatus
+      ).catch(error => {
+        els.ticketModalStatus.textContent = error.message;
+      });
+    });
+    document.addEventListener('keydown', event => {
+      if (event.key === 'Escape' && els.ticketModal.classList.contains('visible')) {
+        closeTicketModal();
+      }
+    });
 
     els.startChatBtn.addEventListener('click', () => {
       const phone = normalizeNewChatPhone(els.phoneInput.value);
@@ -1466,11 +2369,18 @@
       state.selectedChatId = '';
       state.draftPhone = phone;
       state.draftName = '';
+      state.clientDetails = null;
+      state.clientCandidates = [];
+      state.clientTickets = [];
+      state.clientLiveData = null;
+      state.clientLiveReceivedAt = '';
+      state.clientLoadedFor = '';
       els.phoneInput.value = '';
       els.sendError.textContent = '';
       renderConversations();
       renderChatHeader();
       renderMessages([]);
+      loadClientDetails({ force: true }).catch(() => { });
       resolveDraftContact(phone).catch(() => { });
       els.replyMessage.focus();
     });
@@ -1534,10 +2444,17 @@
       state.selectedChatId = '';
       state.draftPhone = phone;
       state.draftName = name;
+      state.clientDetails = null;
+      state.clientCandidates = [];
+      state.clientTickets = [];
+      state.clientLiveData = null;
+      state.clientLiveReceivedAt = '';
+      state.clientLoadedFor = '';
 
       renderConversations();
       renderChatHeader();
       renderMessages([]);
+      loadClientDetails({ force: true }).catch(() => { });
       resolveDraftContact(phone, name).catch(() => { });
 
       if (message) {
@@ -1550,6 +2467,7 @@
     (async function boot() {
       try {
         await loadSession();
+        await loadOperators();
         await refreshAll({ preserveSelection: false });
 
         openPhoneFromQuery();

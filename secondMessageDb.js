@@ -315,8 +315,24 @@ function normalizeOwnerUsername(value) {
   return String(value || '').trim().toLowerCase().slice(0, 191);
 }
 
+function getOwnerScopeWhereSql(columnSql, ownerUsername, includeUnassigned = false) {
+  if (!ownerUsername) {
+    return '';
+  }
+
+  if (includeUnassigned) {
+    return ` AND (${columnSql} = ? OR ${columnSql} IS NULL OR ${columnSql} = '')`;
+  }
+
+  return ` AND ${columnSql} = ?`;
+}
+
 function isLidChatId(value) {
   return /@lid$/i.test(String(value || '').trim());
+}
+
+function isDirectPhoneChatId(value) {
+  return /@(c\.us|s\.whatsapp\.net)$/i.test(String(value || '').trim());
 }
 
 function normalizeMessagePhone(phone, chatId) {
@@ -328,6 +344,141 @@ function normalizeMessagePhone(phone, chatId) {
   }
 
   return normalized;
+}
+
+function getMessageVisualDuplicateKey(message) {
+  const direction = String(message.direction || '').trim().toLowerCase();
+  const body = String(message.body || '').trim();
+  const phone = normalizeMessagePhone(message.phone || message.chat_id, message.chat_id) ||
+    normalizeChatPhone(message.phone || message.chat_id);
+
+  if (!direction || !body || !phone) {
+    return '';
+  }
+
+  return JSON.stringify([
+    direction,
+    phone,
+    body,
+    String(message.media_mime || '').trim(),
+    String(message.media_filename || '').trim()
+  ]);
+}
+
+function preferMessageForVisualDuplicate(current, candidate) {
+  if (!current) {
+    return candidate;
+  }
+
+  const currentAck = Number(current.ack);
+  const candidateAck = Number(candidate.ack);
+
+  if (Number.isFinite(candidateAck) && (!Number.isFinite(currentAck) || candidateAck > currentAck)) {
+    return candidate;
+  }
+
+  const currentDirect = isDirectPhoneChatId(current.chat_id);
+  const candidateDirect = isDirectPhoneChatId(candidate.chat_id);
+
+  if (candidateDirect && !currentDirect) {
+    return candidate;
+  }
+
+  const currentTime = Number(current.timestamp_ts || 0);
+  const candidateTime = Number(candidate.timestamp_ts || 0);
+
+  return candidateTime >= currentTime ? candidate : current;
+}
+
+function dedupeVisualMessages(rows) {
+  const duplicateWindowMs = 10 * 60 * 1000;
+  const groups = [];
+
+  for (const row of rows) {
+    const key = getMessageVisualDuplicateKey(row);
+    const timestamp = Number(row.timestamp_ts || 0);
+    const existing = key
+      ? groups.find(group => group.key === key && Math.abs(group.timestamp - timestamp) <= duplicateWindowMs)
+      : null;
+
+    if (!existing) {
+      groups.push({
+        key,
+        timestamp,
+        row
+      });
+      continue;
+    }
+
+    existing.row = preferMessageForVisualDuplicate(existing.row, row);
+    existing.timestamp = Number(existing.row.timestamp_ts || timestamp);
+  }
+
+  return groups
+    .map(group => group.row)
+    .sort((left, right) => {
+      const timeDelta = Number(left.timestamp_ts || 0) - Number(right.timestamp_ts || 0);
+      return timeDelta || String(left.id || '').localeCompare(String(right.id || ''));
+    });
+}
+
+async function findDirectChatAliases(database, directChatIds, ownerUsername = '', options = {}) {
+  const cleanDirectChatIds = Array.from(new Set(
+    (Array.isArray(directChatIds) ? directChatIds : [])
+      .map(chatId => String(chatId || '').trim())
+      .filter(isDirectPhoneChatId)
+  ));
+
+  if (!cleanDirectChatIds.length) {
+    return new Map();
+  }
+
+  const includeUnassigned = Boolean(options.includeUnassigned || options.include_unassigned);
+  const ownerWhereSql = ownerUsername
+    ? includeUnassigned
+      ? " AND ((lid.owner_username = ? OR lid.owner_username IS NULL OR lid.owner_username = '') OR (direct.owner_username = ? OR direct.owner_username IS NULL OR direct.owner_username = ''))"
+      : ' AND (lid.owner_username = ? OR direct.owner_username = ?)'
+    : '';
+  const params = [...cleanDirectChatIds];
+
+  if (ownerUsername) {
+    params.push(ownerUsername, ownerUsername);
+  }
+
+  const [rows] = await database.execute(`
+    SELECT
+      lid.chat_id AS lid_chat_id,
+      direct.chat_id AS direct_chat_id,
+      COUNT(*) AS matching_messages,
+      MAX(direct.timestamp_ts) AS last_match_ts
+    FROM ${messagesTableSql} lid
+    JOIN ${messagesTableSql} direct
+      ON direct.direction = 'outgoing'
+      AND lid.direction = 'outgoing'
+      AND direct.body = lid.body
+      AND direct.chat_id IN (${cleanDirectChatIds.map(() => '?').join(',')})
+      AND ABS(direct.timestamp_ts - lid.timestamp_ts) <= 5000
+    WHERE LOWER(lid.chat_id) LIKE '%@lid'
+      AND lid.chat_id <> 'status@broadcast'
+      AND direct.chat_id <> 'status@broadcast'
+      ${ownerWhereSql}
+    GROUP BY lid.chat_id, direct.chat_id
+    HAVING matching_messages >= 2
+    ORDER BY matching_messages DESC, last_match_ts DESC
+  `, params);
+
+  const aliases = new Map();
+
+  for (const row of rows) {
+    const lidChatId = String(row.lid_chat_id || '').trim();
+    const directChatId = String(row.direct_chat_id || '').trim();
+
+    if (lidChatId && directChatId && !aliases.has(lidChatId)) {
+      aliases.set(lidChatId, directChatId);
+    }
+  }
+
+  return aliases;
 }
 
 function scopeQueueKey(queueKey, ownerUsername) {
@@ -483,7 +634,7 @@ async function getWhatsAppChatOwner(chatId, phone) {
       AND owner_username IS NOT NULL
       AND owner_username <> ''
       AND (${identityWhere.join(' OR ')})
-    ORDER BY timestamp_ts DESC, created_at DESC, id DESC
+    ORDER BY timestamp_ts ASC, created_at ASC, id ASC
     LIMIT 1
   `, params);
 
@@ -523,14 +674,16 @@ async function resolveWhatsAppChatAlias(chatId) {
 
 async function listWhatsAppConversations(limit = 100, options = {}) {
   const safeLimit = Math.min(Math.max(Number(limit) || 100, 1), 1000);
+  const scanLimit = Math.min(safeLimit * 5, 5000);
   const ownerUsername = normalizeOwnerUsername(options.ownerUsername || options.owner_username);
+  const includeUnassigned = Boolean(options.includeUnassigned || options.include_unassigned);
   const ownerFilters = ownerUsername
     ? {
-      latestPhone: ' AND latest_phone.owner_username = ?',
-      latestContact: ' AND latest_contact.owner_username = ?',
-      counts: ' AND owner_username = ?',
-      ranked: ' AND ranked.owner_username = ?',
-      latest: ' AND latest.owner_username = ?'
+      latestPhone: getOwnerScopeWhereSql('latest_phone.owner_username', ownerUsername, includeUnassigned),
+      latestContact: getOwnerScopeWhereSql('latest_contact.owner_username', ownerUsername, includeUnassigned),
+      counts: getOwnerScopeWhereSql('owner_username', ownerUsername, includeUnassigned),
+      ranked: getOwnerScopeWhereSql('ranked.owner_username', ownerUsername, includeUnassigned),
+      latest: getOwnerScopeWhereSql('latest.owner_username', ownerUsername, includeUnassigned)
     }
     : {
       latestPhone: '',
@@ -613,24 +766,198 @@ async function listWhatsAppConversations(limit = 100, options = {}) {
       AND latest.chat_id <> 'status@broadcast'
       ${ownerFilters.latest}
     ORDER BY latest.timestamp_ts DESC, latest.created_at DESC, latest.id DESC
-    LIMIT ${safeLimit}
+    LIMIT ${scanLimit}
   `, params);
 
-  return rows;
+  const directByPhone = new Map();
+  const directByChatId = new Map();
+
+  for (const row of rows) {
+    const phone = normalizeMessagePhone(row.phone || row.chat_id, row.chat_id);
+
+    if (phone && isDirectPhoneChatId(row.chat_id)) {
+      directByPhone.set(phone, row);
+      directByChatId.set(row.chat_id, row);
+    }
+  }
+
+  const directPhones = Array.from(directByPhone.keys());
+  const directByLidChatId = new Map();
+  const duplicateAliases = await findDirectChatAliases(database, Array.from(directByChatId.keys()), ownerUsername, {
+    includeUnassigned
+  });
+
+  if (directPhones.length) {
+    const ownerAliasWhereSql = getOwnerScopeWhereSql('owner_username', ownerUsername, includeUnassigned);
+    const aliasParams = [...directPhones];
+
+    if (ownerUsername) {
+      aliasParams.push(ownerUsername);
+    }
+
+    const [aliasRows] = await database.execute(`
+      SELECT chat_id, phone
+      FROM ${messagesTableSql}
+      WHERE LOWER(chat_id) LIKE '%@lid'
+        AND phone IN (${directPhones.map(() => '?').join(',')})
+        AND chat_id <> 'status@broadcast'
+        ${ownerAliasWhereSql}
+      ORDER BY timestamp_ts DESC, created_at DESC, id DESC
+    `, aliasParams);
+
+    for (const aliasRow of aliasRows) {
+      const phone = normalizeMessagePhone(aliasRow.phone || '', aliasRow.chat_id);
+
+      if (phone && directByPhone.has(phone) && !directByLidChatId.has(aliasRow.chat_id)) {
+        directByLidChatId.set(aliasRow.chat_id, directByPhone.get(phone));
+      }
+    }
+  }
+
+  for (const [lidChatId, directChatId] of duplicateAliases.entries()) {
+    const directRow = directByChatId.get(directChatId);
+
+    if (directRow && !directByLidChatId.has(lidChatId)) {
+      directByLidChatId.set(lidChatId, directRow);
+    }
+  }
+
+  const conversationsByChatId = new Map();
+
+  for (const row of rows) {
+    const phone = normalizeMessagePhone(row.phone || row.chat_id, row.chat_id);
+    const directAlias = isLidChatId(row.chat_id)
+      ? directByLidChatId.get(row.chat_id) || (phone ? directByPhone.get(phone) : null)
+      : null;
+    const canonicalChatId = directAlias ? directAlias.chat_id : row.chat_id;
+    const current = conversationsByChatId.get(canonicalChatId);
+
+    if (!current) {
+      conversationsByChatId.set(canonicalChatId, {
+        ...row,
+        chat_id: canonicalChatId,
+        phone: directAlias ? directAlias.phone : row.phone,
+        contact_name: row.contact_name || (directAlias && directAlias.contact_name) || '',
+        total_messages: Number(row.total_messages || 0),
+        incoming_messages: Number(row.incoming_messages || 0),
+        outgoing_messages: Number(row.outgoing_messages || 0),
+        last_incoming_ts: Number(row.last_incoming_ts || 0) || null
+      });
+      continue;
+    }
+
+    current.total_messages += Number(row.total_messages || 0);
+    current.incoming_messages += Number(row.incoming_messages || 0);
+    current.outgoing_messages += Number(row.outgoing_messages || 0);
+    current.last_incoming_ts = Math.max(Number(current.last_incoming_ts || 0), Number(row.last_incoming_ts || 0)) || null;
+
+    const rowTimestamp = Number(row.timestamp_ts || 0);
+    const currentTimestamp = Number(current.timestamp_ts || 0);
+
+    if (rowTimestamp > currentTimestamp || (rowTimestamp === currentTimestamp && String(row.id || '') > String(current.id || ''))) {
+      Object.assign(current, {
+        ...row,
+        chat_id: canonicalChatId,
+        phone: directAlias ? directAlias.phone : row.phone,
+        total_messages: current.total_messages,
+        incoming_messages: current.incoming_messages,
+        outgoing_messages: current.outgoing_messages,
+        last_incoming_ts: current.last_incoming_ts
+      });
+    }
+
+    if (!current.contact_name && (row.contact_name || (directAlias && directAlias.contact_name))) {
+      current.contact_name = row.contact_name || directAlias.contact_name;
+    }
+  }
+
+  let conversations = Array.from(conversationsByChatId.values());
+
+  if (ownerUsername && includeUnassigned) {
+    const scopedConversations = [];
+
+    for (const conversation of conversations) {
+      const owner = await getWhatsAppChatOwner(conversation.chat_id, conversation.phone);
+
+      if (owner && owner !== ownerUsername) {
+        continue;
+      }
+
+      if (owner) {
+        conversation.owner_username = owner;
+      }
+
+      scopedConversations.push(conversation);
+    }
+
+    conversations = scopedConversations;
+  }
+
+  return conversations
+    .sort((left, right) => {
+      const timeDelta = Number(right.timestamp_ts || 0) - Number(left.timestamp_ts || 0);
+      return timeDelta || String(right.id || '').localeCompare(String(left.id || ''));
+    })
+    .slice(0, safeLimit);
 }
 
 async function listWhatsAppMessages(chatId, limit = 200, options = {}) {
   const cleanChatId = String(chatId || '').trim();
   const safeLimit = Math.min(Math.max(Number(limit) || 200, 1), 500);
   const ownerUsername = normalizeOwnerUsername(options.ownerUsername || options.owner_username);
-  const ownerWhereSql = ownerUsername ? ' AND owner_username = ?' : '';
-  const params = ownerUsername ? [cleanChatId, ownerUsername] : [cleanChatId];
+  const includeUnassigned = Boolean(options.includeUnassigned || options.include_unassigned);
+  const ownerWhereSql = getOwnerScopeWhereSql('owner_username', ownerUsername, includeUnassigned);
+  const aliasPhone = isDirectPhoneChatId(cleanChatId) ? normalizeChatPhone(cleanChatId) : '';
 
   if (!cleanChatId) {
     return [];
   }
 
   const database = await getPool();
+  const chatIds = [cleanChatId];
+
+  if (aliasPhone) {
+    const aliasParams = [aliasPhone];
+
+    if (ownerUsername) {
+      aliasParams.push(ownerUsername);
+    }
+
+    const [aliasRows] = await database.execute(`
+      SELECT DISTINCT chat_id
+      FROM ${messagesTableSql}
+      WHERE LOWER(chat_id) LIKE '%@lid'
+        AND phone = ?
+        AND chat_id <> 'status@broadcast'
+        ${ownerWhereSql}
+      ORDER BY chat_id
+    `, aliasParams);
+
+    for (const aliasRow of aliasRows) {
+      const aliasChatId = String(aliasRow.chat_id || '').trim();
+
+      if (aliasChatId && !chatIds.includes(aliasChatId)) {
+        chatIds.push(aliasChatId);
+      }
+    }
+
+    const duplicateAliases = await findDirectChatAliases(database, [cleanChatId], ownerUsername, {
+      includeUnassigned
+    });
+
+    for (const aliasChatId of duplicateAliases.keys()) {
+      if (aliasChatId && !chatIds.includes(aliasChatId)) {
+        chatIds.push(aliasChatId);
+      }
+    }
+  }
+
+  const params = [...chatIds];
+
+  if (ownerUsername) {
+    params.push(ownerUsername);
+  }
+
   const [rows] = await database.execute(`
     SELECT *
     FROM (
@@ -657,13 +984,57 @@ async function listWhatsAppMessages(chatId, limit = 200, options = {}) {
         owner_username,
         created_at
       FROM ${messagesTableSql}
-      WHERE chat_id = ?
+      WHERE chat_id IN (${chatIds.map(() => '?').join(',')})
         AND chat_id <> 'status@broadcast'
         ${ownerWhereSql}
       ORDER BY timestamp_ts DESC, created_at DESC, id DESC
       LIMIT ${safeLimit}
     ) recent_messages
     ORDER BY timestamp_ts ASC, created_at ASC, id ASC
+  `, params);
+
+  return dedupeVisualMessages(rows);
+}
+
+async function listWhatsAppCommunicationTickets(options = {}) {
+  const cleanChatId = String(options.chatId || options.chat_id || '').trim();
+  const cleanPhone = normalizeChatPhone(options.phone || cleanChatId);
+  const safeLimit = Math.min(Math.max(Number(options.limit) || 5, 1), 25);
+  const whereParts = ["source = 'phantom-ticket'"];
+  const params = [];
+
+  if (cleanChatId) {
+    whereParts.push('chat_id = ?');
+    params.push(cleanChatId);
+  }
+
+  if (cleanPhone) {
+    whereParts.push('phone = ?');
+    params.push(cleanPhone);
+  }
+
+  if (!cleanChatId && !cleanPhone) {
+    return [];
+  }
+
+  const database = await getPool();
+  const [rows] = await database.execute(`
+    SELECT
+      id,
+      chat_id,
+      phone,
+      contact_name,
+      body,
+      timestamp_ts,
+      timestamp_iso,
+      owner_username,
+      created_at
+    FROM ${messagesTableSql}
+    WHERE (${whereParts.slice(1).join(' OR ')})
+      AND ${whereParts[0]}
+      AND chat_id <> 'status@broadcast'
+    ORDER BY timestamp_ts DESC, created_at DESC, id DESC
+    LIMIT ${safeLimit}
   `, params);
 
   return rows;
@@ -690,6 +1061,57 @@ async function listWhatsAppChatPhones(chatId, options = {}) {
   `, params);
 
   return rows.map(row => row.phone);
+}
+
+async function transferWhatsAppChatOwner(chatId, ownerUsername, options = {}) {
+  const cleanChatId = String(chatId || '').trim();
+  const cleanOwner = normalizeOwnerUsername(ownerUsername);
+  const cleanPhone = normalizeChatPhone(options.phone || cleanChatId);
+  const phoneCandidates = getClientLookupPhones(cleanPhone);
+  const chatIds = [cleanChatId].filter(Boolean);
+
+  if (!cleanChatId) {
+    throw new Error('Falta chat');
+  }
+
+  if (!cleanOwner) {
+    throw new Error('Falta operador');
+  }
+
+  const database = await getPool();
+
+  if (phoneCandidates.length) {
+    const [aliasRows] = await database.execute(`
+      SELECT DISTINCT chat_id
+      FROM ${messagesTableSql}
+      WHERE chat_id <> 'status@broadcast'
+        AND (
+          phone IN (${phoneCandidates.map(() => '?').join(',')})
+          OR REPLACE(REPLACE(REPLACE(LOWER(chat_id), '@c.us', ''), '@s.whatsapp.net', ''), '@lid', '') IN (${phoneCandidates.map(() => '?').join(',')})
+        )
+    `, [...phoneCandidates, ...phoneCandidates]);
+
+    for (const aliasRow of aliasRows) {
+      const aliasChatId = String(aliasRow.chat_id || '').trim();
+
+      if (aliasChatId && !chatIds.includes(aliasChatId)) {
+        chatIds.push(aliasChatId);
+      }
+    }
+  }
+
+  const [result] = await database.execute(`
+    UPDATE ${messagesTableSql}
+    SET owner_username = ?
+    WHERE chat_id IN (${chatIds.map(() => '?').join(',')})
+      AND chat_id <> 'status@broadcast'
+  `, [cleanOwner, ...chatIds]);
+
+  return {
+    chatIds,
+    ownerUsername: cleanOwner,
+    updated: Number(result.affectedRows || 0)
+  };
 }
 
 function parseQueueRow(row) {
@@ -1305,6 +1727,99 @@ async function listPhantomBajaClients(options = {}) {
   };
 }
 
+function getClientLookupPhones(value) {
+  const clean = normalizeChatPhone(value);
+  const candidates = new Set();
+
+  if (clean) {
+    candidates.add(clean);
+  }
+
+  if (clean.startsWith('549') && clean.length > 3) {
+    candidates.add(clean.slice(3));
+  }
+
+  if (clean.startsWith('54') && clean.length > 2) {
+    candidates.add(clean.slice(2));
+  }
+
+  if (clean.length > 10) {
+    candidates.add(clean.slice(-10));
+  }
+
+  if (clean.length > 8) {
+    candidates.add(clean.slice(-8));
+  }
+
+  return Array.from(candidates).filter(item => item.length >= 6);
+}
+
+function scorePhantomClientPhoneMatch(row, phones) {
+  const values = [
+    row.movil,
+    row.telefono,
+    row.raw && row.raw.Movil,
+    row.raw && row.raw.Telefono,
+    row.raw && row.raw.Celular
+  ].map(normalizeChatPhone).filter(Boolean);
+  let score = 0;
+
+  for (const value of values) {
+    for (const phone of phones) {
+      if (value === phone) {
+        score = Math.max(score, 100 + phone.length);
+      } else if (value.endsWith(phone) || phone.endsWith(value)) {
+        score = Math.max(score, 50 + Math.min(value.length, phone.length));
+      }
+    }
+  }
+
+  return score;
+}
+
+async function findPhantomClientsByPhone(phone, limit = 10) {
+  const phones = getClientLookupPhones(phone);
+  const safeLimit = Math.min(Math.max(Number(limit) || 10, 1), 25);
+
+  if (!phones.length) {
+    return [];
+  }
+
+  const whereParts = [];
+  const params = [];
+
+  for (const candidate of phones) {
+    const like = `%${candidate}%`;
+    whereParts.push('(movil LIKE ? OR telefono LIKE ? OR raw_json LIKE ?)');
+    params.push(like, like, like);
+  }
+
+  const database = await getPool();
+  const [rows] = await database.query(`
+    SELECT *
+    FROM ${phantomBajaTableSql}
+    WHERE ${whereParts.join(' OR ')}
+    ORDER BY synced_at DESC, CAST(id AS UNSIGNED) DESC, id DESC
+    LIMIT 25
+  `, params);
+
+  const matches = rows
+    .map(parsePhantomBajaDbRow)
+    .map(row => ({
+      row,
+      score: scorePhantomClientPhoneMatch(row, phones)
+    }))
+    .filter(match => match.score > 0)
+    .sort((left, right) => right.score - left.score || String(right.row.id || '').localeCompare(String(left.row.id || '')));
+
+  return matches.slice(0, safeLimit).map(match => match.row);
+}
+
+async function findPhantomClientByPhone(phone) {
+  const matches = await findPhantomClientsByPhone(phone, 1);
+  return matches[0] || null;
+}
+
 async function getPhantomBajaSyncStatus() {
   const database = await getPool();
   const [[row]] = await database.query(`
@@ -1344,13 +1859,17 @@ module.exports = {
   getMysqlSettings,
   getPool,
   getPhantomBajaSyncStatus,
+  findPhantomClientsByPhone,
+  findPhantomClientByPhone,
   getWhatsAppChatOwner,
   resolveWhatsAppChatAlias,
   listPhantomBajaClients,
   listMessageQueueItems,
   listWhatsAppChatPhones,
+  listWhatsAppCommunicationTickets,
   listWhatsAppConversations,
   listWhatsAppMessages,
+  transferWhatsAppChatOwner,
   markMessageQueueError,
   markMessageQueueSent,
   markStaleMessageQueueErrors,

@@ -21,7 +21,9 @@
       --soft-warn: #fff3d8;
       --soft-bad: #fde8e8;
       --bubble-in: #ffffff;
-      --bubble-out: #e7f0ff;
+      --bubble-out: #d9fdd3;
+      --wa-green: #128c7e;
+      --wa-dark: #075e54;
     }
 
     * {
@@ -30,7 +32,9 @@
 
     body {
       margin: 0;
-      background: var(--bg);
+      background:
+        linear-gradient(180deg, rgba(18, 140, 126, 0.08), transparent 230px),
+        var(--bg);
       color: var(--text);
       font-family: Arial, Helvetica, sans-serif;
       font-size: 15px;
@@ -108,8 +112,8 @@
     }
 
     button.primary {
-      border-color: var(--accent);
-      background: var(--accent);
+      border-color: var(--wa-green);
+      background: var(--wa-green);
       color: #ffffff;
     }
 
@@ -283,13 +287,14 @@
 
     .inbox {
       display: grid;
-      grid-template-columns: 360px minmax(0, 1fr);
+      grid-template-columns: 340px minmax(0, 1fr) 280px;
       gap: 14px;
       align-items: stretch;
     }
 
     .sidebar,
-    .chat-panel {
+    .chat-panel,
+    .ticket-panel {
       min-height: 610px;
     }
 
@@ -351,7 +356,7 @@
 
     .conversation:hover,
     .conversation.active {
-      background: var(--accent-soft);
+      background: #edf8f5;
     }
 
     .conversation-top,
@@ -390,7 +395,9 @@
       height: 438px;
       overflow: auto;
       padding: 16px;
-      background: #eef1f5;
+      background:
+        linear-gradient(rgba(239, 234, 226, 0.92), rgba(239, 234, 226, 0.92)),
+        repeating-linear-gradient(135deg, rgba(7, 94, 84, 0.06) 0 1px, transparent 1px 16px);
       display: flex;
       flex-direction: column;
       gap: 10px;
@@ -407,17 +414,16 @@
 
     .bubble {
       max-width: min(74%, 560px);
-      border: 1px solid var(--line);
+      border: 0;
       border-radius: 8px;
       padding: 9px 10px;
       background: var(--bubble-in);
-      box-shadow: 0 1px 1px rgba(15, 23, 42, 0.05);
+      box-shadow: 0 1px 1px rgba(17, 24, 39, 0.14);
       overflow-wrap: anywhere;
     }
 
     .message-row.outgoing .bubble {
       background: var(--bubble-out);
-      border-color: #c8d9ff;
     }
 
     .message-text {
@@ -494,7 +500,38 @@
       padding: 12px;
       display: grid;
       gap: 10px;
-      background: #ffffff;
+      background: #f7f8fa;
+    }
+
+    .ticket-panel {
+      display: flex;
+      flex-direction: column;
+    }
+
+    .ticket-details {
+      padding: 14px;
+      display: grid;
+      gap: 12px;
+      overflow: auto;
+    }
+
+    .ticket-field {
+      display: grid;
+      gap: 4px;
+      padding-bottom: 10px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .ticket-label {
+      color: var(--muted);
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0;
+    }
+
+    .ticket-value {
+      font-weight: 700;
+      overflow-wrap: anywhere;
     }
 
     .composer-actions {
@@ -563,7 +600,8 @@
       }
 
       .sidebar,
-      .chat-panel {
+      .chat-panel,
+      .ticket-panel {
         min-height: 0;
       }
 
@@ -693,6 +731,16 @@
           </div>
         </form>
       </section>
+
+      <aside class="ticket-panel panel">
+        <div class="panel-head">
+          <div class="panel-title">Datos del ticket</div>
+          <span class="badge blue" id="ticketBadge">--</span>
+        </div>
+        <div id="ticketDetails" class="ticket-details">
+          <div class="empty">Sin ticket seleccionado.</div>
+        </div>
+      </aside>
     </section>
   </main>
 
@@ -704,6 +752,8 @@
       selectedChatId: '',
       auth: null,
       loading: false,
+      ticket: null,
+      ticketExternalId: '',
       messageNotificationReady: false,
       messageNotificationStartedAt: 0,
       lastIncomingByChat: new Map(),
@@ -733,6 +783,8 @@
       sendError: document.getElementById('sendError'),
       sessionBadge: document.getElementById('sessionBadge'),
       startChatBtn: document.getElementById('startChatBtn'),
+      ticketBadge: document.getElementById('ticketBadge'),
+      ticketDetails: document.getElementById('ticketDetails'),
       toast: document.getElementById('toast'),
       whatsappDetail: document.getElementById('whatsappDetail'),
       whatsappState: document.getElementById('whatsappState')
@@ -753,28 +805,41 @@
 
     function normalizeNewChatPhone(value) {
       let phone = cleanPhone(value).replace(/^00+/, '');
+      const defaultAreaCode = '11';
 
       if (!phone) {
         return '';
       }
 
       if (phone.startsWith('549')) {
-        return phone;
-      }
+        phone = phone.slice(3);
+      } else if (phone.startsWith('54')) {
+        phone = phone.slice(2);
 
-      if (phone.startsWith('54')) {
-        return '549' + phone.slice(2).replace(/^15/, '');
+        if (phone.startsWith('9')) {
+          phone = phone.slice(1);
+        }
       }
 
       phone = phone.replace(/^0+/, '');
 
-      if (/^1115\d{8}$/.test(phone)) {
-        phone = '11' + phone.slice(4);
-      } else if (phone.startsWith('15') && phone.length >= 10) {
-        phone = '11' + phone.slice(2);
+      if (phone.startsWith('15') && phone.length < 11) {
+        phone = defaultAreaCode + phone.slice(2);
       }
 
-      return '549' + phone;
+      if (phone.length > 10) {
+        for (let areaLength = 2; areaLength <= 4; areaLength += 1) {
+          const prefix = phone.slice(0, areaLength);
+          const rest = phone.slice(areaLength);
+
+          if (rest.startsWith('15') && (prefix + rest.slice(2)).length === 10) {
+            phone = prefix + rest.slice(2);
+            break;
+          }
+        }
+      }
+
+      return phone.length === 10 ? '549' + phone : '';
     }
 
     function getPhoneFromChatId(chatId) {
@@ -840,6 +905,78 @@
       }
 
       return parts.filter(Boolean).join(' | ') || '--';
+    }
+
+    function parseTicketPayload(ticket) {
+      try {
+        return JSON.parse(ticket && ticket.payload_json || '{}') || {};
+      } catch (error) {
+        return {};
+      }
+    }
+
+    function getTicketCategory(ticket) {
+      const payload = parseTicketPayload(ticket);
+
+      return String(
+        ticket && ticket.ticket_category ||
+        payload.Categoria ||
+        payload.categoria ||
+        payload.Category ||
+        payload.category ||
+        payload.Tipo ||
+        payload.tipo ||
+        ''
+      ).trim();
+    }
+
+    function getTicketFromConversation(conversation) {
+      if (!conversation || !conversation.ticket_external_id) {
+        return null;
+      }
+
+      return {
+        external_id: conversation.ticket_external_id,
+        ida: conversation.ticket_ida,
+        razon_social: conversation.ticket_razon_social,
+        delegacion: conversation.ticket_delegacion,
+        category: conversation.ticket_category,
+        start: conversation.ticket_start,
+        start_time: conversation.ticket_start_time,
+        response_label: conversation.ticket_response_label,
+        response_received_at: conversation.ticket_response_received_at,
+        automatic_message_disabled_at: conversation.ticket_automatic_disabled_at,
+        automatic_message_disabled_reason: conversation.ticket_automatic_disabled_reason
+      };
+    }
+
+    function renderTicketDetails(conversation) {
+      const ticket = state.ticket || getTicketFromConversation(conversation);
+
+      if (!ticket) {
+        els.ticketBadge.textContent = '--';
+        els.ticketDetails.innerHTML = '<div class="empty">Sin ticket seleccionado.</div>';
+        return;
+      }
+
+      const fields = [
+        ['IDTT', ticket.external_id || ticket.ticket_external_id],
+        ['IDA', ticket.ida || ticket.ticket_ida],
+        ['Cliente', ticket.razon_social || ticket.ticket_razon_social],
+        ['Delegacion', ticket.delegacion || ticket.ticket_delegacion],
+        ['Categoria', ticket.category || getTicketCategory(ticket)],
+        ['Horario', [ticket.start_time, ticket.start].filter(Boolean).join(' | ')],
+        ['Respuesta', ticket.response_label || ticket.ticket_response_label],
+        ['Automatico', ticket.automatic_message_disabled_at ? (ticket.automatic_message_disabled_reason || 'Desactivado') : 'Activo']
+      ].filter(field => String(field[1] || '').trim());
+
+      els.ticketBadge.textContent = String(ticket.external_id || ticket.ticket_external_id || '--');
+      els.ticketDetails.innerHTML = fields.map(([label, value]) => `
+        <div class="ticket-field">
+          <div class="ticket-label">${escapeHtml(label)}</div>
+          <div class="ticket-value">${escapeHtml(value)}</div>
+        </div>
+      `).join('') || '<div class="empty">Sin datos del ticket.</div>';
     }
 
     function getMessagePerson(message, conversation) {
@@ -1291,11 +1428,13 @@
         els.chatTitle.textContent = getDisplayPhone(phone, chatId) || 'Selecciona una conversacion';
         els.chatMeta.textContent = chatId || '--';
         setBadge(els.chatDirection, chatId ? 'Nuevo' : 'Sin chat', chatId ? 'warn' : 'bad');
+        renderTicketDetails(null);
         return;
       }
 
       els.chatTitle.textContent = getConversationName(conversation);
       els.chatMeta.textContent = getConversationMeta(conversation);
+      renderTicketDetails(conversation);
       setBadge(
         els.chatDirection,
         conversation.direction === 'incoming' ? 'Respondio' : 'Enviado',
@@ -1532,9 +1671,12 @@
 
     function selectConversation(chatId) {
       state.selectedChatId = chatId || '';
+      const conversation = state.conversations.find(item => item.chat_id === state.selectedChatId);
+      state.ticketExternalId = String(conversation && conversation.ticket_external_id || '').trim();
+      state.ticket = null;
       els.sendError.textContent = '';
       renderConversations();
-      renderChatHeader(state.conversations.find(conversation => conversation.chat_id === state.selectedChatId));
+      renderChatHeader(conversation);
       loadMessages().catch(error => {
         els.sendError.textContent = error.message;
       });
@@ -1566,6 +1708,7 @@
       const params = new URLSearchParams(window.location.search);
       const phone = params.get('phone') || params.get('telefono') || params.get('movil') || '';
       const message = params.get('message') || params.get('template') || params.get('msg') || '';
+      state.ticketExternalId = String(params.get('ticketExternalId') || params.get('ticket') || '').trim();
 
       if (phone) {
         els.phoneInput.value = phone;
@@ -1584,6 +1727,21 @@
       }
     }
 
+    async function loadInitialTicket() {
+      if (!state.ticketExternalId) {
+        renderTicketDetails(state.conversations.find(conversation => conversation.chat_id === state.selectedChatId));
+        return;
+      }
+
+      try {
+        const data = await fetchJson('/tickets/' + encodeURIComponent(state.ticketExternalId));
+        state.ticket = data.ticket || null;
+        renderTicketDetails(state.conversations.find(conversation => conversation.chat_id === state.selectedChatId));
+      } catch (error) {
+        showToast(error.message);
+      }
+    }
+
     async function sendReply(event) {
       event.preventDefault();
 
@@ -1594,6 +1752,7 @@
 
       const message = els.replyMessage.value.trim();
       const conversation = state.conversations.find(item => item.chat_id === state.selectedChatId);
+      const ticketExternalId = state.ticketExternalId || String(conversation && conversation.ticket_external_id || '').trim();
       const phone = normalizeNewChatPhone(els.phoneInput.value) ||
         normalizeNewChatPhone(conversation && conversation.phone) ||
         getPhoneFromChatId(conversation && conversation.chat_id);
@@ -1620,7 +1779,8 @@
           body: JSON.stringify({
             chatId: state.selectedChatId,
             phone,
-            message
+            message,
+            ticketExternalId
           })
         });
 
@@ -1629,6 +1789,11 @@
 
         if (data.message && data.message.chat_id) {
           state.selectedChatId = data.message.chat_id;
+        }
+
+        if (data.ticket) {
+          state.ticket = data.ticket;
+          renderTicketDetails(state.conversations.find(conversation => conversation.chat_id === state.selectedChatId));
         }
 
         await loadConversations(true);
@@ -1662,6 +1827,7 @@
       }
 
       applyInitialComposerParams();
+      await loadInitialTicket();
       refreshAll();
       setInterval(refreshAll, 3000);
     }

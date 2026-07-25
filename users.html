@@ -6,19 +6,23 @@
   <title>Usuarios</title>
   <style>
     :root {
-      --bg: #f6f7f9;
+      --bg: #e7f0ed;
       --panel: #ffffff;
-      --line: #d9dee7;
-      --text: #17202a;
-      --muted: #657386;
-      --accent: #2563eb;
-      --good: #11845b;
-      --warn: #b76e00;
+      --panel-soft: #f7fbf9;
+      --line: #d8e5df;
+      --text: #172722;
+      --muted: #61736d;
+      --accent: #00a884;
+      --accent-dark: #008069;
+      --accent-soft: #d9fdd3;
+      --accent-pale: #eef8f4;
+      --good: #008069;
+      --warn: #a16207;
       --bad: #bd2c2c;
-      --soft-good: #e7f7ef;
+      --soft-good: #dff8ea;
       --soft-warn: #fff3d8;
       --soft-bad: #fde8e8;
-      --soft-blue: #eaf1ff;
+      --soft-blue: #eef8f4;
     }
 
     * {
@@ -47,8 +51,9 @@
 
     .app-header {
       grid-column: 1 / -1;
-      border-bottom: 1px solid var(--line);
-      background: var(--panel);
+      border-bottom: 1px solid #006c58;
+      background: var(--accent-dark);
+      color: #ffffff;
     }
 
     .app-header-inner {
@@ -66,7 +71,7 @@
       position: sticky;
       top: 0;
       border-right: 1px solid var(--line);
-      background: var(--panel);
+      background: var(--panel-soft);
       padding: 16px 12px;
       align-self: start;
     }
@@ -80,7 +85,7 @@
 
     .subtitle {
       margin-top: 4px;
-      color: var(--muted);
+      color: #d2f4e8;
       font-size: 13px;
     }
 
@@ -152,15 +157,20 @@
 
     .nav-link:hover,
     .nav-link.active {
-      background: var(--soft-blue);
-      color: var(--accent);
+      background: var(--accent-pale);
+      color: var(--accent-dark);
       font-weight: 700;
     }
 
     button.primary {
-      border-color: var(--accent);
-      background: var(--accent);
+      border-color: var(--accent-dark);
+      background: var(--accent-dark);
       color: #ffffff;
+    }
+
+    button.primary:not(:disabled):hover {
+      border-color: #006b59;
+      background: #006b59;
     }
 
     button.danger {
@@ -177,8 +187,9 @@
       min-height: 38px;
       border: 1px solid var(--line);
       border-radius: 8px;
-      background: #f8fafc;
-      color: var(--muted);
+      background: rgba(255, 255, 255, 0.14);
+      border-color: rgba(255, 255, 255, 0.24);
+      color: #e8fff6;
       padding: 0 12px;
       display: inline-flex;
       align-items: center;
@@ -209,6 +220,7 @@
       min-height: 54px;
       padding: 0 14px;
       border-bottom: 1px solid var(--line);
+      background: var(--panel-soft);
       display: flex;
       align-items: center;
       justify-content: space-between;
@@ -245,7 +257,7 @@
 
     input:focus,
     select:focus {
-      outline: 2px solid #bfdbfe;
+      outline: 2px solid #9de7d3;
       border-color: var(--accent);
     }
 
@@ -271,7 +283,7 @@
       color: var(--text);
       font-size: 13px;
       font-weight: 700;
-      background: #f8fafc;
+      background: var(--accent-pale);
       margin: 0;
     }
 
@@ -310,14 +322,14 @@
 
     th {
       color: var(--muted);
-      background: #f8fafc;
+      background: var(--panel-soft);
       font-size: 12px;
       text-transform: uppercase;
       letter-spacing: 0;
     }
 
     tbody tr:hover {
-      background: #fbfcfe;
+      background: var(--accent-pale);
     }
 
     .row-actions {
@@ -351,9 +363,9 @@
     }
 
     .badge.blue {
-      background: var(--soft-blue);
-      border-color: #c8d9ff;
-      color: var(--accent);
+      background: var(--accent-pale);
+      border-color: #b9e8dc;
+      color: var(--accent-dark);
     }
 
     .muted {
@@ -372,7 +384,7 @@
       right: 16px;
       bottom: 16px;
       max-width: min(420px, calc(100% - 32px));
-      background: #17202a;
+      background: #172722;
       color: #ffffff;
       border-radius: 8px;
       padding: 12px 14px;

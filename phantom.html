@@ -7,15 +7,18 @@
   <title>Phantom</title>
   <style>
     :root {
-      --bg: #f5f7fb;
+      --bg: #e7f0ed;
       --panel: #ffffff;
-      --line: #d7deea;
-      --text: #17202a;
-      --muted: #66758a;
-      --accent: #2563eb;
-      --accent-soft: #e8f0ff;
-      --good: #11845b;
-      --good-soft: #e6f6ee;
+      --panel-soft: #f7fbf9;
+      --line: #d8e5df;
+      --text: #172722;
+      --muted: #61736d;
+      --accent: #00a884;
+      --accent-dark: #008069;
+      --accent-soft: #d9fdd3;
+      --accent-pale: #eef8f4;
+      --good: #008069;
+      --good-soft: #dff8ea;
       --bad: #bd2c2c;
       --bad-soft: #fde8e8;
       --warn: #a16207;
@@ -48,8 +51,9 @@
 
     .app-header {
       grid-column: 1 / -1;
-      border-bottom: 1px solid var(--line);
-      background: var(--panel);
+      border-bottom: 1px solid #006c58;
+      background: var(--accent-dark);
+      color: #ffffff;
     }
 
     .app-header-inner {
@@ -67,7 +71,7 @@
       position: sticky;
       top: 0;
       border-right: 1px solid var(--line);
-      background: var(--panel);
+      background: var(--panel-soft);
       padding: 16px 12px;
       align-self: start;
     }
@@ -80,7 +84,7 @@
 
     .subtitle {
       margin-top: 4px;
-      color: var(--muted);
+      color: #d2f4e8;
       font-size: 13px;
     }
 
@@ -161,24 +165,30 @@
 
     .nav-link:hover,
     .nav-link.active {
-      background: var(--accent-soft);
-      color: var(--accent);
+      background: var(--accent-pale);
+      color: var(--accent-dark);
       font-weight: 700;
     }
 
     .session-chip {
-      color: var(--muted);
+      color: #e8fff6;
       cursor: default;
-      background: #f8fafc;
+      background: rgba(255, 255, 255, 0.14);
+      border-color: rgba(255, 255, 255, 0.24);
       font-size: 13px;
       font-weight: 700;
     }
 
     button.primary {
-      border-color: var(--accent);
-      background: var(--accent);
+      border-color: var(--accent-dark);
+      background: var(--accent-dark);
       color: #ffffff;
       font-weight: 700;
+    }
+
+    button.primary:not(:disabled):hover {
+      border-color: #006b59;
+      background: #006b59;
     }
 
     button.danger {
@@ -212,6 +222,7 @@
     .metric {
       min-height: 88px;
       padding: 14px;
+      border-top: 3px solid var(--accent);
     }
 
     .metric-label {
@@ -302,7 +313,7 @@
 
     .template-item.active {
       border-color: var(--accent);
-      background: var(--accent-soft);
+      background: var(--accent-pale);
     }
 
     .message-footer {
@@ -380,6 +391,7 @@
     .table-head {
       min-height: 52px;
       border-bottom: 1px solid var(--line);
+      background: var(--panel-soft);
       padding: 12px;
       display: flex;
       justify-content: space-between;
@@ -448,7 +460,7 @@
       font-size: 12px;
       font-weight: 700;
       color: var(--muted);
-      background: #f1f5f9;
+      background: #edf6f2;
       border: 1px solid var(--line);
       white-space: nowrap;
     }
@@ -456,7 +468,7 @@
     .badge.good {
       color: var(--good);
       background: var(--good-soft);
-      border-color: #b9e4ce;
+      border-color: #a9dfc2;
     }
 
     .badge.warn {
@@ -496,7 +508,7 @@
     th {
       position: sticky;
       top: 0;
-      background: #f8fafc;
+      background: var(--panel-soft);
       color: var(--muted);
       font-size: 12px;
       text-transform: uppercase;
@@ -1053,40 +1065,47 @@
       let phone = String(value || '')
         .replace(/\D/g, '')
         .trim();
+      const defaultAreaCode = '11';
 
       if (!phone) {
         return '';
       }
 
       if (phone.startsWith('549')) {
-        return /^549\d{8,12}$/.test(phone) ? phone : '';
-      }
+        phone = phone.slice(3);
+      } else if (phone.startsWith('54')) {
+        phone = phone.slice(2);
 
-      if (phone.startsWith('54')) {
-        phone = '549' + phone.slice(2);
-        return /^549\d{8,12}$/.test(phone) ? phone : '';
+        if (phone.startsWith('9')) {
+          phone = phone.slice(1);
+        }
       }
 
       if (phone.startsWith('0')) {
         phone = phone.replace(/^0+/, '');
       }
 
-      // Si viene como 15xxxxxxx, quitar el 15 y usar 11xxxxxxx
-      if (phone.startsWith('15')) {
-        phone = '11' + phone.slice(2);
+      if (phone.startsWith('15') && phone.length < 11) {
+        phone = defaultAreaCode + phone.slice(2);
       }
 
-      // Validar CABA/AMBA: debe empezar con 11
-      if (!phone.startsWith('11')) {
+      if (phone.length > 10) {
+        for (let areaLength = 2; areaLength <= 4; areaLength += 1) {
+          const prefix = phone.slice(0, areaLength);
+          const rest = phone.slice(areaLength);
+
+          if (rest.startsWith('15') && (prefix + rest.slice(2)).length === 10) {
+            phone = prefix + rest.slice(2);
+            break;
+          }
+        }
+      }
+
+      if (phone.length !== 10) {
         return '';
       }
 
-      // Si viene local 11..., agregar prefijo Argentina celular
-      if (!phone.startsWith('549')) {
-        phone = '549' + phone;
-      }
-
-      return phone;
+      return '549' + phone;
     }
 
     function getMobileColumnRawValue(row) {

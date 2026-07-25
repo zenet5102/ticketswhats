@@ -685,7 +685,7 @@
     table {
       width: 100%;
       border-collapse: collapse;
-      min-width: 1020px;
+      min-width: 1220px;
     }
 
     th,
@@ -722,6 +722,27 @@
       color: var(--bad);
       max-width: 260px;
       white-space: normal;
+    }
+
+    .ticket-actions {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+
+    .ticket-actions button,
+    .ticket-actions a {
+      min-height: 30px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      color: var(--text);
+      padding: 0 8px;
+      font-size: 12px;
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
     }
 
     .empty {
@@ -1487,6 +1508,26 @@
       ).trim() || 'Sin grupo';
     }
 
+    function getTicketCategory(ticket) {
+      let payload = {};
+
+      try {
+        payload = JSON.parse(ticket.payload_json || '{}');
+      } catch (error) {
+        payload = {};
+      }
+
+      return String(
+        payload.Categoria ||
+        payload.categoria ||
+        payload.Category ||
+        payload.category ||
+        payload.Tipo ||
+        payload.tipo ||
+        ''
+      ).trim() || '--';
+    }
+
     function compareTicketsByTime(left, right) {
       const leftStart = Number(left.start_ts || 0);
       const rightStart = Number(right.start_ts || 0);
@@ -1519,7 +1560,8 @@
     function getTicketMessageUrl(ticket) {
       const params = new URLSearchParams({
         phone: ticket.phone || '',
-        message: renderMessageTemplateForTicket(ticket)
+        message: renderMessageTemplateForTicket(ticket),
+        ticketExternalId: ticket.external_id || ''
       });
 
       return '/mensajes?' + params.toString();
@@ -1547,12 +1589,14 @@
         '<th>Hora</th>' +
         '<th>IDTT</th>' +
         '<th>Cliente</th>' +
+        '<th>Categoria</th>' +
         '<th>Estado</th>' +
         '<th>Movil</th>' +
         '<th>Mensaje</th>' +
         '<th>Respuesta</th>' +
         '<th>Ultimo estado</th>' +
         '<th>Error</th>' +
+        '<th>Acciones</th>' +
         '</tr>' +
         '</thead>' +
         '<tbody>' + group.tickets.map(renderTicketRow).join('') + '</tbody>' +
@@ -1567,6 +1611,8 @@
         : badge('Sin movil', 'bad');
       const messageCell = ticket.message_sent_at
         ? badge('Enviado', 'good') + '<div class="muted">' + escapeHtml(formatDateTime(ticket.message_sent_at)) + '</div>'
+        : ticket.automatic_message_disabled_at
+          ? badge('Manual', 'blue') + '<div class="muted">' + escapeHtml(ticket.automatic_message_disabled_reason || 'Automatico desactivado') + '</div>'
         : ticket.message_error
           ? badge('Fallo', 'bad')
           : badge('Pendiente', 'warn');
@@ -1578,12 +1624,17 @@
         '<td class="mono">' + escapeHtml(ticket.start_time || '--') + '</td>' +
         '<td class="mono">' + '<a target="_blank" href="http://192.168.200.14:5594/Phantom/Includes/DESk/desk_tracking.php?idt=' + ticket.external_id + '">' + escapeHtml(ticket.external_id) + '</a></td>' +
         '<td>' + escapeHtml(ticket.razon_social || '--') + '</td>' +
+        '<td>' + escapeHtml(getTicketCategory(ticket)) + '</td>' +
         '<td>' + statusBadge(ticket.status) + '</td>' +
         '<td>' + phoneCell + '</td>' +
         '<td>' + messageCell + '</td>' +
         '<td>' + responseCell + '</td>' +
         '<td class="muted">' + escapeHtml(formatDateTime(ticket.last_status_check_at)) + '</td>' +
         '<td class="error-text">' + escapeHtml(ticket.message_error || '') + '</td>' +
+        '<td><div class="ticket-actions">' +
+        '<button type="button" data-action="validate-phone" data-ticket-id="' + escapeHtml(ticket.external_id || '') + '" title="Validar si el movil existe en WhatsApp">Validar WA</button>' +
+        '<a class="button-link" href="' + escapeHtml(getTicketMessageUrl(ticket)) + '" title="Enviar mensaje manual y desactivar automatico">Mensaje</a>' +
+        '</div></td>' +
         '</tr>';
     }
 
@@ -2181,9 +2232,48 @@
       }
     }
 
+    async function validateTicketPhone(ticketId, button) {
+      const cleanTicketId = String(ticketId || '').trim();
+
+      if (!cleanTicketId) {
+        showToast('Falta ticket');
+        return;
+      }
+
+      const originalText = button ? button.textContent : '';
+
+      if (button) {
+        button.disabled = true;
+        button.textContent = 'Validando...';
+      }
+
+      try {
+        const data = await fetchJson('/tickets/' + encodeURIComponent(cleanTicketId) + '/validate-phone', {
+          method: 'POST'
+        });
+        showToast(data.exists ? 'Numero valido en WhatsApp' : 'El numero no existe en WhatsApp');
+      } catch (error) {
+        showToast(error.message);
+      } finally {
+        if (button) {
+          button.disabled = false;
+          button.textContent = originalText;
+        }
+      }
+    }
+
     els.dateFilter.value = state.selectedDate;
     els.refreshBtn.addEventListener('click', loadDashboard);
     els.logoutBtn.addEventListener('click', logout);
+    els.groupsContainer.addEventListener('click', event => {
+      const button = event.target.closest('button[data-action="validate-phone"]');
+
+      if (!button) {
+        return;
+      }
+
+      validateTicketPhone(button.dataset.ticketId, button);
+    });
     document.addEventListener('pointerdown', unlockNotificationSound, { once: true });
     document.addEventListener('keydown', unlockNotificationSound, { once: true });
     els.transferBtn.addEventListener('click', openTransferModal);

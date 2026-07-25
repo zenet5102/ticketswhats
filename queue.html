@@ -7,15 +7,18 @@
   <title>Cola de mensajes</title>
   <style>
     :root {
-      --bg: #f5f7fb;
+      --bg: #e7f0ed;
       --panel: #ffffff;
-      --line: #d7deea;
-      --text: #17202a;
-      --muted: #66758a;
-      --accent: #2563eb;
-      --accent-soft: #e8f0ff;
-      --good: #11845b;
-      --good-soft: #e6f6ee;
+      --panel-soft: #f7fbf9;
+      --line: #d8e5df;
+      --text: #172722;
+      --muted: #61736d;
+      --accent: #00a884;
+      --accent-dark: #008069;
+      --accent-soft: #d9fdd3;
+      --accent-pale: #eef8f4;
+      --good: #008069;
+      --good-soft: #dff8ea;
       --warn: #a16207;
       --warn-soft: #fff4d6;
       --bad: #bd2c2c;
@@ -48,8 +51,9 @@
 
     .app-header {
       grid-column: 1 / -1;
-      border-bottom: 1px solid var(--line);
-      background: var(--panel);
+      border-bottom: 1px solid #006c58;
+      background: var(--accent-dark);
+      color: #ffffff;
     }
 
     .app-header-inner {
@@ -67,7 +71,7 @@
       position: sticky;
       top: 0;
       border-right: 1px solid var(--line);
-      background: var(--panel);
+      background: var(--panel-soft);
       padding: 16px 12px;
       align-self: start;
     }
@@ -80,7 +84,7 @@
 
     .subtitle {
       margin-top: 4px;
-      color: var(--muted);
+      color: #d2f4e8;
       font-size: 13px;
     }
 
@@ -169,24 +173,30 @@
 
     .nav-link:hover,
     .nav-link.active {
-      background: var(--accent-soft);
-      color: var(--accent);
+      background: var(--accent-pale);
+      color: var(--accent-dark);
       font-weight: 700;
     }
 
     .session-chip {
-      color: var(--muted);
+      color: #e8fff6;
       cursor: default;
-      background: #f8fafc;
+      background: rgba(255, 255, 255, 0.14);
+      border-color: rgba(255, 255, 255, 0.24);
       font-size: 13px;
       font-weight: 700;
     }
 
     button.primary {
-      border-color: var(--accent);
-      background: var(--accent);
+      border-color: var(--accent-dark);
+      background: var(--accent-dark);
       color: #ffffff;
       font-weight: 700;
+    }
+
+    button.primary:not(:disabled):hover {
+      border-color: #006b59;
+      background: #006b59;
     }
 
     button.danger {
@@ -222,6 +232,7 @@
 
     .metric {
       padding: 10px 12px;
+      border-top: 3px solid var(--accent);
     }
 
     .metric-label,
@@ -240,6 +251,7 @@
       min-height: 58px;
       padding: 12px 14px;
       border-bottom: 1px solid var(--line);
+      background: var(--panel-soft);
       display: flex;
       align-items: center;
       justify-content: space-between;
@@ -275,14 +287,14 @@
       font-size: 12px;
       text-transform: uppercase;
       letter-spacing: 0.04em;
-      background: #f8fafc;
+      background: var(--panel-soft);
     }
 
     .badge {
       min-height: 24px;
       border-radius: 999px;
       padding: 3px 9px;
-      background: #eef2f7;
+      background: #edf6f2;
       color: var(--muted);
       display: inline-flex;
       align-items: center;

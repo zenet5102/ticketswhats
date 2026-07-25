@@ -3,6 +3,7 @@ const {
   closeDb,
   getNextAutomaticMessageTemplate,
   getNextTicket,
+  getRecentTicketNotificationByPhone,
   listTickets,
   markMessageError,
   markMessageSent,
@@ -24,6 +25,7 @@ const { getMessageTemplate, getTicketResponseQuestion, isAutomaticReminderEnable
 const { formatQuestionText } = require('./ticketResponseFlow');
 
 let cycleRunning = false;
+let lastAutomaticNotificationSentAt = 0;
 const schedulerState = {
   active: false,
   intervalMinutes: config.syncIntervalMinutes,
@@ -105,6 +107,37 @@ function recordNotificationError(entry = {}) {
   });
 
   schedulerState.notificationErrorLog = schedulerState.notificationErrorLog.slice(0, 50);
+}
+
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function waitForAutomaticNotificationSlot() {
+  const minDelayMs = Number(config.ticketNotificationMinDelayMs || 0);
+
+  if (!Number.isFinite(minDelayMs) || minDelayMs <= 0 || !lastAutomaticNotificationSentAt) {
+    return;
+  }
+
+  const elapsedMs = Date.now() - lastAutomaticNotificationSentAt;
+  const remainingMs = minDelayMs - elapsedMs;
+
+  if (remainingMs > 0) {
+    console.log(`Esperando ${Math.ceil(remainingMs / 1000)}s antes del proximo aviso automatico.`);
+    await sleep(remainingMs);
+  }
+}
+
+function getRecentNotificationCooldown(phone) {
+  const cooldownHours = Number(config.ticketNotificationPhoneCooldownHours || 0);
+
+  if (!Number.isFinite(cooldownHours) || cooldownHours <= 0) {
+    return null;
+  }
+
+  const sinceTs = Date.now() - cooldownHours * 60 * 60 * 1000;
+  return getRecentTicketNotificationByPhone(phone, sinceTs);
 }
 
 function queuePendingNotificationTrigger(ticket) {
@@ -195,6 +228,14 @@ async function notifyNextTicket(currentTicket, options = {}) {
 
   if (nextTicket.message_sent_at) {
     return { sent: false, reason: 'El ticket siguiente ya fue notificado', nextTicket };
+  }
+
+  if (nextTicket.automatic_message_disabled_at) {
+    return {
+      sent: false,
+      reason: nextTicket.automatic_message_disabled_reason || 'Envio automatico desactivado para este ticket',
+      nextTicket
+    };
   }
 
   let latestNextStatus;
@@ -313,13 +354,24 @@ async function notifyNextTicket(currentTicket, options = {}) {
 
   const messageTemplate = options.messageTemplate || getMessageTemplate();
   const message = renderMessage(messageTemplate, nextTicket, currentTicket);
+  const recentNotification = getRecentNotificationCooldown(nextTicket.phone);
+
+  if (recentNotification) {
+    return {
+      sent: false,
+      reason: `El telefono ya recibio un aviso automatico en las ultimas ${config.ticketNotificationPhoneCooldownHours} horas`,
+      nextTicket
+    };
+  }
 
   try {
+    await waitForAutomaticNotificationSlot();
     await options.sendWhatsApp(nextTicket.phone, message, 'ticket', {
       includeResponseQuestion: true,
       ticket: nextTicket,
       currentTicket
     });
+    lastAutomaticNotificationSentAt = Date.now();
     markMessageSent(nextTicket.external_id);
     console.log(`Aviso enviado al ticket ${nextTicket.external_id}`);
     return { sent: true, nextTicket };
@@ -371,6 +423,8 @@ async function refreshTicketStatuses(options = {}) {
   let skippedWithoutWhatsApp = 0;
   let notificationHalted = false;
   let notificationHaltReason = '';
+  let skippedByLimit = 0;
+  const notificationMaxPerCycle = Number(config.ticketNotificationMaxPerCycle || 1);
 
   for (const ticket of tickets) {
     const status = await fetchTicketStatus(ticket.external_id);
@@ -394,6 +448,11 @@ async function refreshTicketStatuses(options = {}) {
 
       if (notificationHalted) {
         skippedAfterHalt += 1;
+        continue;
+      }
+
+      if (Number.isFinite(notificationMaxPerCycle) && notificationMaxPerCycle > 0 && notifications >= notificationMaxPerCycle) {
+        skippedByLimit += 1;
         continue;
       }
 
@@ -432,7 +491,7 @@ async function refreshTicketStatuses(options = {}) {
     console.log(`Estados actualizados: ${checked}. Avisos pendientes: ${skippedWithoutWhatsApp}. WhatsApp no esta conectado.`);
   }
 
-  console.log(`Estados actualizados: ${checked}. Avisos enviados: ${notifications}. Fallos de envio: ${notificationErrors}. Avisos omitidos por grupo: ${skippedGroupNotifications}. Avisos omitidos por corte: ${skippedAfterHalt}`);
+  console.log(`Estados actualizados: ${checked}. Avisos enviados: ${notifications}. Fallos de envio: ${notificationErrors}. Avisos omitidos por grupo: ${skippedGroupNotifications}. Avisos omitidos por corte: ${skippedAfterHalt}. Avisos omitidos por limite: ${skippedByLimit}`);
   return {
     skipped: false,
     checked,
@@ -444,7 +503,8 @@ async function refreshTicketStatuses(options = {}) {
     notificationWaitReason: !whatsappReadyForNotifications ? 'WhatsApp no esta conectado' : '',
     skippedAfterHalt,
     skippedWithoutWhatsApp,
-    skippedGroupNotifications
+    skippedGroupNotifications,
+    skippedByLimit
   };
 }
 
@@ -487,8 +547,17 @@ async function retryPendingNotifications(options = {}) {
   let halted = false;
   let stoppedOnError = false;
   let haltReason = '';
+  let skippedByLimit = 0;
+  const notificationMaxPerCycle = Number(config.ticketNotificationMaxPerCycle || 1);
 
   for (const trigger of pending) {
+    if (Number.isFinite(notificationMaxPerCycle) && notificationMaxPerCycle > 0 && notifications >= notificationMaxPerCycle) {
+      queuePendingNotificationTrigger(trigger);
+      requeued += 1;
+      skippedByLimit += 1;
+      continue;
+    }
+
     retried += 1;
 
     const result = await notifyNextTicket(trigger, {
@@ -528,6 +597,7 @@ async function retryPendingNotifications(options = {}) {
     retried,
     notifications,
     notificationErrors,
+    skippedByLimit,
     requeued,
     pending: schedulerState.pendingNotificationTriggers.length,
     notificationHalted: halted,
@@ -709,6 +779,9 @@ function getTicketJobStatus() {
       ticketStatusApiAction: config.ticketStatusApiAction,
       clientApiAction: config.clientApiAction,
       syncIntervalMinutes: config.syncIntervalMinutes,
+      ticketNotificationMaxPerCycle: config.ticketNotificationMaxPerCycle,
+      ticketNotificationMinDelayMs: config.ticketNotificationMinDelayMs,
+      ticketNotificationPhoneCooldownHours: config.ticketNotificationPhoneCooldownHours,
       autoStartTicketJobs: config.autoStartTicketJobs,
       automaticReminderEnabled: isAutomaticReminderEnabled()
     }

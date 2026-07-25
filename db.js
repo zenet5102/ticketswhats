@@ -38,6 +38,8 @@ function initializeDatabase(database = getDb()) {
       response_label TEXT,
       response_body TEXT,
       response_received_at TEXT,
+      automatic_message_disabled_at TEXT,
+      automatic_message_disabled_reason TEXT,
       payload_json TEXT NOT NULL DEFAULT '{}',
       message_sent_at TEXT,
       message_error TEXT,
@@ -141,6 +143,8 @@ function initializeDatabase(database = getDb()) {
   ensureColumn(database, 'response_label', 'TEXT');
   ensureColumn(database, 'response_body', 'TEXT');
   ensureColumn(database, 'response_received_at', 'TEXT');
+  ensureColumn(database, 'automatic_message_disabled_at', 'TEXT');
+  ensureColumn(database, 'automatic_message_disabled_reason', 'TEXT');
   ensureWhatsAppMessageColumn(database, 'media_mime', 'TEXT');
   ensureWhatsAppMessageColumn(database, 'media_data', 'TEXT');
   ensureWhatsAppMessageColumn(database, 'media_filename', 'TEXT');
@@ -611,6 +615,25 @@ function markMessageError(externalId, errorMessage) {
   `).run(String(errorMessage || 'Error enviando mensaje'), externalId);
 }
 
+function disableTicketAutomaticMessage(externalId, reason = 'Mensaje manual enviado') {
+  const cleanExternalId = String(externalId || '').trim();
+
+  if (!cleanExternalId) {
+    throw new Error('Falta ticket');
+  }
+
+  getDb().prepare(`
+    UPDATE tickets
+    SET automatic_message_disabled_at = COALESCE(automatic_message_disabled_at, CURRENT_TIMESTAMP),
+        automatic_message_disabled_reason = ?,
+        message_error = NULL,
+        updated_at = CURRENT_TIMESTAMP
+    WHERE external_id = ?
+  `).run(String(reason || 'Mensaje manual enviado').trim(), cleanExternalId);
+
+  return getTicket(cleanExternalId);
+}
+
 function createTicketResponseAction(action = {}) {
   const ticketExternalId = String(action.ticketExternalId || '').trim();
   const chatId = String(action.chatId || '').trim();
@@ -912,7 +935,13 @@ function listWhatsAppConversations(limit = 100) {
         COUNT(*) AS total_messages,
         SUM(CASE WHEN direction = 'incoming' THEN 1 ELSE 0 END) AS incoming_messages,
         SUM(CASE WHEN direction = 'outgoing' THEN 1 ELSE 0 END) AS outgoing_messages,
-        MAX(CASE WHEN direction = 'incoming' THEN timestamp_ts ELSE NULL END) AS last_incoming_ts
+        MAX(CASE WHEN direction = 'incoming' THEN timestamp_ts ELSE NULL END) AS last_incoming_ts,
+        SUM(CASE
+          WHEN direction = 'outgoing'
+            AND source IN ('ticket', 'manual', 'inbox', 'bot')
+          THEN 1
+          ELSE 0
+        END) AS app_started_messages
       FROM whatsapp_messages
       GROUP BY chat_id
     )
@@ -964,7 +993,8 @@ function listWhatsAppConversations(limit = 100) {
       counts.total_messages,
       counts.incoming_messages,
       counts.outgoing_messages,
-      counts.last_incoming_ts
+      counts.last_incoming_ts,
+      counts.app_started_messages
     FROM ranked
     JOIN counts ON counts.chat_id = ranked.chat_id
     WHERE ranked.row_number = 1
@@ -1025,6 +1055,66 @@ function listWhatsAppChatPhones(chatId) {
   `).all(cleanChatId).map(row => row.phone);
 }
 
+function getRecentTicketNotificationByPhone(phone, sinceTs) {
+  const cleanPhone = normalizeChatPhone(phone);
+  const cleanSinceTs = Number(sinceTs || 0);
+
+  if (!cleanPhone || !Number.isFinite(cleanSinceTs) || cleanSinceTs <= 0) {
+    return null;
+  }
+
+  return getDb().prepare(`
+    SELECT id, chat_id, phone, body, timestamp_ts, timestamp_iso, source
+    FROM whatsapp_messages
+    WHERE direction = 'outgoing'
+      AND source = 'ticket'
+      AND phone = ?
+      AND timestamp_ts >= ?
+    ORDER BY timestamp_ts DESC
+    LIMIT 1
+  `).get(cleanPhone, cleanSinceTs) || null;
+}
+
+function getRecentOutgoingMessageBySource(chatId, source, sinceTs) {
+  const cleanChatId = String(chatId || '').trim();
+  const cleanSource = String(source || '').trim();
+  const cleanSinceTs = Number(sinceTs || 0);
+
+  if (!cleanChatId || !cleanSource || !Number.isFinite(cleanSinceTs) || cleanSinceTs <= 0) {
+    return null;
+  }
+
+  return getDb().prepare(`
+    SELECT id, chat_id, phone, body, timestamp_ts, timestamp_iso, source
+    FROM whatsapp_messages
+    WHERE direction = 'outgoing'
+      AND source = ?
+      AND chat_id = ?
+      AND timestamp_ts >= ?
+    ORDER BY timestamp_ts DESC
+    LIMIT 1
+  `).get(cleanSource, cleanChatId, cleanSinceTs) || null;
+}
+
+function getRecentOutgoingMessage(chatId, sinceTs) {
+  const cleanChatId = String(chatId || '').trim();
+  const cleanSinceTs = Number(sinceTs || 0);
+
+  if (!cleanChatId || !Number.isFinite(cleanSinceTs) || cleanSinceTs <= 0) {
+    return null;
+  }
+
+  return getDb().prepare(`
+    SELECT id, chat_id, phone, body, timestamp_ts, timestamp_iso, source
+    FROM whatsapp_messages
+    WHERE direction = 'outgoing'
+      AND chat_id = ?
+      AND timestamp_ts >= ?
+    ORDER BY timestamp_ts DESC
+    LIMIT 1
+  `).get(cleanChatId, cleanSinceTs) || null;
+}
+
 function closeDb() {
   if (db) {
     db.close();
@@ -1038,11 +1128,15 @@ module.exports = {
   createTicketResponseAction,
   createAutomaticMessageTemplate,
   deleteAutomaticMessageTemplate,
+  disableTicketAutomaticMessage,
   ensureAutomaticMessageTemplate,
   getAutomaticMessageTemplate,
   getDb,
   getNextAutomaticMessageTemplate,
   getNextTicket,
+  getRecentTicketNotificationByPhone,
+  getRecentOutgoingMessage,
+  getRecentOutgoingMessageBySource,
   getPendingTicketResponseActionByChat,
   getTicket,
   getTicketGroupName,

@@ -6,14 +6,18 @@
   <title>Ingresar | WhatsApp 2</title>
   <style>
     :root {
-      --bg: #f5f7fb;
+      --bg: #e7f0ed;
       --panel: #ffffff;
-      --line: #d7deea;
-      --text: #17202a;
-      --muted: #66758a;
-      --accent: #2563eb;
-      --accent-soft: #e8f0ff;
+      --panel-soft: #f7fbf9;
+      --line: #d8e5df;
+      --text: #172722;
+      --muted: #61736d;
+      --accent: #00a884;
+      --accent-dark: #008069;
+      --accent-soft: #d9fdd3;
+      --accent-pale: #eef8f4;
       --bad: #bd2c2c;
+      --bad-soft: #fde8e8;
     }
 
     * {
@@ -38,7 +42,7 @@
       border: 1px solid var(--line);
       border-radius: 8px;
       padding: 28px;
-      box-shadow: 0 18px 45px rgba(23, 32, 42, 0.12);
+      box-shadow: 0 18px 45px rgba(23, 39, 34, 0.12);
     }
 
     .brand {
@@ -47,8 +51,8 @@
       border-radius: 8px;
       display: grid;
       place-items: center;
-      background: var(--accent-soft);
-      color: var(--accent);
+      background: var(--accent-pale);
+      color: var(--accent-dark);
       font-weight: 700;
       margin-bottom: 18px;
     }
@@ -85,7 +89,7 @@
     }
 
     input:focus {
-      outline: 2px solid #bfdbfe;
+      outline: 2px solid #9de7d3;
       border-color: var(--accent);
     }
 
@@ -93,9 +97,9 @@
       width: 100%;
       min-height: 42px;
       margin-top: 20px;
-      border: 1px solid var(--accent);
+      border: 1px solid var(--accent-dark);
       border-radius: 8px;
-      background: var(--accent);
+      background: var(--accent-dark);
       color: #ffffff;
       font: inherit;
       font-weight: 700;
@@ -105,6 +109,11 @@
     button:disabled {
       cursor: progress;
       opacity: 0.7;
+    }
+
+    button:not(:disabled):hover {
+      border-color: #006b59;
+      background: #006b59;
     }
 
     .error {

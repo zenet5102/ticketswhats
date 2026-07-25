@@ -42,6 +42,11 @@ function parsePositiveInteger(value, fallback) {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
+function parseNonNegativeInteger(value, fallback) {
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
+}
+
 function parseBoolean(value, fallback) {
   if (value === undefined || value === null || value === '') {
     return fallback;
@@ -131,6 +136,11 @@ const config = {
   whatsappProtocolTimeoutMs: parsePositiveInteger(process.env.WHATSAPP_PROTOCOL_TIMEOUT_MS, 180000),
   whatsappChromePath: resolveWhatsAppChromePath(),
   syncIntervalMinutes: parsePositiveInteger(process.env.TICKET_SYNC_INTERVAL_MINUTES, 30),
+  ticketNotificationMaxPerCycle: parsePositiveInteger(process.env.TICKET_NOTIFICATION_MAX_PER_CYCLE, 1),
+  ticketNotificationMinDelayMs: parseNonNegativeInteger(process.env.TICKET_NOTIFICATION_MIN_DELAY_MS, 120000),
+  ticketNotificationPhoneCooldownHours: parseNonNegativeInteger(process.env.TICKET_NOTIFICATION_PHONE_COOLDOWN_HOURS, 24),
+  notificationChannelReplyCooldownHours: parseNonNegativeInteger(process.env.NOTIFICATION_CHANNEL_REPLY_COOLDOWN_HOURS, 24),
+  notificationChannelSuppressAfterManualHours: parseNonNegativeInteger(process.env.NOTIFICATION_CHANNEL_SUPPRESS_AFTER_MANUAL_HOURS, 24),
   requestTimeoutMs: parsePositiveInteger(process.env.TICKETS_API_TIMEOUT_MS, 15000),
   autoStartTicketJobs: parseBoolean(process.env.AUTO_START_TICKET_JOBS, true),
   ticketsApiUrl: process.env.TICKETS_API_URL || '',

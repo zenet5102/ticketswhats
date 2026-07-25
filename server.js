@@ -19,14 +19,18 @@ const {
   createTicketResponseAction,
   createAutomaticMessageTemplate,
   deleteAutomaticMessageTemplate,
+  disableTicketAutomaticMessage,
   ensureAutomaticMessageTemplate,
   filterTicketsByGroups,
+  getTicket,
   listAutomaticMessageTemplates,
   listTickets,
   listTicketGroups,
   listWhatsAppChatPhones,
   listWhatsAppConversations,
   listWhatsAppMessages,
+  getRecentOutgoingMessage,
+  getRecentOutgoingMessageBySource,
   normalizeChatPhone,
   saveWhatsAppMessage,
   updateAutomaticMessageTemplate,
@@ -77,7 +81,8 @@ let client = null;
 const maxStoredMediaBytes = 8 * 1024 * 1024;
 const lastMediaBackfillByChat = new Map();
 const notificationChannelReplyByChat = new Map();
-const notificationChannelReplyCooldownMs = 6 * 60 * 60 * 1000;
+const notificationChannelReplyCooldownMs = config.notificationChannelReplyCooldownHours * 60 * 60 * 1000;
+const notificationChannelSuppressAfterManualMs = config.notificationChannelSuppressAfterManualHours * 60 * 60 * 1000;
 const whatsappAuthRoot = path.resolve(__dirname, '.wwebjs_auth');
 const whatsappAuthSessionDir = path.resolve(whatsappAuthRoot, 'session-bot-1');
 const temporaryTransferHours = parsePositiveInteger(
@@ -535,6 +540,20 @@ function getTicketIda(ticket) {
   ).trim();
 }
 
+function getTicketCategory(ticket) {
+  const payload = parseTicketPayload(ticket);
+
+  return String(
+    payload.Categoria ||
+    payload.categoria ||
+    payload.Category ||
+    payload.category ||
+    payload.Tipo ||
+    payload.tipo ||
+    ''
+  ).trim();
+}
+
 function getTicketInfo(ticket) {
   if (!ticket) {
     return {};
@@ -545,8 +564,11 @@ function getTicketInfo(ticket) {
     ticket_ida: getTicketIda(ticket),
     ticket_razon_social: ticket.razon_social || '',
     ticket_delegacion: ticket.delegacion || '',
+    ticket_category: getTicketCategory(ticket),
     ticket_start: ticket.start || '',
     ticket_start_time: ticket.start_time || '',
+    ticket_automatic_disabled_at: ticket.automatic_message_disabled_at || '',
+    ticket_automatic_disabled_reason: ticket.automatic_message_disabled_reason || '',
     ticket_response_action: ticket.response_action || '',
     ticket_response_label: ticket.response_label || '',
     ticket_response_body: ticket.response_body || '',
@@ -594,8 +616,15 @@ function conversationMatchesPhones(conversation, phones) {
 }
 
 function listVisibleConversationsForUser(user, limit) {
+  const isAppStartedConversation = conversation => Number(conversation && conversation.app_started_messages || 0) > 0;
+
   if (user && user.isAdmin) {
-    return attachTicketInfoToConversations(user, listWhatsAppConversations(limit));
+    const requestedLimit = Math.min(Math.max(Number(limit) || 100, 1), 300);
+
+    return attachTicketInfoToConversations(
+      user,
+      listWhatsAppConversations(1000).filter(isAppStartedConversation).slice(0, requestedLimit)
+    );
   }
 
   const requestedLimit = Math.min(Math.max(Number(limit) || 100, 1), 300);
@@ -606,6 +635,7 @@ function listVisibleConversationsForUser(user, limit) {
   }
 
   const conversations = listWhatsAppConversations(1000)
+    .filter(isAppStartedConversation)
     .filter(conversation => conversationMatchesPhones(conversation, phones))
     .slice(0, requestedLimit);
 
@@ -783,6 +813,20 @@ function attachWhatsAppEvents(instance) {
   });
 }
 
+function canAccessTicket(user, ticketExternalId) {
+  const cleanExternalId = String(ticketExternalId || '').trim();
+
+  if (!cleanExternalId) {
+    return false;
+  }
+
+  if (user && user.isAdmin) {
+    return Boolean(getTicket(cleanExternalId));
+  }
+
+  return listVisibleTicketsForUser(user).some(ticket => String(ticket.external_id || '') === cleanExternalId);
+}
+
 async function initializeWhatsAppClient() {
   client = createWhatsAppClient();
   attachWhatsAppEvents(client);
@@ -850,6 +894,24 @@ function getStoredMessageId(message, chatId, direction) {
   }
 
   return `${direction}-${chatId}-${getWhatsAppTimestampMs(message && message.timestamp)}`;
+}
+
+function hasSerializedMessageId(message) {
+  return Boolean(message && message.id && message.id._serialized);
+}
+
+function getMessageChatId(message, fallback = '') {
+  const data = message && message._data || {};
+  const id = message && message.id || {};
+  const remote = id.remote || data.remote || data.id && data.id.remote || '';
+  const chatId = String(
+    message && (message.to || message.from) ||
+    remote ||
+    fallback ||
+    ''
+  ).trim();
+
+  return chatId;
 }
 
 function isDirectChatId(value) {
@@ -972,7 +1034,7 @@ async function getMessageMediaInfo(message) {
 
 async function storeWhatsAppMessage(message, source = 'whatsapp') {
   try {
-    const chatId = String(message.fromMe ? message.to || message.from : message.from || '').trim();
+    const chatId = getMessageChatId(message);
 
     if (!chatId || chatId === 'status@broadcast' || chatId.endsWith('@g.us')) {
       return null;
@@ -1061,6 +1123,28 @@ async function sendNotificationChannelReply(storedMessage) {
   const lastReplyAt = notificationChannelReplyByChat.get(chatId) || 0;
 
   if (now - lastReplyAt < notificationChannelReplyCooldownMs) {
+    return false;
+  }
+
+  const recentReply = getRecentOutgoingMessageBySource(
+    chatId,
+    'notification-channel',
+    now - notificationChannelReplyCooldownMs
+  );
+
+  if (recentReply) {
+    notificationChannelReplyByChat.set(chatId, Number(recentReply.timestamp_ts || now));
+    return false;
+  }
+
+  const recentOutgoing = getRecentOutgoingMessage(
+    chatId,
+    now - notificationChannelSuppressAfterManualMs
+  );
+  const recentOutgoingSource = String(recentOutgoing && recentOutgoing.source || '').trim();
+
+  if (recentOutgoingSource === 'manual' || recentOutgoingSource === 'inbox') {
+    console.log(`No se envia aviso de canal a ${chatId}: conversacion iniciada manualmente.`);
     return false;
   }
 
@@ -1227,22 +1311,27 @@ async function sendWhatsApp(phone, message, source = 'bot', options = {}) {
 
   console.log('Chat ID resuelto:', chatId);
   const sentMessage = await client.sendMessage(chatId, fullMessage);
-  const sentMessageId = getStoredMessageId(sentMessage, chatId, 'outgoing');
+  const sentMessageId = hasSerializedMessageId(sentMessage)
+    ? getStoredMessageId(sentMessage, chatId, 'outgoing')
+    : null;
+  let savedMessage = null;
 
-  try {
-    saveWhatsAppMessage({
-      id: sentMessageId,
-      chatId,
-      phone: cleanPhone,
-      direction: 'outgoing',
-      body: fullMessage,
-      timestampTs: getWhatsAppTimestampMs(sentMessage && sentMessage.timestamp),
-      fromMe: true,
-      ack: sentMessage && sentMessage.ack,
-      source
-    });
-  } catch (error) {
-    console.warn('Mensaje enviado, pero no se pudo guardar el historial:', error.message);
+  if (sentMessageId) {
+    try {
+      savedMessage = saveWhatsAppMessage({
+        id: sentMessageId,
+        chatId,
+        phone: cleanPhone,
+        direction: 'outgoing',
+        body: fullMessage,
+        timestampTs: getWhatsAppTimestampMs(sentMessage && sentMessage.timestamp),
+        fromMe: true,
+        ack: sentMessage && sentMessage.ack,
+        source
+      });
+    } catch (error) {
+      console.warn('Mensaje enviado, pero no se pudo guardar el historial:', error.message);
+    }
   }
 
   if (questionContext) {
@@ -1254,14 +1343,41 @@ async function sendWhatsApp(phone, message, source = 'bot', options = {}) {
         question: questionContext.question.prompt,
         options: questionContext.question.options,
         deliveryMode: 'text',
-        sentMessageId
+        sentMessageId: sentMessageId || undefined
       });
     } catch (error) {
       console.warn('Mensaje enviado, pero no se pudo registrar la pregunta pendiente:', error.message);
     }
   }
 
+  if (sentMessage && typeof sentMessage === 'object') {
+    sentMessage._savedMessage = savedMessage;
+    sentMessage._resolvedChatId = chatId;
+  }
+
   return sentMessage;
+}
+
+async function validateWhatsAppTarget(phone) {
+  await getWhatsAppStatus();
+
+  if (!client || !whatsappReady) {
+    throw new Error(`WhatsApp todavia no esta conectado (${whatsappState})`);
+  }
+
+  const cleanPhone = normalizeChatPhone(phone);
+
+  if (!cleanPhone) {
+    throw new Error('Falta telefono');
+  }
+
+  const numberId = await client.getNumberId(cleanPhone);
+
+  return {
+    exists: Boolean(numberId),
+    phone: cleanPhone,
+    chatId: numberId && numberId._serialized || ''
+  };
 }
 
 app.post('/send', requirePrivileged, async (req, res) => {
@@ -1363,6 +1479,7 @@ app.post('/messages/send', requirePrivileged, async (req, res) => {
   try {
     const targetChatId = String(req.body && req.body.chatId || '').trim();
     const targetPhone = String(req.body && req.body.phone || '').trim();
+    const ticketExternalId = String(req.body && req.body.ticketExternalId || '').trim();
     const target = targetChatId || targetPhone;
     const cleanPhone = normalizeChatPhone(targetPhone || target);
     const cleanMessage = String(req.body && req.body.message || '').trim();
@@ -1374,6 +1491,13 @@ app.post('/messages/send', requirePrivileged, async (req, res) => {
       });
     }
 
+    if (ticketExternalId && !canAccessTicket(req.user, ticketExternalId)) {
+      return res.status(403).json({
+        success: false,
+        error: 'Ticket fuera de los grupos asignados'
+      });
+    }
+
     if (!canSendToTarget(req.user, targetChatId, targetPhone || target)) {
       return res.status(403).json({
         success: false,
@@ -1382,24 +1506,71 @@ app.post('/messages/send', requirePrivileged, async (req, res) => {
     }
 
     const sentMessage = await sendWhatsApp(target, cleanMessage, 'inbox');
-    const chatId = sentMessage.to || (isDirectChatId(target) ? target : `${cleanPhone}@c.us`);
+    const fallbackChatId = isDirectChatId(target) ? target : `${cleanPhone}@c.us`;
+    const chatId = getMessageChatId(sentMessage, fallbackChatId);
+    const responseMessage = sentMessage && sentMessage._savedMessage || {
+      id: hasSerializedMessageId(sentMessage)
+        ? getStoredMessageId(sentMessage, chatId, 'outgoing')
+        : '',
+      chat_id: chatId,
+      phone: cleanPhone,
+      direction: 'outgoing',
+      body: cleanMessage,
+      timestamp_ts: getWhatsAppTimestampMs(sentMessage && sentMessage.timestamp),
+      from_me: 1,
+      ack: Number.isFinite(Number(sentMessage && sentMessage.ack)) ? Number(sentMessage.ack) : null,
+      source: 'inbox'
+    };
+
+    let ticket = null;
+
+    if (ticketExternalId) {
+      ticket = disableTicketAutomaticMessage(ticketExternalId, 'Mensaje manual enviado desde conversaciones');
+    }
 
     res.json({
       success: true,
-      message: saveWhatsAppMessage({
-        id: getStoredMessageId(sentMessage, chatId, 'outgoing'),
-        chatId,
-        phone: cleanPhone,
-        direction: 'outgoing',
-        body: cleanMessage,
-        timestampTs: getWhatsAppTimestampMs(sentMessage && sentMessage.timestamp),
-        fromMe: true,
-        ack: sentMessage && sentMessage.ack,
-        source: 'inbox'
-      })
+      message: responseMessage,
+      ticket
     });
   } catch (error) {
     const status = error.message.includes('todavia no esta conectado') ? 503 : 500;
+    res.status(status).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+app.post('/tickets/:externalId/validate-phone', requirePrivileged, async (req, res) => {
+  try {
+    const externalId = String(req.params.externalId || '').trim();
+
+    if (!canAccessTicket(req.user, externalId)) {
+      return res.status(403).json({
+        success: false,
+        error: 'Ticket fuera de los grupos asignados'
+      });
+    }
+
+    const ticket = getTicket(externalId);
+    const result = await validateWhatsAppTarget(ticket && ticket.phone);
+
+    res.json({
+      success: true,
+      ticket,
+      ...result
+    });
+  } catch (error) {
+    const status = error.message.includes('todavia no esta conectado') ? 503 : 500;
+
+    if (error.message === 'Falta telefono') {
+      return res.status(400).json({
+        success: false,
+        error: 'El ticket no tiene telefono'
+      });
+    }
+
     res.status(status).json({
       success: false,
       error: error.message
@@ -1430,6 +1601,29 @@ app.get('/tickets/job-status', requireLoggedIn, async (req, res) => {
     whatsapp,
     job: getTicketJobStatus()
   });
+});
+
+app.get('/tickets/:externalId', requireLoggedIn, (req, res) => {
+  try {
+    const externalId = String(req.params.externalId || '').trim();
+
+    if (!canAccessTicket(req.user, externalId)) {
+      return res.status(403).json({
+        success: false,
+        error: 'Ticket fuera de los grupos asignados'
+      });
+    }
+
+    res.json({
+      success: true,
+      ticket: getTicket(externalId)
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
 });
 
 app.post('/whatsapp/reconnect', requirePrivileged, async (req, res) => {
