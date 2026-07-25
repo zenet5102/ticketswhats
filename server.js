@@ -40,10 +40,13 @@ const {
 const {
   getMessageTemplate,
   getNotificationChannelReply,
+  getNotificationChannelReplySettings,
   getTicketResponseReply,
   getTicketResponseQuestion,
   isAutomaticReminderEnabled,
+  isNotificationChannelReplyEnabled,
   setAutomaticReminderEnabled,
+  setNotificationChannelReplySettings,
   setMessageTemplate
 } = require('./settings');
 const {
@@ -1157,6 +1160,10 @@ async function sendNotificationChannelReply(storedMessage) {
     return false;
   }
 
+  if (!isNotificationChannelReplyEnabled()) {
+    return false;
+  }
+
   const now = Date.now();
   const lastReplyAt = notificationChannelReplyByChat.get(chatId) || 0;
 
@@ -1756,6 +1763,34 @@ app.post('/settings/message-template', requirePrivileged, (req, res) => {
       : setAutomaticReminderEnabled(req.body.automaticReminderEnabled);
 
     res.json({ success: true, template, automaticReminderEnabled });
+  } catch (error) {
+    res.status(400).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+app.get('/settings/notification-channel-reply', requireLoggedIn, (req, res) => {
+  res.json({
+    success: true,
+    ...getNotificationChannelReplySettings(),
+    placeholders: ['support_phone']
+  });
+});
+
+app.post('/settings/notification-channel-reply', requirePrivileged, (req, res) => {
+  try {
+    const settings = setNotificationChannelReplySettings({
+      template: req.body && req.body.template,
+      enabled: !(req.body && req.body.enabled === false)
+    });
+
+    res.json({
+      success: true,
+      ...settings,
+      placeholders: ['support_phone']
+    });
   } catch (error) {
     res.status(400).json({
       success: false,

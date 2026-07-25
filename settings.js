@@ -3,6 +3,7 @@ const path = require('path');
 const { config } = require('./config');
 
 const settingsPath = path.join(__dirname, 'data', 'settings.json');
+const defaultNotificationChannelReply = 'Este es un canal de notificaciones de visita tecnica. Para gestionar tu visita comunicate al numero {support_phone}.';
 
 function readSettings() {
   if (!fs.existsSync(settingsPath)) {
@@ -83,6 +84,10 @@ function getTicketResponseReply(action) {
 }
 
 function getNotificationChannelReply() {
+  return getNotificationChannelReplySettings().renderedMessage;
+}
+
+function getNotificationChannelReplySettings() {
   const settings = readSettings();
   const supportPhone = String(
     settings.technicalVisitSupportPhone ||
@@ -92,10 +97,35 @@ function getNotificationChannelReply() {
   const template = String(
     settings.notificationChannelReply ||
     process.env.NOTIFICATION_CHANNEL_REPLY ||
-    'Este es un canal de notificaciones de visita tecnica. Para gestionar tu visita comunicate al numero {support_phone}.'
+    defaultNotificationChannelReply
   ).trim();
 
-  return template.replaceAll('{support_phone}', supportPhone || 'xxxx');
+  return {
+    enabled: settings.notificationChannelReplyEnabled !== false,
+    template,
+    renderedMessage: template.replaceAll('{support_phone}', supportPhone || 'xxxx'),
+    supportPhone
+  };
+}
+
+function isNotificationChannelReplyEnabled() {
+  return getNotificationChannelReplySettings().enabled;
+}
+
+function setNotificationChannelReplySettings(input = {}) {
+  const template = String(input.template || '').trim();
+
+  if (!template) {
+    throw new Error('El mensaje no puede estar vacio');
+  }
+
+  const settings = readSettings();
+  settings.notificationChannelReply = template;
+  settings.notificationChannelReplyEnabled = input.enabled !== false;
+  settings.updatedAt = new Date().toISOString();
+  writeSettings(settings);
+
+  return getNotificationChannelReplySettings();
 }
 
 function setMessageTemplate(messageTemplate) {
@@ -115,10 +145,13 @@ function setMessageTemplate(messageTemplate) {
 
 module.exports = {
   getNotificationChannelReply,
+  getNotificationChannelReplySettings,
   getTicketResponseReply,
   getTicketResponseQuestion,
   isAutomaticReminderEnabled,
+  isNotificationChannelReplyEnabled,
   getMessageTemplate,
   setAutomaticReminderEnabled,
+  setNotificationChannelReplySettings,
   setMessageTemplate
 };

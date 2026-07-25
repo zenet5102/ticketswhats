@@ -578,6 +578,96 @@
       transform: translateY(0);
     }
 
+    .modal-backdrop {
+      position: fixed;
+      inset: 0;
+      z-index: 20;
+      display: grid;
+      place-items: center;
+      padding: 18px;
+      background: rgba(15, 23, 42, 0.48);
+    }
+
+    .modal-backdrop[hidden] {
+      display: none;
+    }
+
+    .modal {
+      width: min(620px, 100%);
+      max-height: min(92vh, 720px);
+      overflow: auto;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      box-shadow: 0 24px 70px rgba(15, 23, 42, 0.26);
+    }
+
+    .modal-head {
+      min-height: 58px;
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--line);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .modal-title {
+      font-size: 16px;
+      font-weight: 700;
+    }
+
+    .modal-body {
+      padding: 14px;
+      display: grid;
+      gap: 12px;
+    }
+
+    .modal-actions {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .switch-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 10px 12px;
+      background: #f8fafc;
+      font-weight: 700;
+    }
+
+    .switch-row input {
+      width: auto;
+      min-width: 18px;
+      height: 18px;
+    }
+
+    .field-label {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0;
+    }
+
+    .preview-box {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 10px 12px;
+      background: #f8fafc;
+      color: var(--muted);
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      line-height: 1.4;
+    }
+
     @media (max-width: 860px) {
       .topbar-inner {
         align-items: stretch;
@@ -666,6 +756,10 @@
           <span aria-hidden="true">&#8635;</span>
           Reconectar
         </button>
+        <button id="channelSettingsBtn" type="button" title="Configurar respuesta automatica del canal">
+          <span aria-hidden="true">&#9881;</span>
+          Canal
+        </button>
         <span id="sessionBadge" class="session-chip">Sesion</span>
         <button id="logoutBtn" type="button" title="Cerrar sesion">
           <span aria-hidden="true">&#9211;</span>
@@ -744,6 +838,37 @@
     </section>
   </main>
 
+  <div id="channelModal" class="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="channelModalTitle" hidden>
+    <section class="modal">
+      <div class="modal-head">
+        <div>
+          <div id="channelModalTitle" class="modal-title">Respuesta del canal</div>
+          <div class="chat-meta">Mensaje automatico cuando escriben a este WhatsApp sin ticket.</div>
+        </div>
+        <button id="channelCloseBtn" type="button" title="Cerrar">Cerrar</button>
+      </div>
+      <form id="channelForm" class="modal-body">
+        <label class="switch-row">
+          <span>Enviar respuesta automatica</span>
+          <input id="channelEnabled" type="checkbox">
+        </label>
+        <div>
+          <div class="field-label">Mensaje</div>
+          <textarea id="channelTemplate" spellcheck="true"></textarea>
+        </div>
+        <div>
+          <div class="field-label">Vista previa</div>
+          <div id="channelPreview" class="preview-box">--</div>
+        </div>
+        <div id="channelError" class="error-text"></div>
+        <div class="modal-actions">
+          <button id="channelCancelBtn" type="button">Cancelar</button>
+          <button id="channelSaveBtn" class="primary" type="submit">Guardar</button>
+        </div>
+      </form>
+    </section>
+  </div>
+
   <div class="toast" id="toast"></div>
 
   <script>
@@ -758,10 +883,21 @@
       messageNotificationStartedAt: 0,
       lastIncomingByChat: new Map(),
       notificationAudioContext: null,
-      renderedMessagesChatId: ''
+      renderedMessagesChatId: '',
+      channelSettings: null
     };
 
     const els = {
+      channelCancelBtn: document.getElementById('channelCancelBtn'),
+      channelCloseBtn: document.getElementById('channelCloseBtn'),
+      channelEnabled: document.getElementById('channelEnabled'),
+      channelError: document.getElementById('channelError'),
+      channelForm: document.getElementById('channelForm'),
+      channelModal: document.getElementById('channelModal'),
+      channelPreview: document.getElementById('channelPreview'),
+      channelSaveBtn: document.getElementById('channelSaveBtn'),
+      channelSettingsBtn: document.getElementById('channelSettingsBtn'),
+      channelTemplate: document.getElementById('channelTemplate'),
       chatDirection: document.getElementById('chatDirection'),
       chatMeta: document.getElementById('chatMeta'),
       chatTitle: document.getElementById('chatTitle'),
@@ -1317,6 +1453,7 @@
       els.startChatBtn.disabled = !fullAccess;
       els.reconnectBtn.hidden = !fullAccess;
       els.reconnectBtn.disabled = !fullAccess;
+      els.channelSettingsBtn.disabled = !fullAccess;
 
       if (!fullAccess) {
         els.sendError.textContent = 'Solo lectura';
@@ -1355,6 +1492,82 @@
       }
 
       return data;
+    }
+
+    function renderChannelSettings(settings) {
+      state.channelSettings = settings || {};
+      els.channelEnabled.checked = state.channelSettings.enabled !== false;
+      els.channelTemplate.value = state.channelSettings.template || '';
+      renderChannelPreview();
+    }
+
+    function renderChannelPreview() {
+      const supportPhone = String(state.channelSettings && state.channelSettings.supportPhone || 'xxxx').trim() || 'xxxx';
+      const preview = els.channelTemplate.value.trim().replaceAll('{support_phone}', supportPhone);
+      els.channelPreview.textContent = preview || '--';
+    }
+
+    async function loadChannelSettings() {
+      const data = await fetchJson('/settings/notification-channel-reply');
+      renderChannelSettings(data);
+      return data;
+    }
+
+    async function openChannelSettings() {
+      if (!hasFullAccess()) {
+        showToast('Permisos insuficientes');
+        return;
+      }
+
+      els.channelError.textContent = 'Cargando...';
+      els.channelModal.hidden = false;
+
+      try {
+        await loadChannelSettings();
+        els.channelError.textContent = '';
+        els.channelTemplate.focus();
+      } catch (error) {
+        els.channelError.textContent = error.message;
+      }
+    }
+
+    function closeChannelSettings() {
+      els.channelModal.hidden = true;
+      els.channelError.textContent = '';
+    }
+
+    async function saveChannelSettings(event) {
+      event.preventDefault();
+
+      if (!hasFullAccess()) {
+        els.channelError.textContent = 'Permisos insuficientes';
+        return;
+      }
+
+      els.channelSaveBtn.disabled = true;
+      els.channelError.textContent = 'Guardando...';
+
+      try {
+        const data = await fetchJson('/settings/notification-channel-reply', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            enabled: els.channelEnabled.checked,
+            template: els.channelTemplate.value
+          })
+        });
+
+        renderChannelSettings(data);
+        els.channelError.textContent = '';
+        closeChannelSettings();
+        showToast(els.channelEnabled.checked ? 'Respuesta automatica actualizada' : 'Respuesta automatica desactivada');
+      } catch (error) {
+        els.channelError.textContent = error.message;
+      } finally {
+        els.channelSaveBtn.disabled = false;
+      }
     }
 
     function renderStatus(status) {
@@ -1627,6 +1840,7 @@
       state.loading = true;
       els.refreshBtn.disabled = true;
       els.reconnectBtn.disabled = true;
+      els.channelSettingsBtn.disabled = true;
 
       try {
         await loadStatus();
@@ -1643,6 +1857,7 @@
         state.loading = false;
         els.refreshBtn.disabled = false;
         els.reconnectBtn.disabled = !hasFullAccess();
+        els.channelSettingsBtn.disabled = !hasFullAccess();
       }
     }
 
@@ -1808,6 +2023,16 @@
     els.refreshBtn.addEventListener('click', refreshAll);
     els.reconnectBtn.addEventListener('click', reconnectWhatsApp);
     els.logoutBtn.addEventListener('click', logout);
+    els.channelSettingsBtn.addEventListener('click', openChannelSettings);
+    els.channelCloseBtn.addEventListener('click', closeChannelSettings);
+    els.channelCancelBtn.addEventListener('click', closeChannelSettings);
+    els.channelForm.addEventListener('submit', saveChannelSettings);
+    els.channelTemplate.addEventListener('input', renderChannelPreview);
+    els.channelModal.addEventListener('click', event => {
+      if (event.target === els.channelModal) {
+        closeChannelSettings();
+      }
+    });
     document.addEventListener('pointerdown', unlockNotificationSound, { once: true });
     document.addEventListener('keydown', unlockNotificationSound, { once: true });
     els.replyForm.addEventListener('submit', sendReply);
