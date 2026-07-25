@@ -33,6 +33,7 @@ function initializeDatabase(database = getDb()) {
       start_time TEXT NOT NULL,
       status TEXT,
       phone TEXT,
+      phones_json TEXT NOT NULL DEFAULT '[]',
       razon_social TEXT,
       response_action TEXT,
       response_label TEXT,
@@ -139,6 +140,7 @@ function initializeDatabase(database = getDb()) {
   `);
 
   ensureColumn(database, 'razon_social', 'TEXT');
+  ensureColumn(database, 'phones_json', "TEXT NOT NULL DEFAULT '[]'");
   ensureColumn(database, 'response_action', 'TEXT');
   ensureColumn(database, 'response_label', 'TEXT');
   ensureColumn(database, 'response_body', 'TEXT');
@@ -192,6 +194,33 @@ function ensureAutomaticMessageTemplateColumn(database, columnName, definition) 
 function getAppState(key, fallback = null) {
   const row = getDb().prepare('SELECT value FROM app_state WHERE key = ?').get(String(key || ''));
   return row ? row.value : fallback;
+}
+
+function normalizePhoneList(phones) {
+  const source = Array.isArray(phones)
+    ? phones
+    : String(phones || '').split(/[;,/|]+/);
+  const seen = new Set();
+  const normalized = [];
+
+  for (const value of source) {
+    const phone = String(value || '').replace(/\D/g, '');
+
+    if (phone.length >= 8 && !seen.has(phone)) {
+      seen.add(phone);
+      normalized.push(phone);
+    }
+  }
+
+  return normalized;
+}
+
+function parseTicketPhones(ticket) {
+  try {
+    return normalizePhoneList(JSON.parse(ticket && ticket.phones_json || '[]'));
+  } catch (error) {
+    return [];
+  }
 }
 
 function setAppState(key, value) {
@@ -361,11 +390,12 @@ function upsertTickets(tickets) {
       start_time,
       status,
       phone,
+      phones_json,
       razon_social,
       payload_json,
       updated_at
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
     ON CONFLICT(external_id) DO UPDATE SET
       delegacion = excluded.delegacion,
       start = excluded.start,
@@ -373,7 +403,11 @@ function upsertTickets(tickets) {
       start_date = excluded.start_date,
       start_time = excluded.start_time,
       status = COALESCE(excluded.status, tickets.status),
-      phone = COALESCE(excluded.phone, tickets.phone),
+      phone = COALESCE(tickets.phone, excluded.phone),
+      phones_json = CASE
+        WHEN excluded.phones_json <> '[]' THEN excluded.phones_json
+        ELSE tickets.phones_json
+      END,
       razon_social = COALESCE(excluded.razon_social, tickets.razon_social),
       payload_json = excluded.payload_json,
       updated_at = CURRENT_TIMESTAMP
@@ -384,6 +418,7 @@ function upsertTickets(tickets) {
 
   try {
     for (const ticket of tickets) {
+      const phones = normalizePhoneList(ticket.phones && ticket.phones.length ? ticket.phones : ticket.phone);
       statement.run(
         ticket.externalId,
         ticket.delegacion,
@@ -392,7 +427,8 @@ function upsertTickets(tickets) {
         ticket.startDate,
         ticket.startTime,
         ticket.status || null,
-        ticket.phone || null,
+        ticket.phone || phones[0] || null,
+        JSON.stringify(phones),
         ticket.razonSocial || null,
         JSON.stringify(ticket.raw || {})
       );
@@ -574,23 +610,46 @@ function updateTicketStatus(externalId, status) {
 }
 
 function updateTicketPhone(externalId, phone) {
+  const cleanPhone = normalizePhoneList(phone)[0] || null;
+  const ticket = getTicket(externalId);
+  const phones = normalizePhoneList([
+    cleanPhone,
+    ...parseTicketPhones(ticket)
+  ]);
+
   getDb().prepare(`
     UPDATE tickets
     SET phone = ?,
+        phones_json = ?,
         updated_at = CURRENT_TIMESTAMP
     WHERE external_id = ?
-  `).run(phone || null, externalId);
+  `).run(cleanPhone, JSON.stringify(phones), externalId);
+
+  return getTicket(externalId);
 }
 
 function updateTicketClientInfo(externalId, clientInfo = {}) {
+  const ticket = getTicket(externalId);
+  const phones = normalizePhoneList([
+    ...parseTicketPhones(ticket),
+    ...(clientInfo.phones || []),
+    clientInfo.phone
+  ]);
+
   getDb().prepare(`
     UPDATE tickets
-    SET phone = COALESCE(?, phone),
+    SET phone = COALESCE(phone, ?),
+        phones_json = CASE
+          WHEN ? <> '[]' THEN ?
+          ELSE phones_json
+        END,
         razon_social = COALESCE(?, razon_social),
         updated_at = CURRENT_TIMESTAMP
     WHERE external_id = ?
   `).run(
-    clientInfo.phone || null,
+    clientInfo.phone || phones[0] || null,
+    JSON.stringify(phones),
+    JSON.stringify(phones),
     clientInfo.razonSocial || null,
     externalId
   );

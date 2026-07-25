@@ -34,6 +34,7 @@ const {
   normalizeChatPhone,
   saveWhatsAppMessage,
   updateAutomaticMessageTemplate,
+  updateTicketPhone,
   updateWhatsAppMessageAck
 } = require('./db');
 const {
@@ -510,10 +511,12 @@ function getVisibleTicketPhones(user) {
   const phones = new Set();
 
   for (const ticket of listVisibleTicketsForUser(user)) {
-    const phone = normalizeChatPhone(ticket.phone || '');
+    for (const value of [ticket.phone, ...getTicketPhones(ticket)]) {
+      const phone = normalizeChatPhone(value || '');
 
-    if (phone) {
-      phones.add(phone);
+      if (phone) {
+        phones.add(phone);
+      }
     }
   }
 
@@ -554,6 +557,17 @@ function getTicketCategory(ticket) {
   ).trim();
 }
 
+function getTicketPhones(ticket) {
+  try {
+    const phones = JSON.parse(ticket && ticket.phones_json || '[]');
+    return Array.isArray(phones)
+      ? phones.map(phone => normalizeChatPhone(phone)).filter(Boolean)
+      : [];
+  } catch (error) {
+    return [];
+  }
+}
+
 function getTicketInfo(ticket) {
   if (!ticket) {
     return {};
@@ -565,6 +579,8 @@ function getTicketInfo(ticket) {
     ticket_razon_social: ticket.razon_social || '',
     ticket_delegacion: ticket.delegacion || '',
     ticket_category: getTicketCategory(ticket),
+    ticket_phone: ticket.phone || '',
+    ticket_phones: getTicketPhones(ticket),
     ticket_start: ticket.start || '',
     ticket_start_time: ticket.start_time || '',
     ticket_automatic_disabled_at: ticket.automatic_message_disabled_at || '',
@@ -583,10 +599,14 @@ function buildTicketInfoByPhone(user) {
     .sort((left, right) => Number(right.start_ts || 0) - Number(left.start_ts || 0));
 
   for (const ticket of tickets) {
-    const phone = normalizeChatPhone(ticket.phone || '');
+    const phones = [ticket.phone, ...getTicketPhones(ticket)]
+      .map(value => normalizeChatPhone(value || ''))
+      .filter(Boolean);
 
-    if (phone && !byPhone.has(phone)) {
-      byPhone.set(phone, getTicketInfo(ticket));
+    for (const phone of phones) {
+      if (!byPhone.has(phone)) {
+        byPhone.set(phone, getTicketInfo(ticket));
+      }
     }
   }
 
@@ -706,9 +726,11 @@ function incomingMessageMatchesAnyTicket(storedMessage) {
   }
 
   return listTickets().some(ticket => {
-    const phone = normalizeChatPhone(ticket && ticket.phone || '');
+    return [ticket && ticket.phone, ...getTicketPhones(ticket)].some(value => {
+      const phone = normalizeChatPhone(value || '');
 
-    return phone && phones.has(phone);
+      return phone && phones.has(phone);
+    });
   });
 }
 
@@ -1536,6 +1558,39 @@ app.post('/messages/send', requirePrivileged, async (req, res) => {
   } catch (error) {
     const status = error.message.includes('todavia no esta conectado') ? 503 : 500;
     res.status(status).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+app.post('/tickets/:externalId/phone', requirePrivileged, (req, res) => {
+  try {
+    const externalId = String(req.params.externalId || '').trim();
+    const phone = String(req.body && req.body.phone || '').trim();
+
+    if (!canAccessTicket(req.user, externalId)) {
+      return res.status(403).json({
+        success: false,
+        error: 'Ticket fuera de los grupos asignados'
+      });
+    }
+
+    const cleanPhone = normalizeChatPhone(phone);
+
+    if (!cleanPhone) {
+      return res.status(400).json({
+        success: false,
+        error: 'Telefono invalido'
+      });
+    }
+
+    res.json({
+      success: true,
+      ticket: updateTicketPhone(externalId, cleanPhone)
+    });
+  } catch (error) {
+    res.status(500).json({
       success: false,
       error: error.message
     });

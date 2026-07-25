@@ -638,7 +638,15 @@ async function refreshTicketPhones(date = getTodayDateString()) {
   let missingPhone = 0;
 
   for (const ticket of tickets) {
-    if (ticket.phone && ticket.razon_social) {
+    let storedPhones = [];
+
+    try {
+      storedPhones = JSON.parse(ticket.phones_json || '[]');
+    } catch (error) {
+      storedPhones = [];
+    }
+
+    if (ticket.phone && ticket.razon_social && storedPhones.length > 1) {
       continue;
     }
 
@@ -654,7 +662,7 @@ async function refreshTicketPhones(date = getTodayDateString()) {
     try {
       const clientInfo = await fetchClientInfo(clientId);
 
-      if (!clientInfo.phone && !clientInfo.razonSocial) {
+      if (!clientInfo.phone && !(clientInfo.phones && clientInfo.phones.length) && !clientInfo.razonSocial) {
         missingPhone += 1;
         continue;
       }

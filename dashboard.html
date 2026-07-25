@@ -730,6 +730,32 @@
       flex-wrap: wrap;
     }
 
+    .phone-options {
+      display: grid;
+      gap: 6px;
+      min-width: 170px;
+    }
+
+    .phone-option {
+      display: grid;
+      grid-template-columns: 16px minmax(0, 1fr);
+      align-items: center;
+      gap: 6px;
+      color: var(--text);
+      font-size: 13px;
+    }
+
+    .phone-option input {
+      width: 16px;
+      height: 16px;
+      margin: 0;
+      accent-color: var(--accent);
+    }
+
+    .phone-option span {
+      overflow-wrap: anywhere;
+    }
+
     .ticket-actions button,
     .ticket-actions a {
       min-height: 30px;
@@ -1582,6 +1608,47 @@
       return '/mensajes?' + params.toString();
     }
 
+    function getTicketPhones(ticket) {
+      const phones = [];
+      const seen = new Set();
+      let storedPhones = [];
+
+      try {
+        storedPhones = JSON.parse(ticket.phones_json || '[]');
+      } catch (error) {
+        storedPhones = [];
+      }
+
+      for (const value of [ticket.phone, ...storedPhones]) {
+        const phone = String(value || '').replace(/\D/g, '');
+
+        if (phone && !seen.has(phone)) {
+          seen.add(phone);
+          phones.push(phone);
+        }
+      }
+
+      return phones;
+    }
+
+    function renderTicketPhoneOptions(ticket) {
+      const phones = getTicketPhones(ticket);
+      const selectedPhone = String(ticket.phone || '').replace(/\D/g, '');
+
+      if (!phones.length) {
+        return badge('Sin movil', 'bad');
+      }
+
+      return '<div class="phone-options">' + phones.map((phone, index) => {
+        const checked = phone === selectedPhone || (!selectedPhone && index === 0) ? ' checked' : '';
+
+        return '<label class="phone-option">' +
+          '<input type="radio" name="ticket-phone-' + escapeHtml(ticket.external_id || '') + '" value="' + escapeHtml(phone) + '" data-action="select-phone" data-ticket-id="' + escapeHtml(ticket.external_id || '') + '"' + checked + '>' +
+          '<span class="mono">' + escapeHtml(phone) + '</span>' +
+          '</label>';
+      }).join('') + '</div>';
+    }
+
     function renderGroupCard(group) {
       const inProcess = group.tickets.filter(ticket => String(ticket.status || '').toLowerCase().includes('proceso')).length;
       const sent = group.tickets.filter(ticket => ticket.message_sent_at).length;
@@ -1620,9 +1687,7 @@
     }
 
     function renderTicketRow(ticket) {
-      const phoneCell = ticket.phone
-        ? '<a class="mono" href="' + escapeHtml(getTicketMessageUrl(ticket)) + '" title="Abrir mensajes con template">' + escapeHtml(ticket.phone) + '</a>'
-        : badge('Sin movil', 'bad');
+      const phoneCell = renderTicketPhoneOptions(ticket);
       const messageCell = ticket.message_sent_at
         ? badge('Enviado', 'good') + '<div class="muted">' + escapeHtml(formatDateTime(ticket.message_sent_at)) + '</div>'
         : ticket.automatic_message_disabled_at
@@ -2275,6 +2340,47 @@
       }
     }
 
+    async function selectTicketPhone(ticketId, phone, input) {
+      const cleanTicketId = String(ticketId || '').trim();
+      const cleanPhone = String(phone || '').replace(/\D/g, '');
+
+      if (!cleanTicketId || !cleanPhone) {
+        showToast('Falta telefono');
+        return;
+      }
+
+      if (input) {
+        input.disabled = true;
+      }
+
+      try {
+        const data = await fetchJson('/tickets/' + encodeURIComponent(cleanTicketId) + '/phone', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            phone: cleanPhone
+          })
+        });
+        const index = state.tickets.findIndex(ticket => String(ticket.external_id || '') === cleanTicketId);
+
+        if (index !== -1 && data.ticket) {
+          state.tickets[index] = data.ticket;
+          renderTickets();
+        }
+
+        showToast('Movil seleccionado: ' + cleanPhone);
+      } catch (error) {
+        showToast(error.message);
+        renderTickets();
+      } finally {
+        if (input) {
+          input.disabled = false;
+        }
+      }
+    }
+
     els.dateFilter.value = state.selectedDate;
     els.refreshBtn.addEventListener('click', loadDashboard);
     els.logoutBtn.addEventListener('click', logout);
@@ -2286,6 +2392,15 @@
       }
 
       validateTicketPhone(button.dataset.ticketId, button);
+    });
+    els.groupsContainer.addEventListener('change', event => {
+      const input = event.target.closest('input[data-action="select-phone"]');
+
+      if (!input) {
+        return;
+      }
+
+      selectTicketPhone(input.dataset.ticketId, input.value, input);
     });
     document.addEventListener('pointerdown', unlockNotificationSound, { once: true });
     document.addEventListener('keydown', unlockNotificationSound, { once: true });

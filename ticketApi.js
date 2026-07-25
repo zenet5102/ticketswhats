@@ -469,6 +469,7 @@ function normalizeTicket(raw) {
     startDate: dateOnly,
     startTime: formatTime(dateValue),
     phone: normalizePhone(firstValue(raw, config.fieldMap.phone, ticketFieldCandidates.phone)),
+    phones: normalizePhoneList(firstValue(raw, config.fieldMap.phone, ticketFieldCandidates.phone)),
     razonSocial: normalizeClientName(firstValue(raw, '', ticketFieldCandidates.clientName)),
     status: normalizeStatus(firstValue(raw, config.fieldMap.status, ticketFieldCandidates.status)),
     raw
@@ -476,32 +477,46 @@ function normalizeTicket(raw) {
 }
 
 function normalizePhone(value) {
+  return normalizePhoneList(value)[0] || null;
+}
+
+function normalizePhoneList(value) {
   if (value === undefined || value === null) {
-    return null;
+    return [];
   }
 
-  const candidates = String(value)
-    .split(';')
-    .map(part => part.replace(/\D/g, ''))
-    .filter(phone => phone.length >= 8);
+  const seen = new Set();
+  const candidates = [];
+  const parts = Array.isArray(value) ? value : String(value).split(/[;,/|]+/);
 
-  return candidates[0] || null;
+  for (const part of parts) {
+    const phone = String(part || '').replace(/\D/g, '');
+
+    if (phone.length >= 8 && !seen.has(phone)) {
+      seen.add(phone);
+      candidates.push(phone);
+    }
+  }
+
+  return candidates;
 }
 
 function findPhoneInRecord(record) {
-  const directPhone = normalizePhone(firstValue(record, config.fieldMap.phone, ticketFieldCandidates.phone));
+  return findPhonesInRecord(record)[0] || null;
+}
 
-  if (directPhone) {
-    return directPhone;
-  }
+function findPhonesInRecord(record) {
+  const directPhones = normalizePhoneList(firstValue(record, config.fieldMap.phone, ticketFieldCandidates.phone));
 
   if (!record || typeof record !== 'object') {
-    return null;
+    return directPhones;
   }
 
   const phoneKeyPattern = /(tel|telefono|cel|celular|movil|whatsapp|contacto)/i;
   const stack = [record];
   const visited = new Set();
+  const seen = new Set(directPhones);
+  const phones = directPhones.slice();
 
   while (stack.length) {
     const current = stack.pop();
@@ -519,16 +534,19 @@ function findPhoneInRecord(record) {
       }
 
       if (phoneKeyPattern.test(key)) {
-        const phone = normalizePhone(value);
+        const foundPhones = normalizePhoneList(value);
 
-        if (phone) {
-          return phone;
+        for (const phone of foundPhones) {
+          if (!seen.has(phone)) {
+            seen.add(phone);
+            phones.push(phone);
+          }
         }
       }
     }
   }
 
-  return null;
+  return phones;
 }
 
 function normalizeClientName(value) {
@@ -698,6 +716,7 @@ async function fetchClientInfo(clientId) {
   if (!config.clientApiUrl || !clientId) {
     return {
       phone: null,
+      phones: [],
       razonSocial: null
     };
   }
@@ -711,6 +730,7 @@ async function fetchClientInfo(clientId) {
 
   return {
     phone: findPhoneInRecord(record),
+    phones: findPhonesInRecord(record),
     razonSocial: findClientNameInRecord(record)
   };
 }
@@ -728,6 +748,7 @@ async function enrichTicketsWithClientPhones(tickets) {
       try {
         const clientInfo = await fetchClientInfo(ticket.clientId);
         ticket.phone = clientInfo.phone || ticket.phone;
+        ticket.phones = clientInfo.phones && clientInfo.phones.length ? clientInfo.phones : ticket.phones;
         ticket.razonSocial = clientInfo.razonSocial || ticket.razonSocial;
       } catch (error) {
         console.warn(`No se pudo obtener telefono del cliente ${ticket.clientId}: ${error.message}`);
