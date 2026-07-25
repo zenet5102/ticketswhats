@@ -997,7 +997,7 @@ function listWhatsAppConversations(limit = 100) {
         MAX(CASE WHEN direction = 'incoming' THEN timestamp_ts ELSE NULL END) AS last_incoming_ts,
         SUM(CASE
           WHEN direction = 'outgoing'
-            AND source IN ('ticket', 'ticket-response', 'notification-channel')
+            AND source IN ('ticket', 'ticket-response', 'notification-channel', 'manual', 'inbox', 'bot')
           THEN 1
           ELSE 0
         END) AS app_started_messages,
