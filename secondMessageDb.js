@@ -346,23 +346,23 @@ function normalizeMessagePhone(phone, chatId) {
   return normalized;
 }
 
-function getMessageVisualDuplicateKey(message) {
+function getMessageVisualDuplicateKeys(message) {
   const direction = String(message.direction || '').trim().toLowerCase();
   const body = String(message.body || '').trim();
   const phone = normalizeMessagePhone(message.phone || message.chat_id, message.chat_id) ||
     normalizeChatPhone(message.phone || message.chat_id);
+  const chatId = String(message.chat_id || '').trim().toLowerCase();
+  const mediaMime = String(message.media_mime || '').trim();
+  const mediaFilename = String(message.media_filename || '').trim();
 
-  if (!direction || !body || !phone) {
-    return '';
+  if (!direction || !body) {
+    return [];
   }
 
-  return JSON.stringify([
-    direction,
-    phone,
-    body,
-    String(message.media_mime || '').trim(),
-    String(message.media_filename || '').trim()
-  ]);
+  return [
+    phone ? JSON.stringify(['phone', direction, phone, body, mediaMime, mediaFilename]) : '',
+    chatId ? JSON.stringify(['chat', direction, chatId, body, mediaMime, mediaFilename]) : ''
+  ].filter(Boolean);
 }
 
 function preferMessageForVisualDuplicate(current, candidate) {
@@ -395,15 +395,15 @@ function dedupeVisualMessages(rows) {
   const groups = [];
 
   for (const row of rows) {
-    const key = getMessageVisualDuplicateKey(row);
+    const keys = getMessageVisualDuplicateKeys(row);
     const timestamp = Number(row.timestamp_ts || 0);
-    const existing = key
-      ? groups.find(group => group.key === key && Math.abs(group.timestamp - timestamp) <= duplicateWindowMs)
+    const existing = keys.length
+      ? groups.find(group => keys.some(key => group.keys.has(key)) && Math.abs(group.timestamp - timestamp) <= duplicateWindowMs)
       : null;
 
     if (!existing) {
       groups.push({
-        key,
+        keys: new Set(keys),
         timestamp,
         row
       });
@@ -412,6 +412,7 @@ function dedupeVisualMessages(rows) {
 
     existing.row = preferMessageForVisualDuplicate(existing.row, row);
     existing.timestamp = Number(existing.row.timestamp_ts || timestamp);
+    keys.forEach(key => existing.keys.add(key));
   }
 
   return groups

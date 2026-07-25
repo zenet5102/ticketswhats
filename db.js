@@ -1062,10 +1062,79 @@ function listWhatsAppConversations(limit = 100) {
   `).all(safeLimit);
 }
 
+function getMessageVisualDuplicateKeys(message) {
+  const direction = String(message.direction || '').trim().toLowerCase();
+  const body = String(message.body || '').trim();
+  const phone = normalizeChatPhone(message.phone || message.chat_id);
+  const chatId = String(message.chat_id || '').trim().toLowerCase();
+  const mediaMime = String(message.media_mime || '').trim();
+  const mediaFilename = String(message.media_filename || '').trim();
+
+  if (!direction || !body) {
+    return [];
+  }
+
+  return [
+    phone ? JSON.stringify(['phone', direction, phone, body, mediaMime, mediaFilename]) : '',
+    chatId ? JSON.stringify(['chat', direction, chatId, body, mediaMime, mediaFilename]) : ''
+  ].filter(Boolean);
+}
+
+function preferMessageForVisualDuplicate(current, candidate) {
+  if (!current) {
+    return candidate;
+  }
+
+  const currentAck = Number(current.ack);
+  const candidateAck = Number(candidate.ack);
+
+  if (Number.isFinite(candidateAck) && (!Number.isFinite(currentAck) || candidateAck > currentAck)) {
+    return candidate;
+  }
+
+  const currentTime = Number(current.timestamp_ts || 0);
+  const candidateTime = Number(candidate.timestamp_ts || 0);
+
+  return candidateTime >= currentTime ? candidate : current;
+}
+
+function dedupeVisualMessages(rows) {
+  const duplicateWindowMs = 10 * 60 * 1000;
+  const groups = [];
+
+  for (const row of rows) {
+    const keys = getMessageVisualDuplicateKeys(row);
+    const timestamp = Number(row.timestamp_ts || 0);
+    const existing = keys.length
+      ? groups.find(group => keys.some(key => group.keys.has(key)) && Math.abs(group.timestamp - timestamp) <= duplicateWindowMs)
+      : null;
+
+    if (!existing) {
+      groups.push({
+        keys: new Set(keys),
+        timestamp,
+        row
+      });
+      continue;
+    }
+
+    existing.row = preferMessageForVisualDuplicate(existing.row, row);
+    existing.timestamp = Number(existing.row.timestamp_ts || timestamp);
+    keys.forEach(key => existing.keys.add(key));
+  }
+
+  return groups
+    .map(group => group.row)
+    .sort((left, right) => {
+      const timeDelta = Number(left.timestamp_ts || 0) - Number(right.timestamp_ts || 0);
+      return timeDelta || String(left.id || '').localeCompare(String(right.id || ''));
+    });
+}
+
 function listWhatsAppMessages(chatId, limit = 200) {
   const safeLimit = Math.min(Math.max(Number(limit) || 200, 1), 500);
 
-  return getDb().prepare(`
+  const rows = getDb().prepare(`
     SELECT
       id,
       chat_id,
@@ -1096,6 +1165,8 @@ function listWhatsAppMessages(chatId, limit = 200) {
     )
     ORDER BY timestamp_ts ASC, created_at ASC, id ASC
   `).all(chatId, safeLimit);
+
+  return dedupeVisualMessages(rows);
 }
 
 function listWhatsAppChatPhones(chatId) {
