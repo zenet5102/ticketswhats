@@ -997,10 +997,16 @@ function listWhatsAppConversations(limit = 100) {
         MAX(CASE WHEN direction = 'incoming' THEN timestamp_ts ELSE NULL END) AS last_incoming_ts,
         SUM(CASE
           WHEN direction = 'outgoing'
-            AND source IN ('ticket', 'manual', 'inbox', 'bot')
+            AND source IN ('ticket', 'ticket-response', 'notification-channel')
           THEN 1
           ELSE 0
-        END) AS app_started_messages
+        END) AS app_started_messages,
+        SUM(CASE
+          WHEN direction = 'outgoing'
+            AND source IN ('manual', 'inbox', 'bot')
+          THEN 1
+          ELSE 0
+        END) AS manual_started_messages
       FROM whatsapp_messages
       GROUP BY chat_id
     )
@@ -1053,7 +1059,8 @@ function listWhatsAppConversations(limit = 100) {
       counts.incoming_messages,
       counts.outgoing_messages,
       counts.last_incoming_ts,
-      counts.app_started_messages
+      counts.app_started_messages,
+      counts.manual_started_messages
     FROM ranked
     JOIN counts ON counts.chat_id = ranked.chat_id
     WHERE ranked.row_number = 1

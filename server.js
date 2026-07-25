@@ -636,15 +636,28 @@ function conversationMatchesPhones(conversation, phones) {
 }
 
 function listVisibleConversationsForUser(user, limit) {
-  const isAppStartedConversation = conversation => Number(conversation && conversation.app_started_messages || 0) > 0;
+  const isTrackedConversation = conversation => {
+    const automaticMessages = Number(conversation && conversation.app_started_messages || 0);
+
+    return automaticMessages > 0 || Boolean(
+      conversation &&
+      (
+        conversation.ticket_external_id ||
+        conversation.ticket_ida ||
+        conversation.ticket_razon_social ||
+        conversation.ticket_delegacion ||
+        conversation.ticket_start
+      )
+    );
+  };
 
   if (user && user.isAdmin) {
     const requestedLimit = Math.min(Math.max(Number(limit) || 100, 1), 300);
+    const conversations = attachTicketInfoToConversations(user, listWhatsAppConversations(1000))
+      .filter(isTrackedConversation)
+      .slice(0, requestedLimit);
 
-    return attachTicketInfoToConversations(
-      user,
-      listWhatsAppConversations(1000).filter(isAppStartedConversation).slice(0, requestedLimit)
-    );
+    return conversations;
   }
 
   const requestedLimit = Math.min(Math.max(Number(limit) || 100, 1), 300);
@@ -654,12 +667,15 @@ function listVisibleConversationsForUser(user, limit) {
     return [];
   }
 
-  const conversations = listWhatsAppConversations(1000)
-    .filter(isAppStartedConversation)
-    .filter(conversation => conversationMatchesPhones(conversation, phones))
+  const conversations = attachTicketInfoToConversations(
+    user,
+    listWhatsAppConversations(1000)
+      .filter(conversation => conversationMatchesPhones(conversation, phones))
+  )
+    .filter(isTrackedConversation)
     .slice(0, requestedLimit);
 
-  return attachTicketInfoToConversations(user, conversations);
+  return conversations;
 }
 
 function canReadChat(user, chatId) {
