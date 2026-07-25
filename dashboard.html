@@ -1528,6 +1528,21 @@
       ).trim() || '--';
     }
 
+    function getTicketCategoryClientLabel(ticket) {
+      const category = getTicketCategory(ticket);
+      const client = String(ticket && ticket.razon_social || '').trim();
+
+      if (!client) {
+        return category;
+      }
+
+      if (!category || category === '--') {
+        return client;
+      }
+
+      return category + ' (' + client + ')';
+    }
+
     function compareTicketsByTime(left, right) {
       const leftStart = Number(left.start_ts || 0);
       const rightStart = Number(right.start_ts || 0);
@@ -1588,7 +1603,6 @@
         '<tr>' +
         '<th>Hora</th>' +
         '<th>IDTT</th>' +
-        '<th>Cliente</th>' +
         '<th>Categoria</th>' +
         '<th>Estado</th>' +
         '<th>Movil</th>' +
@@ -1623,8 +1637,7 @@
       return '<tr>' +
         '<td class="mono">' + escapeHtml(ticket.start_time || '--') + '</td>' +
         '<td class="mono">' + '<a target="_blank" href="http://192.168.200.14:5594/Phantom/Includes/DESk/desk_tracking.php?idt=' + ticket.external_id + '">' + escapeHtml(ticket.external_id) + '</a></td>' +
-        '<td>' + escapeHtml(ticket.razon_social || '--') + '</td>' +
-        '<td>' + escapeHtml(getTicketCategory(ticket)) + '</td>' +
+        '<td>' + escapeHtml(getTicketCategoryClientLabel(ticket)) + '</td>' +
         '<td>' + statusBadge(ticket.status) + '</td>' +
         '<td>' + phoneCell + '</td>' +
         '<td>' + messageCell + '</td>' +
