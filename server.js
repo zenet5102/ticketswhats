@@ -23,9 +23,12 @@ const {
   ensureAutomaticMessageTemplate,
   filterTicketsByGroups,
   getTicket,
+  getLatestTicketResponseActionByChat,
+  getWhatsAppConversationBucketOverride,
   listAutomaticMessageTemplates,
   listTickets,
   listTicketGroups,
+  listWhatsAppConversationBucketOverrides,
   listWhatsAppChatPhones,
   listWhatsAppConversations,
   listWhatsAppMessages,
@@ -33,6 +36,7 @@ const {
   getRecentOutgoingMessageBySource,
   normalizeChatPhone,
   saveWhatsAppMessage,
+  setWhatsAppConversationBucketOverride,
   updateAutomaticMessageTemplate,
   updateTicketPhone,
   updateWhatsAppMessageAck
@@ -72,6 +76,7 @@ const {
   startTicketScheduler,
   syncTickets
 } = require('./ticketsJob');
+const { getTodayDateString } = require('./ticketApi');
 
 let whatsappReady = false;
 let whatsappState = 'starting';
@@ -510,10 +515,10 @@ function clearTemporaryGroupTransfer(username) {
   return publicTransfer(existingTransfer);
 }
 
-function getVisibleTicketPhones(user) {
+function getVisibleTicketPhones(user, date) {
   const phones = new Set();
 
-  for (const ticket of listVisibleTicketsForUser(user)) {
+  for (const ticket of listVisibleTicketsForUser(user, date)) {
     for (const value of [ticket.phone, ...getTicketPhones(ticket)]) {
       const phone = normalizeChatPhone(value || '');
 
@@ -597,7 +602,7 @@ function getTicketInfo(ticket) {
 
 function buildTicketInfoByPhone(user) {
   const byPhone = new Map();
-  const tickets = listVisibleTicketsForUser(user)
+  const tickets = listVisibleTicketsForUser(user, getTodayDateString())
     .slice()
     .sort((left, right) => Number(right.start_ts || 0) - Number(left.start_ts || 0));
 
@@ -622,7 +627,19 @@ function attachTicketInfoToConversations(user, conversations) {
   return conversations.map(conversation => {
     const phone = normalizeChatPhone(conversation && conversation.phone || '');
     const chatPhone = normalizeChatPhone(conversation && conversation.chat_id || '');
-    const ticketInfo = ticketsByPhone.get(phone) || ticketsByPhone.get(chatPhone) || {};
+    let ticketInfo = ticketsByPhone.get(phone) || ticketsByPhone.get(chatPhone) || {};
+
+    if (!ticketInfo.ticket_external_id) {
+      const responseAction = getLatestTicketResponseActionByChat(
+        conversation && conversation.chat_id,
+        conversation && conversation.phone
+      );
+      const responseTicket = responseAction && getTicket(responseAction.ticket_external_id);
+
+      if (responseTicket && canAccessTicket(user, responseTicket.external_id)) {
+        ticketInfo = getTicketInfo(responseTicket);
+      }
+    }
 
     return {
       ...conversation,
@@ -639,46 +656,132 @@ function conversationMatchesPhones(conversation, phones) {
 }
 
 function listVisibleConversationsForUser(user, limit) {
-  const isTrackedConversation = conversation => {
-    const automaticMessages = Number(conversation && conversation.app_started_messages || 0);
+  return listConversationBucketsForUser(user, limit).conversations;
+}
 
-    return automaticMessages > 0 || Boolean(
-      conversation &&
-      (
-        conversation.ticket_external_id ||
-        conversation.ticket_ida ||
-        conversation.ticket_razon_social ||
-        conversation.ticket_delegacion ||
-        conversation.ticket_start
-      )
-    );
+function isAppStartedConversation(conversation) {
+  return Number(conversation && conversation.app_started_messages || 0) > 0 ||
+    Number(conversation && conversation.outgoing_messages || 0) > 0;
+}
+
+function isTicketLinkedConversation(conversation) {
+  return Boolean(
+    conversation &&
+    (
+      conversation.ticket_external_id ||
+      conversation.ticket_ida ||
+      conversation.ticket_razon_social ||
+      conversation.ticket_delegacion ||
+      conversation.ticket_start
+    )
+  );
+}
+
+function isTrackedConversation(conversation) {
+  return isAppStartedConversation(conversation) || isTicketLinkedConversation(conversation);
+}
+
+function isOtherConversation(conversation) {
+  return !isTrackedConversation(conversation) && String(conversation && conversation.direction || '') === 'incoming';
+}
+
+function getConversationChatId(conversation) {
+  return String(conversation && conversation.chat_id || '').trim();
+}
+
+function getRepresentedChatIds(conversations) {
+  const represented = new Set();
+
+  for (const conversation of conversations) {
+    const chatId = getConversationChatId(conversation);
+
+    if (!chatId) {
+      continue;
+    }
+
+    represented.add(chatId);
+
+    for (const message of listWhatsAppMessages(chatId, 80)) {
+      const messageChatId = String(message && message.chat_id || '').trim();
+
+      if (messageChatId) {
+        represented.add(messageChatId);
+      }
+    }
+  }
+
+  return represented;
+}
+
+function attachBucketOverride(conversation, overridesByChatId) {
+  const chatId = getConversationChatId(conversation);
+  const override = overridesByChatId.get(chatId);
+
+  if (!override) {
+    return conversation;
+  }
+
+  return {
+    ...conversation,
+    conversation_bucket_override: override.bucket,
+    conversation_bucket_updated_by: override.updated_by || '',
+    conversation_bucket_updated_at: override.updated_at || ''
   };
+}
+
+function splitConversationBuckets(conversations, requestedLimit) {
+  const overridesByChatId = new Map(
+    listWhatsAppConversationBucketOverrides()
+      .map(override => [String(override.chat_id || '').trim(), override])
+  );
+  const withOverrides = conversations.map(conversation => attachBucketOverride(conversation, overridesByChatId));
+  const forcedMain = withOverrides.filter(conversation => conversation.conversation_bucket_override === 'main');
+  const forcedOther = withOverrides.filter(conversation => conversation.conversation_bucket_override === 'other');
+  const autoConversations = withOverrides.filter(conversation => !conversation.conversation_bucket_override);
+  const trackedConversations = [
+    ...forcedMain,
+    ...autoConversations.filter(isTrackedConversation)
+  ]
+    .slice(0, requestedLimit);
+  const representedChatIds = getRepresentedChatIds(trackedConversations);
+
+  return {
+    conversations: trackedConversations,
+    otherConversations: [
+      ...forcedOther,
+      ...autoConversations.filter(conversation => isOtherConversation(conversation) && !representedChatIds.has(getConversationChatId(conversation)))
+    ]
+      .slice(0, requestedLimit)
+  };
+}
+
+function listConversationBucketsForUser(user, limit) {
+  const requestedLimit = Math.min(Math.max(Number(limit) || 100, 1), 300);
 
   if (user && user.isAdmin) {
-    const requestedLimit = Math.min(Math.max(Number(limit) || 100, 1), 300);
-    const conversations = attachTicketInfoToConversations(user, listWhatsAppConversations(1000))
-      .filter(isTrackedConversation)
-      .slice(0, requestedLimit);
-
-    return conversations;
+    return splitConversationBuckets(
+      attachTicketInfoToConversations(user, listWhatsAppConversations(1000)),
+      requestedLimit
+    );
   }
 
-  const requestedLimit = Math.min(Math.max(Number(limit) || 100, 1), 300);
-  const phones = getVisibleTicketPhones(user);
+  const phones = getVisibleTicketPhones(user, getTodayDateString());
 
   if (!phones.size) {
-    return [];
+    return {
+      conversations: [],
+      otherConversations: []
+    };
   }
 
-  const conversations = attachTicketInfoToConversations(
-    user,
-    listWhatsAppConversations(1000)
-      .filter(conversation => conversationMatchesPhones(conversation, phones))
-  )
-    .filter(isTrackedConversation)
-    .slice(0, requestedLimit);
-
-  return conversations;
+  return splitConversationBuckets(
+    attachTicketInfoToConversations(
+      user,
+      listWhatsAppConversations(1000)
+        .filter(conversation => conversationMatchesPhones(conversation, phones))
+    ),
+    requestedLimit
+  );
 }
 
 function canReadChat(user, chatId) {
@@ -945,12 +1048,10 @@ function getMessageChatId(message, fallback = '') {
   const data = message && message._data || {};
   const id = message && message.id || {};
   const remote = id.remote || data.remote || data.id && data.id.remote || '';
-  const chatId = String(
-    message && (message.to || message.from) ||
-    remote ||
-    fallback ||
-    ''
-  ).trim();
+  const preferred = message && message.fromMe
+    ? message.to || data.to || data.toId && data.toId._serialized
+    : message && (message.from || data.from || data.fromId && data.fromId._serialized);
+  const chatId = String(preferred || remote || fallback || '').trim();
 
   return chatId;
 }
@@ -1356,27 +1457,23 @@ async function sendWhatsApp(phone, message, source = 'bot', options = {}) {
 
   console.log('Chat ID resuelto:', chatId);
   const sentMessage = await client.sendMessage(chatId, fullMessage);
-  const sentMessageId = hasSerializedMessageId(sentMessage)
-    ? getStoredMessageId(sentMessage, chatId, 'outgoing')
-    : null;
+  const sentMessageId = getStoredMessageId(sentMessage, chatId, 'outgoing');
   let savedMessage = null;
 
-  if (sentMessageId) {
-    try {
-      savedMessage = saveWhatsAppMessage({
-        id: sentMessageId,
-        chatId,
-        phone: cleanPhone,
-        direction: 'outgoing',
-        body: fullMessage,
-        timestampTs: getWhatsAppTimestampMs(sentMessage && sentMessage.timestamp),
-        fromMe: true,
-        ack: sentMessage && sentMessage.ack,
-        source
-      });
-    } catch (error) {
-      console.warn('Mensaje enviado, pero no se pudo guardar el historial:', error.message);
-    }
+  try {
+    savedMessage = saveWhatsAppMessage({
+      id: sentMessageId,
+      chatId,
+      phone: cleanPhone,
+      direction: 'outgoing',
+      body: fullMessage,
+      timestampTs: getWhatsAppTimestampMs(sentMessage && sentMessage.timestamp),
+      fromMe: true,
+      ack: sentMessage && sentMessage.ack,
+      source
+    });
+  } catch (error) {
+    console.warn('Mensaje enviado, pero no se pudo guardar el historial:', error.message);
   }
 
   if (questionContext) {
@@ -1476,9 +1573,52 @@ app.post('/notifications/test-response', requirePrivileged, handleResponseNotifi
 
 app.get('/messages/conversations', requireLoggedIn, (req, res) => {
   try {
+    const buckets = listConversationBucketsForUser(req.user, req.query.limit);
+
     res.json({
       success: true,
-      conversations: listVisibleConversationsForUser(req.user, req.query.limit)
+      conversations: buckets.conversations,
+      otherConversations: buckets.otherConversations
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+app.post('/messages/conversations/bucket', requirePrivileged, (req, res) => {
+  try {
+    const chatId = String(req.body && req.body.chatId || '').trim();
+    const bucket = String(req.body && req.body.bucket || '').trim().toLowerCase();
+
+    if (!chatId || !['main', 'other'].includes(bucket)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Faltan chatId o bandeja'
+      });
+    }
+
+    if (!canReadChat(req.user, chatId)) {
+      return res.status(403).json({
+        success: false,
+        error: 'Chat fuera de los grupos asignados'
+      });
+    }
+
+    const override = setWhatsAppConversationBucketOverride(
+      chatId,
+      bucket,
+      req.user && req.user.username || ''
+    );
+    const buckets = listConversationBucketsForUser(req.user, req.query.limit);
+
+    res.json({
+      success: true,
+      override,
+      conversations: buckets.conversations,
+      otherConversations: buckets.otherConversations
     });
   } catch (error) {
     res.status(500).json({

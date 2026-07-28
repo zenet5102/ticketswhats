@@ -137,6 +137,31 @@ function initializeDatabase(database = getDb()) {
     CREATE INDEX IF NOT EXISTS idx_automatic_message_templates_order
       ON automatic_message_templates (active, sort_order, id);
 
+    CREATE TABLE IF NOT EXISTS whatsapp_chat_aliases (
+      alias_chat_id TEXT PRIMARY KEY,
+      canonical_chat_id TEXT NOT NULL,
+      phone TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_whatsapp_chat_aliases_canonical
+      ON whatsapp_chat_aliases (canonical_chat_id);
+
+    CREATE INDEX IF NOT EXISTS idx_whatsapp_chat_aliases_phone
+      ON whatsapp_chat_aliases (phone);
+
+    CREATE TABLE IF NOT EXISTS whatsapp_conversation_bucket_overrides (
+      chat_id TEXT PRIMARY KEY,
+      bucket TEXT NOT NULL CHECK (bucket IN ('main', 'other')),
+      updated_by TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_whatsapp_conversation_bucket_overrides_bucket
+      ON whatsapp_conversation_bucket_overrides (bucket);
+
   `);
 
   ensureColumn(database, 'razon_social', 'TEXT');
@@ -613,8 +638,8 @@ function updateTicketPhone(externalId, phone) {
   const cleanPhone = normalizePhoneList(phone)[0] || null;
   const ticket = getTicket(externalId);
   const phones = normalizePhoneList([
-    cleanPhone,
-    ...parseTicketPhones(ticket)
+    ...parseTicketPhones(ticket),
+    cleanPhone
   ]);
 
   getDb().prepare(`
@@ -786,6 +811,26 @@ function getPendingTicketResponseActionByChat(chatId, phone) {
   `).get(cleanChatId, cleanPhone || null));
 }
 
+function getLatestTicketResponseActionByChat(chatId, phone) {
+  const cleanChatId = String(chatId || '').trim();
+  const cleanPhone = normalizeChatPhone(phone || chatId);
+
+  if (!cleanChatId && !cleanPhone) {
+    return null;
+  }
+
+  return parseTicketResponseAction(getDb().prepare(`
+    SELECT *
+    FROM ticket_response_actions
+    WHERE chat_id = ?
+      OR phone = ?
+    ORDER BY
+      COALESCE(completed_at, updated_at, created_at) DESC,
+      id DESC
+    LIMIT 1
+  `).get(cleanChatId, cleanPhone || null));
+}
+
 function completeTicketResponseAction(id, response = {}) {
   const action = getTicketResponseAction(id);
 
@@ -879,6 +924,151 @@ function isDirectPhoneChatId(value) {
   return /@(c\.us|s\.whatsapp\.net)$/i.test(String(value || '').trim());
 }
 
+function upsertWhatsAppChatAlias(aliasChatId, canonicalChatId, phone = '') {
+  const cleanAliasChatId = String(aliasChatId || '').trim();
+  const cleanCanonicalChatId = String(canonicalChatId || '').trim();
+  const cleanPhone = normalizeChatPhone(phone || cleanCanonicalChatId) || null;
+
+  if (!isLidChatId(cleanAliasChatId) || !isDirectPhoneChatId(cleanCanonicalChatId)) {
+    return null;
+  }
+
+  getDb().prepare(`
+    INSERT INTO whatsapp_chat_aliases (
+      alias_chat_id,
+      canonical_chat_id,
+      phone,
+      updated_at
+    )
+    VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+    ON CONFLICT(alias_chat_id) DO UPDATE SET
+      canonical_chat_id = excluded.canonical_chat_id,
+      phone = COALESCE(excluded.phone, whatsapp_chat_aliases.phone),
+      updated_at = CURRENT_TIMESTAMP
+  `).run(cleanAliasChatId, cleanCanonicalChatId, cleanPhone);
+
+  return {
+    aliasChatId: cleanAliasChatId,
+    canonicalChatId: cleanCanonicalChatId,
+    phone: cleanPhone || ''
+  };
+}
+
+function listPersistedWhatsAppChatAliases(database = getDb(), directChatIds = []) {
+  const cleanDirectChatIds = Array.from(new Set(
+    (Array.isArray(directChatIds) ? directChatIds : [])
+      .map(chatId => String(chatId || '').trim())
+      .filter(Boolean)
+  ));
+
+  if (!cleanDirectChatIds.length) {
+    return database.prepare(`
+      SELECT alias_chat_id, canonical_chat_id, phone
+      FROM whatsapp_chat_aliases
+    `).all();
+  }
+
+  return database.prepare(`
+    SELECT alias_chat_id, canonical_chat_id, phone
+    FROM whatsapp_chat_aliases
+    WHERE canonical_chat_id IN (${cleanDirectChatIds.map(() => '?').join(',')})
+  `).all(...cleanDirectChatIds);
+}
+
+function refreshWhatsAppChatAliases(database = getDb()) {
+  const rows = database.prepare(`
+    SELECT
+      lid.chat_id AS alias_chat_id,
+      direct.chat_id AS canonical_chat_id,
+      direct.phone AS phone,
+      COUNT(*) AS matching_messages,
+      MAX(direct.timestamp_ts) AS last_match_ts
+    FROM whatsapp_messages lid
+    JOIN whatsapp_messages direct
+      ON direct.direction = 'outgoing'
+      AND lid.direction = 'outgoing'
+      AND direct.body = lid.body
+      AND direct.chat_id <> lid.chat_id
+      AND LOWER(direct.chat_id) NOT LIKE '%@lid'
+      AND LOWER(lid.chat_id) LIKE '%@lid'
+      AND direct.chat_id <> 'status@broadcast'
+      AND lid.chat_id <> 'status@broadcast'
+      AND ABS(direct.timestamp_ts - lid.timestamp_ts) <= 5000
+    GROUP BY lid.chat_id, direct.chat_id, direct.phone
+    HAVING matching_messages >= 1
+    ORDER BY matching_messages DESC, last_match_ts DESC
+  `).all();
+
+  const seen = new Set();
+
+  for (const row of rows) {
+    const aliasChatId = String(row.alias_chat_id || '').trim();
+
+    if (!aliasChatId || seen.has(aliasChatId)) {
+      continue;
+    }
+
+    const saved = upsertWhatsAppChatAlias(
+      aliasChatId,
+      row.canonical_chat_id,
+      row.phone
+    );
+
+    if (saved) {
+      seen.add(aliasChatId);
+    }
+  }
+
+  return seen.size;
+}
+
+function listWhatsAppConversationBucketOverrides() {
+  return getDb().prepare(`
+    SELECT chat_id, bucket, updated_by, updated_at
+    FROM whatsapp_conversation_bucket_overrides
+  `).all();
+}
+
+function getWhatsAppConversationBucketOverride(chatId) {
+  const cleanChatId = String(chatId || '').trim();
+
+  if (!cleanChatId) {
+    return null;
+  }
+
+  return getDb().prepare(`
+    SELECT chat_id, bucket, updated_by, updated_at
+    FROM whatsapp_conversation_bucket_overrides
+    WHERE chat_id = ?
+  `).get(cleanChatId) || null;
+}
+
+function setWhatsAppConversationBucketOverride(chatId, bucket, updatedBy = '') {
+  const cleanChatId = String(chatId || '').trim();
+  const cleanBucket = String(bucket || '').trim().toLowerCase();
+  const cleanUpdatedBy = String(updatedBy || '').trim() || null;
+
+  if (!cleanChatId || !['main', 'other'].includes(cleanBucket)) {
+    throw new Error('Faltan datos del cambio de bandeja');
+  }
+
+  getDb().prepare(`
+    INSERT INTO whatsapp_conversation_bucket_overrides (
+      chat_id,
+      bucket,
+      updated_by,
+      updated_at
+    )
+    VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+    ON CONFLICT(chat_id) DO UPDATE SET
+      bucket = excluded.bucket,
+      updated_by = excluded.updated_by,
+      updated_at = CURRENT_TIMESTAMP
+  `).run(cleanChatId, cleanBucket, cleanUpdatedBy);
+
+  return getWhatsAppConversationBucketOverride(cleanChatId);
+}
+
 function normalizeMessagePhone(phone, chatId) {
   const normalized = normalizeChatPhone(phone);
   const lidUser = isLidChatId(chatId) ? normalizeChatPhone(chatId) : '';
@@ -946,8 +1136,18 @@ function saveWhatsAppMessage(message = {}) {
     )
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
-      chat_id = excluded.chat_id,
-      phone = COALESCE(excluded.phone, whatsapp_messages.phone),
+      chat_id = CASE
+        WHEN excluded.source = 'whatsapp'
+          AND whatsapp_messages.source IN ('ticket', 'ticket-response', 'notification-channel', 'manual', 'inbox', 'bot')
+        THEN whatsapp_messages.chat_id
+        ELSE excluded.chat_id
+      END,
+      phone = CASE
+        WHEN excluded.source = 'whatsapp'
+          AND whatsapp_messages.source IN ('ticket', 'ticket-response', 'notification-channel', 'manual', 'inbox', 'bot')
+        THEN whatsapp_messages.phone
+        ELSE COALESCE(excluded.phone, whatsapp_messages.phone)
+      END,
       contact_name = COALESCE(excluded.contact_name, whatsapp_messages.contact_name),
       body = CASE
         WHEN whatsapp_messages.body LIKE '[% sin texto]' AND excluded.body NOT LIKE '[% sin texto]'
@@ -958,7 +1158,12 @@ function saveWhatsAppMessage(message = {}) {
       media_data = COALESCE(excluded.media_data, whatsapp_messages.media_data),
       media_filename = COALESCE(excluded.media_filename, whatsapp_messages.media_filename),
       ack = COALESCE(excluded.ack, whatsapp_messages.ack),
-      source = COALESCE(excluded.source, whatsapp_messages.source)
+      source = CASE
+        WHEN excluded.source = 'whatsapp'
+          AND whatsapp_messages.source IN ('ticket', 'ticket-response', 'notification-channel', 'manual', 'inbox', 'bot')
+        THEN whatsapp_messages.source
+        ELSE COALESCE(excluded.source, whatsapp_messages.source)
+      END
   `).run(
     id,
     chatId,
@@ -981,8 +1186,11 @@ function saveWhatsAppMessage(message = {}) {
 
 function listWhatsAppConversations(limit = 100) {
   const safeLimit = Math.min(Math.max(Number(limit) || 100, 1), 1000);
+  const database = getDb();
 
-  return getDb().prepare(`
+  refreshWhatsAppChatAliases(database);
+
+  const rows = database.prepare(`
     WITH ranked AS (
       SELECT
         *,
@@ -1071,6 +1279,22 @@ function listWhatsAppConversations(limit = 100) {
     ORDER BY ranked.timestamp_ts DESC, ranked.created_at DESC
     LIMIT ?
   `).all(safeLimit);
+
+  const chatIds = new Set(rows.map(row => String(row.chat_id || '').trim()).filter(Boolean));
+  const aliasRows = listPersistedWhatsAppChatAliases(database);
+  const aliasToCanonical = new Map(
+    aliasRows.map(row => [
+      String(row.alias_chat_id || '').trim(),
+      String(row.canonical_chat_id || '').trim()
+    ])
+  );
+
+  return rows.filter(row => {
+    const chatId = String(row.chat_id || '').trim();
+    const canonicalChatId = aliasToCanonical.get(chatId);
+
+    return !(canonicalChatId && chatIds.has(canonicalChatId));
+  });
 }
 
 function getMessageVisualDuplicateKeys(message) {
@@ -1080,6 +1304,9 @@ function getMessageVisualDuplicateKeys(message) {
   const chatId = String(message.chat_id || '').trim().toLowerCase();
   const mediaMime = String(message.media_mime || '').trim();
   const mediaFilename = String(message.media_filename || '').trim();
+  const contentKey = direction === 'outgoing'
+    ? JSON.stringify(['outgoing-content', body, mediaMime, mediaFilename])
+    : '';
 
   if (!direction || !body) {
     return [];
@@ -1087,13 +1314,35 @@ function getMessageVisualDuplicateKeys(message) {
 
   return [
     phone ? JSON.stringify(['phone', direction, phone, body, mediaMime, mediaFilename]) : '',
-    chatId ? JSON.stringify(['chat', direction, chatId, body, mediaMime, mediaFilename]) : ''
+    chatId ? JSON.stringify(['chat', direction, chatId, body, mediaMime, mediaFilename]) : '',
+    contentKey
   ].filter(Boolean);
+}
+
+function getMessageSourcePriority(message) {
+  const source = String(message && message.source || '').trim();
+
+  if (['ticket', 'ticket-response', 'notification-channel', 'manual', 'inbox', 'bot'].includes(source)) {
+    return 2;
+  }
+
+  if (source === 'whatsapp') {
+    return 0;
+  }
+
+  return 1;
 }
 
 function preferMessageForVisualDuplicate(current, candidate) {
   if (!current) {
     return candidate;
+  }
+
+  const currentSourcePriority = getMessageSourcePriority(current);
+  const candidateSourcePriority = getMessageSourcePriority(candidate);
+
+  if (candidateSourcePriority !== currentSourcePriority) {
+    return candidateSourcePriority > currentSourcePriority ? candidate : current;
   }
 
   const currentAck = Number(current.ack);
@@ -1148,15 +1397,26 @@ function findDirectChatAliases(database, directChatIds) {
       .map(chatId => String(chatId || '').trim())
       .filter(isDirectPhoneChatId)
   ));
+  const aliases = new Map();
 
   if (!cleanDirectChatIds.length) {
-    return new Map();
+    return aliases;
+  }
+
+  for (const row of listPersistedWhatsAppChatAliases(database, cleanDirectChatIds)) {
+    const aliasChatId = String(row.alias_chat_id || '').trim();
+    const canonicalChatId = String(row.canonical_chat_id || '').trim();
+
+    if (aliasChatId && canonicalChatId && !aliases.has(aliasChatId)) {
+      aliases.set(aliasChatId, canonicalChatId);
+    }
   }
 
   const rows = database.prepare(`
     SELECT
       lid.chat_id AS lid_chat_id,
       direct.chat_id AS direct_chat_id,
+      direct.phone AS phone,
       COUNT(*) AS matching_messages,
       MAX(direct.timestamp_ts) AS last_match_ts
     FROM whatsapp_messages lid
@@ -1174,13 +1434,12 @@ function findDirectChatAliases(database, directChatIds) {
     ORDER BY matching_messages DESC, last_match_ts DESC
   `).all(...cleanDirectChatIds);
 
-  const aliases = new Map();
-
   for (const row of rows) {
     const lidChatId = String(row.lid_chat_id || '').trim();
     const directChatId = String(row.direct_chat_id || '').trim();
 
     if (lidChatId && directChatId && !aliases.has(lidChatId)) {
+      upsertWhatsAppChatAlias(lidChatId, directChatId, row.phone);
       aliases.set(lidChatId, directChatId);
     }
   }
@@ -1250,6 +1509,19 @@ function listWhatsAppMessages(chatId, limit = 200) {
     }
   }
 
+  if (isLidChatId(cleanChatId)) {
+    const aliasRow = database.prepare(`
+      SELECT canonical_chat_id
+      FROM whatsapp_chat_aliases
+      WHERE alias_chat_id = ?
+    `).get(cleanChatId);
+    const canonicalChatId = String(aliasRow && aliasRow.canonical_chat_id || '').trim();
+
+    if (canonicalChatId && !chatIds.includes(canonicalChatId)) {
+      chatIds.push(canonicalChatId);
+    }
+  }
+
   const rows = database.prepare(`
     SELECT
       id,
@@ -1293,13 +1565,30 @@ function listWhatsAppChatPhones(chatId) {
     return [];
   }
 
-  return getDb().prepare(`
+  const database = getDb();
+  const phones = database.prepare(`
     SELECT DISTINCT phone
     FROM whatsapp_messages
     WHERE chat_id = ?
       AND phone IS NOT NULL
       AND phone <> ''
   `).all(cleanChatId).map(row => row.phone);
+
+  const aliasRows = database.prepare(`
+    SELECT phone
+    FROM whatsapp_chat_aliases
+    WHERE (alias_chat_id = ? OR canonical_chat_id = ?)
+      AND phone IS NOT NULL
+      AND phone <> ''
+  `).all(cleanChatId, cleanChatId);
+
+  for (const row of aliasRows) {
+    if (row.phone && !phones.includes(row.phone)) {
+      phones.push(row.phone);
+    }
+  }
+
+  return phones;
 }
 
 function getRecentTicketNotificationByPhone(phone, sinceTs) {
@@ -1384,12 +1673,15 @@ module.exports = {
   getRecentTicketNotificationByPhone,
   getRecentOutgoingMessage,
   getRecentOutgoingMessageBySource,
+  getLatestTicketResponseActionByChat,
   getPendingTicketResponseActionByChat,
   getTicket,
   getTicketGroupName,
   filterTicketsByGroups,
+  getWhatsAppConversationBucketOverride,
   listTicketGroups,
   listAutomaticMessageTemplates,
+  listWhatsAppConversationBucketOverrides,
   listWhatsAppChatPhones,
   listWhatsAppConversations,
   listWhatsAppMessages,
@@ -1399,6 +1691,7 @@ module.exports = {
   normalizeChatPhone,
   pruneTicketsForDate,
   saveWhatsAppMessage,
+  setWhatsAppConversationBucketOverride,
   updateAutomaticMessageTemplate,
   updateWhatsAppMessageAck,
   updateTicketClientInfo,

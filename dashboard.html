@@ -1608,6 +1608,32 @@
       return '/mensajes?' + params.toString();
     }
 
+    function getPhoneDedupeKey(value) {
+      let phone = String(value || '').replace(/\D/g, '');
+
+      if (!phone) {
+        return '';
+      }
+
+      if (phone.startsWith('549')) {
+        phone = phone.slice(3);
+      } else if (phone.startsWith('54')) {
+        phone = phone.slice(2);
+
+        if (phone.startsWith('9')) {
+          phone = phone.slice(1);
+        }
+      }
+
+      phone = phone.replace(/^0+/, '');
+
+      if (phone.startsWith('15') && phone.length < 11) {
+        phone = '11' + phone.slice(2);
+      }
+
+      return phone;
+    }
+
     function getTicketPhones(ticket) {
       const phones = [];
       const seen = new Set();
@@ -1619,11 +1645,12 @@
         storedPhones = [];
       }
 
-      for (const value of [ticket.phone, ...storedPhones]) {
+      for (const value of [...storedPhones, ticket.phone]) {
         const phone = String(value || '').replace(/\D/g, '');
+        const key = getPhoneDedupeKey(phone);
 
-        if (phone && !seen.has(phone)) {
-          seen.add(phone);
+        if (phone && key && !seen.has(key)) {
+          seen.add(key);
           phones.push(phone);
         }
       }
@@ -1634,13 +1661,14 @@
     function renderTicketPhoneOptions(ticket) {
       const phones = getTicketPhones(ticket);
       const selectedPhone = String(ticket.phone || '').replace(/\D/g, '');
+      const selectedPhoneKey = getPhoneDedupeKey(selectedPhone);
 
       if (!phones.length) {
         return badge('Sin movil', 'bad');
       }
 
       return '<div class="phone-options">' + phones.map((phone, index) => {
-        const checked = phone === selectedPhone || (!selectedPhone && index === 0) ? ' checked' : '';
+        const checked = getPhoneDedupeKey(phone) === selectedPhoneKey || (!selectedPhoneKey && index === 0) ? ' checked' : '';
 
         return '<label class="phone-option">' +
           '<input type="radio" name="ticket-phone-' + escapeHtml(ticket.external_id || '') + '" value="' + escapeHtml(phone) + '" data-action="select-phone" data-ticket-id="' + escapeHtml(ticket.external_id || '') + '"' + checked + '>' +

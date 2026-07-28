@@ -336,8 +336,33 @@
       gap: 8px;
     }
 
+    .conversation-tabs {
+      padding: 8px;
+      border-bottom: 1px solid var(--line);
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 6px;
+      background: #f8fafc;
+    }
+
+    .conversation-tab {
+      min-height: 34px;
+      border-radius: 8px;
+      padding: 0 8px;
+      font-size: 13px;
+      font-weight: 700;
+      background: #ffffff;
+      color: var(--muted);
+    }
+
+    .conversation-tab.active {
+      border-color: var(--wa-green);
+      background: #edf8f5;
+      color: var(--wa-dark);
+    }
+
     .conversation-list {
-      height: 498px;
+      height: 455px;
       overflow: auto;
     }
 
@@ -612,6 +637,20 @@
       gap: 12px;
     }
 
+    .chat-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-shrink: 0;
+    }
+
+    .chat-actions button {
+      min-height: 32px;
+      padding: 0 10px;
+      font-size: 13px;
+      font-weight: 700;
+    }
+
     .modal-title {
       font-size: 16px;
       font-weight: 700;
@@ -798,6 +837,10 @@
           <input id="phoneInput" type="tel" inputmode="tel" placeholder="1162446858 o 5491162446858" autocomplete="off">
           <button id="startChatBtn" type="button" title="Abrir conversacion">Nuevo</button>
         </div>
+        <div class="conversation-tabs" role="tablist" aria-label="Tipo de conversaciones">
+          <button id="mainChatsTab" class="conversation-tab active" type="button">Principal</button>
+          <button id="otherChatsTab" class="conversation-tab" type="button">Otros chats</button>
+        </div>
         <div id="conversationList" class="conversation-list">
           <div class="empty">Cargando conversaciones...</div>
         </div>
@@ -809,7 +852,10 @@
             <div class="chat-title" id="chatTitle">Selecciona una conversacion</div>
             <div class="chat-meta" id="chatMeta">--</div>
           </div>
-          <span class="badge warn" id="chatDirection">Sin chat</span>
+          <div class="chat-actions">
+            <button id="moveBucketBtn" type="button" title="Cambiar bandeja" disabled>Mover</button>
+            <span class="badge warn" id="chatDirection">Sin chat</span>
+          </div>
         </div>
         <div id="messageList" class="messages">
           <div class="empty">Sin mensajes seleccionados.</div>
@@ -874,7 +920,10 @@
   <script>
     const state = {
       conversations: [],
+      otherConversations: [],
+      activeConversationBucket: 'main',
       selectedChatId: '',
+      manualChatPending: false,
       auth: null,
       loading: false,
       ticket: null,
@@ -909,7 +958,10 @@
       lastRefresh: document.getElementById('lastRefresh'),
       loadedBadge: document.getElementById('loadedBadge'),
       logoutBtn: document.getElementById('logoutBtn'),
+      mainChatsTab: document.getElementById('mainChatsTab'),
       messageList: document.getElementById('messageList'),
+      moveBucketBtn: document.getElementById('moveBucketBtn'),
+      otherChatsTab: document.getElementById('otherChatsTab'),
       phoneInput: document.getElementById('phoneInput'),
       reconnectBtn: document.getElementById('reconnectBtn'),
       refreshBtn: document.getElementById('refreshBtn'),
@@ -1577,15 +1629,52 @@
       els.whatsappDetail.textContent = whatsapp.lastError || (ready ? 'Conectado' : 'Sin conexion');
     }
 
+    function getActiveConversations() {
+      return state.activeConversationBucket === 'other' ? state.otherConversations : state.conversations;
+    }
+
+    function findConversationByChatId(chatId) {
+      const cleanChatId = String(chatId || '').trim();
+
+      return [...state.conversations, ...state.otherConversations]
+        .find(item => String(item && item.chat_id || '').trim() === cleanChatId);
+    }
+
+    function setConversationBucket(bucket) {
+      state.activeConversationBucket = bucket === 'other' ? 'other' : 'main';
+      els.mainChatsTab.classList.toggle('active', state.activeConversationBucket === 'main');
+      els.otherChatsTab.classList.toggle('active', state.activeConversationBucket === 'other');
+
+      const activeConversations = getActiveConversations();
+
+      if (!activeConversations.some(conversation => conversation.chat_id === state.selectedChatId)) {
+        state.selectedChatId = activeConversations[0] && activeConversations[0].chat_id || '';
+        state.renderedMessagesChatId = '';
+      }
+
+      renderConversations();
+      renderChatHeader(findConversationByChatId(state.selectedChatId));
+
+      if (state.selectedChatId) {
+        loadMessages(state.selectedChatId).catch(error => {
+          els.messageList.innerHTML = `<div class="empty">${escapeHtml(error.message)}</div>`;
+        });
+      } else {
+        els.messageList.innerHTML = '<div class="empty">Sin mensajes seleccionados.</div>';
+        setComposerEnabled(false);
+      }
+    }
+
     function renderConversationMetrics() {
-      const count = state.conversations.length;
+      const activeConversations = getActiveConversations();
+      const count = activeConversations.length;
       const lastIncoming = state.conversations
         .filter(conversation => conversation.last_incoming_ts)
         .sort((a, b) => Number(b.last_incoming_ts) - Number(a.last_incoming_ts))[0];
 
-      els.conversationCount.textContent = count;
+      els.conversationCount.textContent = state.conversations.length;
       els.loadedBadge.textContent = count;
-      els.conversationDetail.textContent = count === 1 ? '1 chat cargado' : `${count} chats cargados`;
+      els.conversationDetail.textContent = `${state.conversations.length} principal | ${state.otherConversations.length} otros`;
 
       if (lastIncoming) {
         els.lastIncoming.textContent = formatDateTime(lastIncoming.last_incoming_ts);
@@ -1598,13 +1687,14 @@
 
     function renderConversations() {
       renderConversationMetrics();
+      const conversations = getActiveConversations();
 
-      if (!state.conversations.length) {
+      if (!conversations.length) {
         els.conversationList.innerHTML = '<div class="empty">Sin conversaciones guardadas.</div>';
         return;
       }
 
-      els.conversationList.innerHTML = state.conversations.map(conversation => {
+      els.conversationList.innerHTML = conversations.map(conversation => {
         const active = conversation.chat_id === state.selectedChatId ? ' active' : '';
         const tone = conversation.direction === 'incoming' ? 'good' : 'warn';
         const label = conversation.direction === 'incoming' ? 'Respondio' : 'Enviado';
@@ -1640,6 +1730,8 @@
 
         els.chatTitle.textContent = getDisplayPhone(phone, chatId) || 'Selecciona una conversacion';
         els.chatMeta.textContent = chatId || '--';
+        els.moveBucketBtn.disabled = true;
+        els.moveBucketBtn.textContent = 'Mover';
         setBadge(els.chatDirection, chatId ? 'Nuevo' : 'Sin chat', chatId ? 'warn' : 'bad');
         renderTicketDetails(null);
         return;
@@ -1647,6 +1739,10 @@
 
       els.chatTitle.textContent = getConversationName(conversation);
       els.chatMeta.textContent = getConversationMeta(conversation);
+      els.moveBucketBtn.disabled = !hasFullAccess();
+      els.moveBucketBtn.textContent = state.activeConversationBucket === 'other'
+        ? 'Mover a Principal'
+        : 'Mover a Otros';
       renderTicketDetails(conversation);
       setBadge(
         els.chatDirection,
@@ -1696,7 +1792,7 @@
 
     function renderMessageRow(message, index) {
       const direction = message.direction === 'outgoing' ? 'outgoing' : 'incoming';
-      const conversation = state.conversations.find(item => item.chat_id === message.chat_id);
+      const conversation = findConversationByChatId(message.chat_id);
       const media = renderMessageMedia(message);
       const body = String(message.body || '').trim();
       const showBody = body && (!media || !isMediaPlaceholder(body));
@@ -1812,14 +1908,27 @@
     async function loadConversations(preserveSelection = true) {
       const data = await fetchJson('/messages/conversations');
       state.conversations = data.conversations || [];
+      state.otherConversations = data.otherConversations || [];
       detectNewTicketMessages(state.conversations);
 
-      if (!preserveSelection || (!state.selectedChatId && state.conversations.length)) {
-        state.selectedChatId = state.conversations[0].chat_id;
+      const activeConversations = getActiveConversations();
+      const selectedInActiveBucket = activeConversations.some(conversation => conversation.chat_id === state.selectedChatId);
+
+      if (selectedInActiveBucket) {
+        state.manualChatPending = false;
+      } else if (state.manualChatPending && preserveSelection && state.selectedChatId) {
+        renderConversations();
+        renderChatHeader(null);
+        return;
+      }
+
+      if (!preserveSelection || !selectedInActiveBucket) {
+        state.selectedChatId = activeConversations[0] && activeConversations[0].chat_id || '';
+        state.manualChatPending = false;
       }
 
       renderConversations();
-      renderChatHeader(state.conversations.find(conversation => conversation.chat_id === state.selectedChatId));
+      renderChatHeader(findConversationByChatId(state.selectedChatId));
     }
 
     async function loadMessages() {
@@ -1886,7 +1995,8 @@
 
     function selectConversation(chatId) {
       state.selectedChatId = chatId || '';
-      const conversation = state.conversations.find(item => item.chat_id === state.selectedChatId);
+      state.manualChatPending = false;
+      const conversation = findConversationByChatId(state.selectedChatId);
       state.ticketExternalId = String(conversation && conversation.ticket_external_id || '').trim();
       state.ticket = null;
       els.sendError.textContent = '';
@@ -1895,6 +2005,52 @@
       loadMessages().catch(error => {
         els.sendError.textContent = error.message;
       });
+    }
+
+    async function moveSelectedConversationBucket() {
+      if (!hasFullAccess()) {
+        showToast('Permisos insuficientes');
+        return;
+      }
+
+      const chatId = String(state.selectedChatId || '').trim();
+
+      if (!chatId) {
+        showToast('Selecciona una conversacion');
+        return;
+      }
+
+      const targetBucket = state.activeConversationBucket === 'other' ? 'main' : 'other';
+      const targetLabel = targetBucket === 'main' ? 'Principal' : 'Otros chats';
+
+      els.moveBucketBtn.disabled = true;
+
+      try {
+        const data = await fetchJson('/messages/conversations/bucket', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            chatId,
+            bucket: targetBucket
+          })
+        });
+
+        state.conversations = data.conversations || [];
+        state.otherConversations = data.otherConversations || [];
+        state.activeConversationBucket = targetBucket;
+        els.mainChatsTab.classList.toggle('active', targetBucket === 'main');
+        els.otherChatsTab.classList.toggle('active', targetBucket === 'other');
+        state.selectedChatId = chatId;
+        renderConversations();
+        renderChatHeader(findConversationByChatId(chatId));
+        showToast(`Movido a ${targetLabel}`);
+      } catch (error) {
+        showToast(error.message);
+      } finally {
+        els.moveBucketBtn.disabled = !hasFullAccess() || !state.selectedChatId;
+      }
     }
 
     function startChatFromPhone() {
@@ -1911,6 +2067,7 @@
       }
 
       state.selectedChatId = `${phone}@c.us`;
+      state.manualChatPending = true;
       els.sendError.textContent = '';
       renderConversations();
       renderChatHeader(null);
@@ -1931,6 +2088,7 @@
 
         if (normalizedPhone) {
           state.selectedChatId = `${normalizedPhone}@c.us`;
+          state.manualChatPending = true;
           renderChatHeader(null);
           renderMessages([]);
           setComposerEnabled(true);
@@ -1944,14 +2102,14 @@
 
     async function loadInitialTicket() {
       if (!state.ticketExternalId) {
-        renderTicketDetails(state.conversations.find(conversation => conversation.chat_id === state.selectedChatId));
+        renderTicketDetails(findConversationByChatId(state.selectedChatId));
         return;
       }
 
       try {
         const data = await fetchJson('/tickets/' + encodeURIComponent(state.ticketExternalId));
         state.ticket = data.ticket || null;
-        renderTicketDetails(state.conversations.find(conversation => conversation.chat_id === state.selectedChatId));
+        renderTicketDetails(findConversationByChatId(state.selectedChatId));
       } catch (error) {
         showToast(error.message);
       }
@@ -1966,7 +2124,7 @@
       }
 
       const message = els.replyMessage.value.trim();
-      const conversation = state.conversations.find(item => item.chat_id === state.selectedChatId);
+      const conversation = findConversationByChatId(state.selectedChatId);
       const ticketExternalId = state.ticketExternalId || String(conversation && conversation.ticket_external_id || '').trim();
       const phone = normalizeNewChatPhone(els.phoneInput.value) ||
         normalizeNewChatPhone(conversation && conversation.phone) ||
@@ -2004,11 +2162,12 @@
 
         if (data.message && data.message.chat_id) {
           state.selectedChatId = data.message.chat_id;
+          state.manualChatPending = true;
         }
 
         if (data.ticket) {
           state.ticket = data.ticket;
-          renderTicketDetails(state.conversations.find(conversation => conversation.chat_id === state.selectedChatId));
+          renderTicketDetails(findConversationByChatId(state.selectedChatId));
         }
 
         await loadConversations(true);
@@ -2021,6 +2180,9 @@
     }
 
     els.refreshBtn.addEventListener('click', refreshAll);
+    els.mainChatsTab.addEventListener('click', () => setConversationBucket('main'));
+    els.otherChatsTab.addEventListener('click', () => setConversationBucket('other'));
+    els.moveBucketBtn.addEventListener('click', moveSelectedConversationBucket);
     els.reconnectBtn.addEventListener('click', reconnectWhatsApp);
     els.logoutBtn.addEventListener('click', logout);
     els.channelSettingsBtn.addEventListener('click', openChannelSettings);
