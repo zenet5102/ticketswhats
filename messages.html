@@ -923,6 +923,7 @@
       otherConversations: [],
       activeConversationBucket: 'main',
       selectedChatId: '',
+      selectionLocked: false,
       manualChatPending: false,
       auth: null,
       loading: false,
@@ -1642,6 +1643,7 @@
 
     function setConversationBucket(bucket) {
       state.activeConversationBucket = bucket === 'other' ? 'other' : 'main';
+      state.selectionLocked = false;
       els.mainChatsTab.classList.toggle('active', state.activeConversationBucket === 'main');
       els.otherChatsTab.classList.toggle('active', state.activeConversationBucket === 'other');
 
@@ -1913,8 +1915,9 @@
 
       const activeConversations = getActiveConversations();
       const selectedInActiveBucket = activeConversations.some(conversation => conversation.chat_id === state.selectedChatId);
+      const shouldPreserveSelection = preserveSelection && state.selectionLocked;
 
-      if (selectedInActiveBucket) {
+      if (selectedInActiveBucket && shouldPreserveSelection) {
         state.manualChatPending = false;
       } else if (state.manualChatPending && preserveSelection && state.selectedChatId) {
         renderConversations();
@@ -1922,7 +1925,7 @@
         return;
       }
 
-      if (!preserveSelection || !selectedInActiveBucket) {
+      if (!shouldPreserveSelection || !selectedInActiveBucket) {
         state.selectedChatId = activeConversations[0] && activeConversations[0].chat_id || '';
         state.manualChatPending = false;
       }
@@ -1995,6 +1998,7 @@
 
     function selectConversation(chatId) {
       state.selectedChatId = chatId || '';
+      state.selectionLocked = Boolean(state.selectedChatId);
       state.manualChatPending = false;
       const conversation = findConversationByChatId(state.selectedChatId);
       state.ticketExternalId = String(conversation && conversation.ticket_external_id || '').trim();
@@ -2040,6 +2044,7 @@
         state.conversations = data.conversations || [];
         state.otherConversations = data.otherConversations || [];
         state.activeConversationBucket = targetBucket;
+        state.selectionLocked = true;
         els.mainChatsTab.classList.toggle('active', targetBucket === 'main');
         els.otherChatsTab.classList.toggle('active', targetBucket === 'other');
         state.selectedChatId = chatId;
@@ -2067,6 +2072,7 @@
       }
 
       state.selectedChatId = `${phone}@c.us`;
+      state.selectionLocked = true;
       state.manualChatPending = true;
       els.sendError.textContent = '';
       renderConversations();
@@ -2162,6 +2168,7 @@
 
         if (data.message && data.message.chat_id) {
           state.selectedChatId = data.message.chat_id;
+          state.selectionLocked = true;
           state.manualChatPending = true;
         }
 
