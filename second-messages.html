@@ -1226,6 +1226,20 @@
       return /@(c\.us|s\.whatsapp\.net|lid)$/i.test(String(value || '').trim());
     }
 
+    function isLikelyRealPhone(phone, chatId) {
+      const cleanValue = cleanPhone(phone);
+
+      if (!cleanValue) {
+        return false;
+      }
+
+      if (/@lid$/i.test(String(chatId || ''))) {
+        return /^54\d{10,11}$/.test(cleanValue);
+      }
+
+      return true;
+    }
+
     function getDisplayChatId(value) {
       const text = String(value || '').trim();
 
@@ -1239,12 +1253,41 @@
     function getDisplayPhone(phone, chatId) {
       const cleanStoredPhone = cleanPhone(phone);
       const cleanChatPhone = getPhoneFromChatId(chatId);
+      const isLidChat = /@lid$/i.test(String(chatId || ''));
 
-      if (cleanStoredPhone && !(/@lid$/i.test(String(chatId || '')) && cleanStoredPhone === cleanPhone(chatId))) {
+      if (cleanStoredPhone && !(isLidChat && cleanStoredPhone === cleanPhone(chatId)) && isLikelyRealPhone(cleanStoredPhone, chatId)) {
         return cleanStoredPhone;
       }
 
-      return cleanChatPhone || cleanStoredPhone;
+      return cleanChatPhone || (isLidChat ? '' : cleanStoredPhone);
+    }
+
+    function hasRealConversationPhone(conversation) {
+      if (!conversation) {
+        return false;
+      }
+
+      if (conversation.is_real_phone === false) {
+        return false;
+      }
+
+      if (conversation.display_phone) {
+        return true;
+      }
+
+      return Boolean(getDisplayPhone(conversation.phone, conversation.chat_id));
+    }
+
+    function getConversationPhone(conversation) {
+      if (!conversation) {
+        return '';
+      }
+
+      if (conversation.is_real_phone === false) {
+        return '';
+      }
+
+      return cleanPhone(conversation.display_phone) || getDisplayPhone(conversation.phone, conversation.chat_id);
     }
 
     function formatDateTime(value) {
@@ -1276,8 +1319,9 @@
         return '--';
       }
 
-      return conversation.contact_name ||
-        getDisplayPhone(conversation.phone, conversation.chat_id) ||
+      return conversation.display_name ||
+        conversation.contact_name ||
+        getConversationPhone(conversation) ||
         getDisplayChatId(conversation.chat_id) ||
         'Cliente';
     }
@@ -1287,14 +1331,14 @@
         return '--';
       }
 
-      const phone = getDisplayPhone(conversation.phone, conversation.chat_id);
+      const phone = getConversationPhone(conversation);
       const chatId = getDisplayChatId(conversation.chat_id);
 
       if (phone && chatId) {
         return `${phone} | ${chatId}`;
       }
 
-      return phone || chatId || 'Sin telefono';
+      return phone || chatId || (/@lid$/i.test(String(conversation.chat_id || '')) ? 'Telefono real pendiente' : 'Sin telefono');
     }
 
     function getSelectedConversation() {
@@ -1343,7 +1387,7 @@
 
     function getSelectedClientLookup() {
       const conversation = getSelectedConversation();
-      const phone = state.draftPhone || conversation && getDisplayPhone(conversation.phone, conversation.chat_id) || '';
+      const phone = state.draftPhone || conversation && getConversationPhone(conversation) || '';
       const chatId = conversation && conversation.chat_id || '';
 
       return {
@@ -1893,6 +1937,8 @@
         const preview = conversation.media_mime && isMediaPlaceholder(conversation.body)
           ? getMediaLabelFromMime(conversation.media_mime)
           : conversation.body;
+        const phoneStatus = hasRealConversationPhone(conversation) ? 'Tel real' : 'Tel pendiente';
+        const phoneStatusTone = hasRealConversationPhone(conversation) ? 'good' : 'warn';
 
         return `
           <div class="chat-item${active}" role="button" tabindex="0" data-chat-id="${escapeHtml(conversation.chat_id)}">
@@ -1906,6 +1952,7 @@
             <div class="chat-preview">${escapeHtml(preview || '--')}</div>
             <div class="chat-owner-row">
               <span class="badge chat-owner ${escapeHtml(getConversationOwnerTone(conversation))}">${escapeHtml(getConversationOwnerText(conversation))}</span>
+              <span class="badge chat-owner ${escapeHtml(phoneStatusTone)}">${escapeHtml(phoneStatus)}</span>
             </div>
             <div class="chat-meta">${escapeHtml(getConversationMeta(conversation))}</div>
           </div>
@@ -1980,7 +2027,7 @@
     function getMessagePerson(message, conversation) {
       const name = message.contact_name || conversation && conversation.contact_name || '';
       const number = getDisplayPhone(
-        message.phone || conversation && conversation.phone,
+        message.phone || conversation && conversation.display_phone || conversation && conversation.phone,
         message.chat_id || conversation && conversation.chat_id
       ) || getDisplayChatId(message.chat_id || conversation && conversation.chat_id) || '';
 

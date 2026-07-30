@@ -346,6 +346,16 @@ function normalizeMessagePhone(phone, chatId) {
   return normalized;
 }
 
+function getRealMessagePhone(phone, chatId) {
+  const normalized = normalizeMessagePhone(phone || chatId, chatId);
+
+  if (isLidChatId(chatId) && normalized && !/^54\d{10,11}$/.test(normalized)) {
+    return '';
+  }
+
+  return normalized;
+}
+
 function getMessageVisualDuplicateKeys(message) {
   const direction = String(message.direction || '').trim().toLowerCase();
   const body = String(message.body || '').trim();
@@ -354,6 +364,9 @@ function getMessageVisualDuplicateKeys(message) {
   const chatId = String(message.chat_id || '').trim().toLowerCase();
   const mediaMime = String(message.media_mime || '').trim();
   const mediaFilename = String(message.media_filename || '').trim();
+  const contentKey = direction === 'outgoing'
+    ? JSON.stringify(['outgoing-content', body, mediaMime, mediaFilename])
+    : '';
 
   if (!direction || !body) {
     return [];
@@ -361,13 +374,31 @@ function getMessageVisualDuplicateKeys(message) {
 
   return [
     phone ? JSON.stringify(['phone', direction, phone, body, mediaMime, mediaFilename]) : '',
-    chatId ? JSON.stringify(['chat', direction, chatId, body, mediaMime, mediaFilename]) : ''
+    chatId ? JSON.stringify(['chat', direction, chatId, body, mediaMime, mediaFilename]) : '',
+    contentKey
   ].filter(Boolean);
+}
+
+function getMessageSourcePriority(message) {
+  const source = String(message && message.source || '').trim();
+
+  if (source && source !== 'whatsapp-second') {
+    return 2;
+  }
+
+  return source === 'whatsapp-second' ? 0 : 1;
 }
 
 function preferMessageForVisualDuplicate(current, candidate) {
   if (!current) {
     return candidate;
+  }
+
+  const currentSourcePriority = getMessageSourcePriority(current);
+  const candidateSourcePriority = getMessageSourcePriority(candidate);
+
+  if (candidateSourcePriority !== currentSourcePriority) {
+    return candidateSourcePriority > currentSourcePriority ? candidate : current;
   }
 
   const currentAck = Number(current.ack);
@@ -568,8 +599,22 @@ async function saveWhatsAppMessage(message = {}) {
     )
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON DUPLICATE KEY UPDATE
-      chat_id = VALUES(chat_id),
-      phone = COALESCE(VALUES(phone), phone),
+      chat_id = CASE
+        WHEN VALUES(source) = 'whatsapp-second'
+          AND source IS NOT NULL
+          AND source <> ''
+          AND source <> 'whatsapp-second'
+        THEN chat_id
+        ELSE VALUES(chat_id)
+      END,
+      phone = CASE
+        WHEN VALUES(source) = 'whatsapp-second'
+          AND source IS NOT NULL
+          AND source <> ''
+          AND source <> 'whatsapp-second'
+        THEN phone
+        ELSE COALESCE(VALUES(phone), phone)
+      END,
       contact_name = COALESCE(VALUES(contact_name), contact_name),
       owner_username = COALESCE(VALUES(owner_username), owner_username),
       body = CASE
@@ -584,7 +629,14 @@ async function saveWhatsAppMessage(message = {}) {
       timestamp_iso = VALUES(timestamp_iso),
       from_me = VALUES(from_me),
       ack = COALESCE(VALUES(ack), ack),
-      source = COALESCE(VALUES(source), source)
+      source = CASE
+        WHEN VALUES(source) = 'whatsapp-second'
+          AND source IS NOT NULL
+          AND source <> ''
+          AND source <> 'whatsapp-second'
+        THEN source
+        ELSE COALESCE(VALUES(source), source)
+      END
   `, [
     id,
     chatId,
@@ -894,12 +946,25 @@ async function listWhatsAppConversations(limit = 100, options = {}) {
     conversations = scopedConversations;
   }
 
-  return conversations
+  conversations = conversations
     .sort((left, right) => {
       const timeDelta = Number(right.timestamp_ts || 0) - Number(left.timestamp_ts || 0);
       return timeDelta || String(right.id || '').localeCompare(String(left.id || ''));
     })
     .slice(0, safeLimit);
+
+  await Promise.all(conversations.map(async conversation => {
+    const displayPhone = getRealMessagePhone(conversation.phone, conversation.chat_id);
+
+    conversation.display_phone = displayPhone;
+    conversation.is_real_phone = Boolean(displayPhone);
+    conversation.display_name = String(conversation.contact_name || '').trim() ||
+      displayPhone ||
+      '';
+    conversation.client_id = '';
+  }));
+
+  return conversations;
 }
 
 async function listWhatsAppMessages(chatId, limit = 200, options = {}) {
