@@ -93,6 +93,24 @@
       border-color: var(--accent);
     }
 
+    .remember-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 14px;
+      color: var(--muted);
+      font-size: 14px;
+      font-weight: 400;
+    }
+
+    .remember-row input {
+      width: 16px;
+      min-height: 16px;
+      height: 16px;
+      margin: 0;
+      accent-color: var(--accent-dark);
+    }
+
     button {
       width: 100%;
       min-height: 42px;
@@ -138,6 +156,11 @@
       <label for="password">Contrasena</label>
       <input id="password" name="password" type="password" autocomplete="current-password" required>
 
+      <label class="remember-row" for="rememberCredentials">
+        <input id="rememberCredentials" name="rememberCredentials" type="checkbox">
+        Recordar usuario y contrasena
+      </label>
+
       <button id="submitBtn" type="submit">Entrar</button>
       <div id="error" class="error" role="alert"></div>
     </form>
@@ -149,6 +172,19 @@
     const errorBox = document.getElementById('error');
     const params = new URLSearchParams(window.location.search);
     const next = params.get('next') || '/dashboard';
+    const credentialsStorageKey = 'wwebjs.secondLogin.credentials';
+
+    try {
+      const savedCredentials = JSON.parse(localStorage.getItem(credentialsStorageKey) || '{}');
+
+      if (savedCredentials.remember) {
+        form.username.value = savedCredentials.username || '';
+        form.password.value = savedCredentials.password || '';
+        form.rememberCredentials.checked = true;
+      }
+    } catch (error) {
+      localStorage.removeItem(credentialsStorageKey);
+    }
 
     form.addEventListener('submit', async event => {
       event.preventDefault();
@@ -171,6 +207,16 @@
 
         if (!response.ok || !data.success) {
           throw new Error(data.error || 'No se pudo iniciar sesion');
+        }
+
+        if (form.rememberCredentials.checked) {
+          localStorage.setItem(credentialsStorageKey, JSON.stringify({
+            remember: true,
+            username: form.username.value.trim(),
+            password: form.password.value
+          }));
+        } else {
+          localStorage.removeItem(credentialsStorageKey);
         }
 
         window.location.href = data.redirect || '/dashboard';
