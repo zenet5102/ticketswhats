@@ -1026,6 +1026,24 @@
       </div>
     </form>
   </div>
+  <div id="identifyClientModal" class="ticket-modal" aria-hidden="true">
+    <form id="identifyClientForm" class="ticket-dialog">
+      <div class="ticket-dialog-head">
+        <div class="ticket-dialog-title">Identificar cliente</div>
+        <button id="identifyClientCancelBtn" type="button">Cancelar</button>
+      </div>
+      <div class="ticket-dialog-body">
+        <label>
+          IDA
+          <input id="identifyClientIdInput" type="text" inputmode="numeric" pattern="[0-9]+" autocomplete="off" required>
+        </label>
+        <div id="identifyClientStatus" class="ticket-status"></div>
+      </div>
+      <div class="ticket-dialog-actions">
+        <button id="identifyClientSubmitBtn" class="primary" type="submit">Guardar cliente</button>
+      </div>
+    </form>
+  </div>
   <script>
     function openImageModal(src) {
       document.getElementById('modalImage').src = src;
@@ -1043,6 +1061,7 @@
       selectedChatId: '',
       draftPhone: '',
       draftName: '',
+      draftClientId: '',
       clientDetails: null,
       clientCandidates: [],
       clientTickets: [],
@@ -1068,6 +1087,12 @@
       lastRefresh: document.getElementById('lastRefresh'),
       loadedBadge: document.getElementById('loadedBadge'),
       logoutBtn: document.getElementById('logoutBtn'),
+      identifyClientCancelBtn: document.getElementById('identifyClientCancelBtn'),
+      identifyClientForm: document.getElementById('identifyClientForm'),
+      identifyClientIdInput: document.getElementById('identifyClientIdInput'),
+      identifyClientModal: document.getElementById('identifyClientModal'),
+      identifyClientStatus: document.getElementById('identifyClientStatus'),
+      identifyClientSubmitBtn: document.getElementById('identifyClientSubmitBtn'),
       mediaInput: document.getElementById('mediaInput'),
       messageList: document.getElementById('messageList'),
       mysqlDetail: document.getElementById('mysqlDetail'),
@@ -1389,10 +1414,12 @@
       const conversation = getSelectedConversation();
       const phone = state.draftPhone || conversation && getConversationPhone(conversation) || '';
       const chatId = conversation && conversation.chat_id || '';
+      const ida = String(state.draftClientId || '').trim();
 
       return {
         phone: cleanPhone(phone),
-        chatId
+        chatId,
+        ida
       };
     }
 
@@ -1461,6 +1488,10 @@
       return findClientValue(state.clientLiveData, keys) || findClientValue(client, keys);
     }
 
+    function getClientId(client = state.clientDetails) {
+      return getClientField(client, ['id', 'ID', 'IDA', 'ida']);
+    }
+
     function getClientDisplayName(client) {
       if (!client) {
         return '';
@@ -1478,7 +1509,7 @@
 
     function getClientOptionText(client) {
       const name = getClientDisplayName(client) || 'Cliente';
-      const id = getClientField(client, ['id', 'ID', 'IDA', 'ida']);
+      const id = getClientId(client);
       const phone = getClientField(client, ['movil', 'Movil', 'telefono', 'Telefono']);
 
       return [name, id ? `ID ${id}` : '', phone].filter(Boolean).join(' | ');
@@ -1547,7 +1578,8 @@
           </div>
           ${renderClientTickets()}
           <button id="searchClientByPhoneBtn" type="button">Buscar por telefono</button>
-          <button id="createTicketBtn" class="primary" type="button">Generar ticket</button>
+          <button id="identifyClientBtn" class="primary" type="button">Identificar cliente</button>
+          <div class="ticket-status">Para generar ticket primero hay que identificar el cliente.</div>
           <div id="ticketStatus" class="ticket-status"></div>
         `;
         bindClientActions();
@@ -1555,7 +1587,7 @@
       }
 
       const estado = getClientField(client, ['estado', 'Estado']);
-      const id = getClientField(client, ['id', 'ID', 'IDA', 'ida']);
+      const id = getClientId(client);
       const documento = getClientField(client, ['documento', 'Documento']);
       const cuit = getClientField(client, ['cuit', 'CUIT']);
       const receivedText = state.clientLiveReceivedAt ? `Actualizado ${formatDateTime(state.clientLiveReceivedAt)}` : '';
@@ -1585,7 +1617,8 @@
           ${renderClientField('Comprobantes', getClientField(client, ['comprobantesAdeudados', 'comprobantes_adeudados', 'C_Comprobantes_Adeudados']))}
         </div>
         <button id="refreshClientBtn" type="button">Actualizar</button>
-        <button id="createTicketBtn" class="primary" type="button">Generar ticket</button>
+        <button id="identifyClientBtn" type="button">Cambiar cliente</button>
+        ${id ? '<button id="createTicketBtn" class="primary" type="button">Generar ticket</button>' : '<div class="ticket-status">Falta IDA del cliente para generar ticket.</div>'}
         <div id="ticketStatus" class="ticket-status"></div>
       `;
       bindClientActions();
@@ -1596,6 +1629,7 @@
       const searchClientByPhoneBtn = document.getElementById('searchClientByPhoneBtn');
       const clientCandidateSelect = document.getElementById('clientCandidateSelect');
       const createTicketBtn = document.getElementById('createTicketBtn');
+      const identifyClientBtn = document.getElementById('identifyClientBtn');
       const ticketStatus = document.getElementById('ticketStatus');
 
       if (searchClientByPhoneBtn) {
@@ -1616,6 +1650,7 @@
         clientCandidateSelect.addEventListener('change', () => {
           const index = Number.parseInt(clientCandidateSelect.value, 10);
           state.clientDetails = state.clientCandidates[index] || state.clientDetails;
+          state.draftClientId = getClientId(state.clientDetails) || state.draftClientId;
           state.clientLiveData = null;
           state.clientLiveReceivedAt = '';
           renderClientDetails();
@@ -1629,11 +1664,82 @@
           }
         }));
       }
+
+      if (identifyClientBtn) {
+        identifyClientBtn.addEventListener('click', () => openIdentifyClientModal(ticketStatus));
+      }
+    }
+
+    function openIdentifyClientModal(statusElement) {
+      const lookup = getSelectedClientLookup();
+      const currentId = getClientId(state.clientDetails) || lookup.ida;
+
+      if (!lookup.chatId && !lookup.phone) {
+        if (statusElement) {
+          statusElement.textContent = 'Selecciona un chat o inicia uno con telefono.';
+        }
+        return;
+      }
+
+      els.identifyClientIdInput.value = currentId || '';
+      els.identifyClientStatus.textContent = '';
+      els.identifyClientModal.dataset.statusTarget = statusElement ? statusElement.id || '' : '';
+      els.identifyClientModal.classList.add('visible');
+      els.identifyClientModal.setAttribute('aria-hidden', 'false');
+      setTimeout(() => els.identifyClientIdInput.focus(), 0);
+    }
+
+    function closeIdentifyClientModal() {
+      els.identifyClientModal.classList.remove('visible');
+      els.identifyClientModal.setAttribute('aria-hidden', 'true');
+      els.identifyClientStatus.textContent = '';
+    }
+
+    async function identifySelectedClient() {
+      const id = String(els.identifyClientIdInput.value || '').trim();
+      const lookup = getSelectedClientLookup();
+
+      if (!/^\d+$/.test(id)) {
+        throw new Error('El IDA debe ser numerico');
+      }
+
+      if (!lookup.chatId && !lookup.phone) {
+        throw new Error('Selecciona un chat o inicia uno con telefono');
+      }
+
+      els.identifyClientSubmitBtn.disabled = true;
+      els.identifyClientStatus.textContent = 'Buscando cliente...';
+
+      try {
+        const data = await fetchJson('/api/client-identification', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            IDA: id,
+            chatId: lookup.chatId,
+            phone: lookup.phone
+          })
+        });
+
+        state.draftClientId = id;
+        state.clientDetails = data.client || null;
+        state.clientCandidates = data.clients || (data.client ? [data.client] : []);
+        state.clientTickets = data.tickets || [];
+        state.clientLiveData = null;
+        state.clientLiveReceivedAt = '';
+        state.clientLoadedFor = id;
+        closeIdentifyClientModal();
+        renderClientDetails();
+      } finally {
+        els.identifyClientSubmitBtn.disabled = false;
+      }
     }
 
     function getCommunicationTicketDraft() {
       const client = state.clientDetails;
-      const id = getClientField(client, ['id', 'ID', 'IDA', 'ida']);
+      const id = getClientId(client);
       const clientName = getClientDisplayName(client) || 'cliente';
       const conversation = getSelectedConversation();
       const phone = getSelectedClientLookup().phone;
@@ -1733,7 +1839,7 @@
 
     async function loadClientDetails(options = {}) {
       const lookup = getSelectedClientLookup();
-      const lookupKey = lookup.phone || lookup.chatId;
+      const lookupKey = lookup.ida || lookup.phone || lookup.chatId;
 
       if (!lookupKey) {
         state.clientDetails = null;
@@ -1756,13 +1862,23 @@
       renderClientDetails();
 
       try {
-        const params = lookup.phone
-          ? 'phone=' + encodeURIComponent(lookup.phone)
-          : 'chatId=' + encodeURIComponent(lookup.chatId);
+        const params = new URLSearchParams();
+
+        if (lookup.ida) {
+          params.set('IDA', lookup.ida);
+        }
+
+        if (lookup.phone) {
+          params.set('phone', lookup.phone);
+        } else if (lookup.chatId) {
+          params.set('chatId', lookup.chatId);
+        }
+
         const data = await fetchJson('/api/client-details?' + params);
         state.clientDetails = data.client || null;
         state.clientCandidates = data.clients || (data.client ? [data.client] : []);
         state.clientTickets = data.tickets || [];
+        state.draftClientId = getClientId(state.clientDetails) || lookup.ida || '';
         state.clientLiveData = null;
         state.clientLiveReceivedAt = '';
       } finally {
@@ -1775,7 +1891,7 @@
       await loadClientDetails({ force: true });
 
       const client = state.clientDetails;
-      const id = getClientField(client, ['id', 'ID', 'IDA', 'ida']);
+      const id = getClientId(client);
 
       if (!client || !id) {
         return;
@@ -1971,6 +2087,7 @@
           state.selectedChatId = button.dataset.chatId || '';
           state.draftPhone = '';
           state.draftName = '';
+          state.draftClientId = '';
           state.clientDetails = null;
           state.clientCandidates = [];
           state.clientTickets = [];
@@ -2324,6 +2441,7 @@
         state.selectedChatId = data.chatId || targetChatId;
         state.draftPhone = '';
         state.draftName = '';
+        state.draftClientId = '';
         state.clientDetails = null;
         state.clientCandidates = [];
         state.clientTickets = [];
@@ -2382,6 +2500,18 @@
     els.replyForm.addEventListener('submit', sendReply);
     els.transferBtn.addEventListener('click', () => transferSelectedChat());
     els.transferOperator.addEventListener('change', renderTransferControls);
+    els.identifyClientCancelBtn.addEventListener('click', closeIdentifyClientModal);
+    els.identifyClientModal.addEventListener('click', event => {
+      if (event.target === els.identifyClientModal) {
+        closeIdentifyClientModal();
+      }
+    });
+    els.identifyClientForm.addEventListener('submit', event => {
+      event.preventDefault();
+      identifySelectedClient().catch(error => {
+        els.identifyClientStatus.textContent = error.message;
+      });
+    });
     els.ticketCancelBtn.addEventListener('click', closeTicketModal);
     els.ticketModal.addEventListener('click', event => {
       if (event.target === els.ticketModal) {
@@ -2400,6 +2530,10 @@
       });
     });
     document.addEventListener('keydown', event => {
+      if (event.key === 'Escape' && els.identifyClientModal.classList.contains('visible')) {
+        closeIdentifyClientModal();
+      }
+
       if (event.key === 'Escape' && els.ticketModal.classList.contains('visible')) {
         closeTicketModal();
       }
@@ -2416,6 +2550,7 @@
       state.selectedChatId = '';
       state.draftPhone = phone;
       state.draftName = '';
+      state.draftClientId = '';
       state.clientDetails = null;
       state.clientCandidates = [];
       state.clientTickets = [];
@@ -2481,16 +2616,18 @@
     function openPhoneFromQuery() {
       const params = new URLSearchParams(window.location.search);
       const phone = normalizeNewChatPhone(params.get('tel'));
+      const ida = String(params.get('IDA') || params.get('ida') || params.get('id') || '').trim();
       const name = String(params.get('name') || params.get('cliente') || params.get('clientName') || '').trim();
       const message = params.get('message') || params.get('template') || params.get('msg') || '';
 
-      if (!phone) {
+      if (!phone && !ida) {
         return;
       }
 
       state.selectedChatId = '';
       state.draftPhone = phone;
       state.draftName = name;
+      state.draftClientId = ida;
       state.clientDetails = null;
       state.clientCandidates = [];
       state.clientTickets = [];

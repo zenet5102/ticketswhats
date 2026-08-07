@@ -65,6 +65,7 @@ const databaseNameSql = escapeIdentifier(settings.database, 'base de datos');
 const messagesTableSql = escapeIdentifier(settings.messagesTable, 'tabla');
 const queueTableSql = escapeIdentifier(settings.queueTable, 'tabla de cola');
 const phantomBajaTableSql = escapeIdentifier(settings.phantomBajaTable, 'tabla de clientes Phantom');
+const chatClientLinksTableSql = escapeIdentifier('second_chat_client_links', 'tabla de clientes identificados');
 
 function createConnectionConfig(includeDatabase = true) {
   const config = {
@@ -230,6 +231,22 @@ async function initializeMessageDatabase(databasePool) {
     ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
   `);
 
+  await databasePool.query(`
+    CREATE TABLE IF NOT EXISTS ${chatClientLinksTableSql} (
+      identity_key VARCHAR(191) NOT NULL,
+      chat_id VARCHAR(191) NULL,
+      phone VARCHAR(64) NULL,
+      client_id VARCHAR(191) NOT NULL,
+      updated_by VARCHAR(191) NULL,
+      created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      PRIMARY KEY (identity_key),
+      KEY idx_second_chat_client_links_chat (chat_id),
+      KEY idx_second_chat_client_links_phone (phone),
+      KEY idx_second_chat_client_links_client (client_id)
+    ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
+  `);
+
   await ensureTableColumn(databasePool, messagesTableSql, 'owner_username', 'VARCHAR(191) NULL');
   await ensureTableColumn(databasePool, queueTableSql, 'owner_username', 'VARCHAR(191) NULL');
   await ensureTableIndex(
@@ -344,6 +361,21 @@ function normalizeMessagePhone(phone, chatId) {
   }
 
   return normalized;
+}
+
+function getChatClientIdentityKey(chatId, phone) {
+  const cleanChatId = String(chatId || '').trim();
+  const cleanPhone = normalizeChatPhone(phone || cleanChatId);
+
+  if (cleanChatId) {
+    return `chat:${cleanChatId}`;
+  }
+
+  if (cleanPhone) {
+    return `phone:${cleanPhone}`;
+  }
+
+  return '';
 }
 
 function getRealMessagePhone(phone, chatId) {
@@ -1104,6 +1136,83 @@ async function listWhatsAppCommunicationTickets(options = {}) {
   `, params);
 
   return rows;
+}
+
+async function getIdentifiedClientId(chatId, phone) {
+  const cleanChatId = String(chatId || '').trim();
+  const cleanPhone = normalizeChatPhone(phone || cleanChatId);
+  const identityKeys = [
+    getChatClientIdentityKey(cleanChatId, cleanPhone),
+    cleanPhone ? getChatClientIdentityKey('', cleanPhone) : ''
+  ].filter(Boolean);
+
+  if (!identityKeys.length) {
+    return '';
+  }
+
+  const database = await getPool();
+  const [rows] = await database.execute(`
+    SELECT client_id
+    FROM ${chatClientLinksTableSql}
+    WHERE identity_key IN (${identityKeys.map(() => '?').join(',')})
+      OR (${cleanChatId ? 'chat_id = ?' : 'FALSE'})
+      OR (${cleanPhone ? 'phone = ?' : 'FALSE'})
+    ORDER BY updated_at DESC
+    LIMIT 1
+  `, [
+    ...identityKeys,
+    ...(cleanChatId ? [cleanChatId] : []),
+    ...(cleanPhone ? [cleanPhone] : [])
+  ]);
+
+  return String(rows[0] && rows[0].client_id || '').trim();
+}
+
+async function identifyChatClient(options = {}) {
+  const cleanChatId = String(options.chatId || options.chat_id || '').trim();
+  const cleanPhone = normalizeChatPhone(options.phone || cleanChatId);
+  const clientId = String(options.clientId || options.client_id || options.IDA || options.ida || '').trim();
+  const identityKey = getChatClientIdentityKey(cleanChatId, cleanPhone);
+  const updatedBy = normalizeOwnerUsername(options.updatedBy || options.updated_by);
+
+  if (!/^\d+$/.test(clientId)) {
+    throw new Error('IDA invalido');
+  }
+
+  if (!identityKey) {
+    throw new Error('Falta chat o telefono para identificar cliente');
+  }
+
+  const database = await getPool();
+  await database.execute(`
+    INSERT INTO ${chatClientLinksTableSql} (
+      identity_key,
+      chat_id,
+      phone,
+      client_id,
+      updated_by
+    )
+    VALUES (?, ?, ?, ?, ?)
+    ON DUPLICATE KEY UPDATE
+      chat_id = VALUES(chat_id),
+      phone = VALUES(phone),
+      client_id = VALUES(client_id),
+      updated_by = VALUES(updated_by),
+      updated_at = CURRENT_TIMESTAMP
+  `, [
+    identityKey,
+    cleanChatId || null,
+    cleanPhone || null,
+    clientId,
+    updatedBy || null
+  ]);
+
+  return {
+    identityKey,
+    chatId: cleanChatId,
+    phone: cleanPhone,
+    clientId
+  };
 }
 
 async function listWhatsAppChatPhones(chatId, options = {}) {
@@ -1881,6 +1990,24 @@ async function findPhantomClientsByPhone(phone, limit = 10) {
   return matches.slice(0, safeLimit).map(match => match.row);
 }
 
+async function findPhantomClientById(id) {
+  const cleanId = String(id || '').trim();
+
+  if (!/^\d+$/.test(cleanId)) {
+    return null;
+  }
+
+  const database = await getPool();
+  const [rows] = await database.query(`
+    SELECT *
+    FROM ${phantomBajaTableSql}
+    WHERE id = ?
+    LIMIT 1
+  `, [cleanId]);
+
+  return rows[0] ? parsePhantomBajaDbRow(rows[0]) : null;
+}
+
 async function findPhantomClientByPhone(phone) {
   const matches = await findPhantomClientsByPhone(phone, 1);
   return matches[0] || null;
@@ -1925,9 +2052,12 @@ module.exports = {
   getMysqlSettings,
   getPool,
   getPhantomBajaSyncStatus,
+  getIdentifiedClientId,
   findPhantomClientsByPhone,
+  findPhantomClientById,
   findPhantomClientByPhone,
   getWhatsAppChatOwner,
+  identifyChatClient,
   resolveWhatsAppChatAlias,
   listPhantomBajaClients,
   listMessageQueueItems,

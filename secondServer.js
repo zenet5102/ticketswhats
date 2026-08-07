@@ -33,8 +33,11 @@ const {
   getMessageQueueStats,
   getMysqlSettings,
   getPhantomBajaSyncStatus,
+  getIdentifiedClientId,
   findPhantomClientsByPhone,
+  findPhantomClientById,
   getWhatsAppChatOwner,
+  identifyChatClient,
   listPhantomBajaClients,
   listMessageQueueItems,
   listWhatsAppConversations,
@@ -133,9 +136,9 @@ function normalizeOwnerUsername(value) {
 }
 
 function getPhantomPlatformUserName(user) {
-  const userName = String(user && (user.name || user.username) || '').trim();
-  const fallback = String(user && user.username || 'usuario').trim() || 'usuario';
-  const cleanName = userName || fallback;
+  const username = String(user && user.username || '').trim();
+  const fallback = String(user && user.name || 'usuario').trim() || 'usuario';
+  const cleanName = username || fallback;
 
   return cleanName.startsWith('_') ? cleanName : `_${cleanName}`;
 }
@@ -2916,6 +2919,7 @@ app.get('/api/contacts/resolve', requirePrivileged, async (req, res) => {
 app.get('/api/client-details', requireLoggedIn, async (req, res) => {
   try {
     const chatId = String(req.query.chatId || '').trim();
+    const ida = String(req.query.IDA || req.query.ida || req.query.id || '').trim();
     const target = String(req.query.phone || chatId || '').trim();
     const phone = normalizeChatPhone(target);
     const tickets = await listWhatsAppCommunicationTickets({
@@ -2923,6 +2927,28 @@ app.get('/api/client-details', requireLoggedIn, async (req, res) => {
       phone,
       limit: req.query.ticketLimit || 5
     });
+    const identifiedId = ida || await getIdentifiedClientId(chatId, phone);
+
+    if (identifiedId) {
+      const client = await findPhantomClientById(identifiedId);
+      const clients = client ? [client] : [];
+
+      if (ida && client && (chatId || phone)) {
+        await identifyChatClient({
+          chatId,
+          phone,
+          clientId: identifiedId,
+          updatedBy: getUserOwnerUsername(req.user)
+        });
+      }
+
+      return res.json({
+        success: true,
+        client: client || null,
+        clients,
+        tickets
+      });
+    }
 
     if (!phone) {
       return res.json({
@@ -2943,6 +2969,56 @@ app.get('/api/client-details', requireLoggedIn, async (req, res) => {
     });
   } catch (error) {
     res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+app.post('/api/client-identification', requireLoggedIn, async (req, res) => {
+  try {
+    const body = req.body || {};
+    const clientId = String(body.IDA || body.ida || body.id || body.clientId || '').trim();
+    const chatId = String(body.chatId || '').trim();
+    const phone = normalizeChatPhone(body.phone || chatId);
+
+    if (!/^\d+$/.test(clientId)) {
+      return res.status(400).json({
+        success: false,
+        error: 'El IDA debe ser numerico'
+      });
+    }
+
+    const client = await findPhantomClientById(clientId);
+
+    if (!client) {
+      return res.status(404).json({
+        success: false,
+        error: `No existe cliente con IDA ${clientId}`
+      });
+    }
+
+    const identification = await identifyChatClient({
+      chatId,
+      phone,
+      clientId,
+      updatedBy: getUserOwnerUsername(req.user)
+    });
+    const tickets = await listWhatsAppCommunicationTickets({
+      chatId,
+      phone,
+      limit: body.ticketLimit || 5
+    });
+
+    res.json({
+      success: true,
+      client,
+      clients: [client],
+      tickets,
+      identification
+    });
+  } catch (error) {
+    res.status(400).json({
       success: false,
       error: error.message
     });
@@ -3062,49 +3138,16 @@ app.post('/api/phantom/cliente-avanzada', requireLoggedIn, async (req, res) => {
 app.post('/api/phantom/tickets/comunicacion', requireLoggedIn, async (req, res) => {
   try {
     const body = req.body || {};
-    const userName = String(req.user && (req.user.name || req.user.username) || '').trim();
     const platformUserName = getPhantomPlatformUserName(req.user);
-    const createdAt = new Date();
-    const targetChatId = String(body.chatId || '').trim();
-    const targetPhone = normalizeChatPhone(body.phone || targetChatId);
-    const contactName = String(body.contactName || '').trim();
     const ticket = await createPhantomSupportTicket({
       ...body,
       plataforma: platformUserName
     });
-    let message = null;
-
-    if (targetChatId || targetPhone) {
-      const chatId = targetChatId || `${targetPhone}@c.us`;
-      const createdText = createdAt.toLocaleString('es-AR', {
-        timeZone: 'America/Argentina/Buenos_Aires',
-        day: '2-digit',
-        month: '2-digit',
-        year: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit'
-      });
-      const bodyText = `Ticket de comunicacion #${ticket.ticketNumber} creado el ${createdText} por ${userName || 'usuario'}.`;
-
-      message = await saveWhatsAppMessage({
-        id: `phantom-ticket-${ticket.ticketNumber}-${chatId}-${createdAt.getTime()}`,
-        chatId,
-        phone: targetPhone || normalizeChatPhone(chatId),
-        contactName,
-        direction: 'outgoing',
-        body: bodyText,
-        timestampTs: createdAt.getTime(),
-        fromMe: true,
-        ack: 3,
-        source: 'phantom-ticket',
-        ownerUsername: getUserOwnerUsername(req.user)
-      });
-    }
 
     res.json({
       success: true,
       ticket,
-      message,
+      message: null,
       receivedAt: new Date().toISOString()
     });
   } catch (error) {

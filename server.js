@@ -810,6 +810,10 @@ function canSendToTarget(user, chatId, phone) {
     return false;
   }
 
+  if (!cleanChatId) {
+    return true;
+  }
+
   if (cleanChatId) {
     if (canReadChat(user, cleanChatId)) {
       return true;

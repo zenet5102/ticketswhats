@@ -1292,8 +1292,13 @@
       }
 
       const params = new URLSearchParams({ tel: phone });
+      const id = String(getFieldValue(row, TABLE_COLUMNS[0]) || '').trim();
       const clientName = String(getTemplateVariables(row).cliente || '').trim();
       const message = renderTemplateForRow(row);
+
+      if (id) {
+        params.set('IDA', id);
+      }
 
       if (clientName) {
         params.set('name', clientName);
