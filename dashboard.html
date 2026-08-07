@@ -34,6 +34,69 @@
       font-size: 15px;
     }
 
+    .app-shell {
+      min-height: 100vh;
+      display: grid;
+      grid-template-columns: 240px minmax(0, 1fr);
+      grid-template-rows: auto 1fr;
+    }
+
+    .app-header {
+      grid-column: 1 / -1;
+      border-bottom: 1px solid #1d4ed8;
+      background: var(--accent);
+      color: #ffffff;
+    }
+
+    .app-header-inner {
+      width: min(1680px, calc(100% - 32px));
+      min-height: 68px;
+      margin: 0 auto;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+    }
+
+    .app-sidebar {
+      min-height: calc(100vh - 69px);
+      position: sticky;
+      top: 0;
+      border-right: 1px solid var(--line);
+      background: #f8fbff;
+      padding: 16px 12px;
+      align-self: start;
+    }
+
+    .primary-nav {
+      display: grid;
+      gap: 8px;
+    }
+
+    .nav-link {
+      min-height: 38px;
+      border: 0;
+      border-radius: 8px;
+      background: transparent;
+      color: var(--muted);
+      padding: 0 12px;
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+      justify-content: flex-start;
+      gap: 8px;
+      white-space: nowrap;
+      font: inherit;
+      cursor: pointer;
+    }
+
+    .nav-link:hover,
+    .nav-link.active {
+      background: var(--soft-blue);
+      color: var(--accent);
+      font-weight: 700;
+    }
+
     .topbar {
       border-bottom: 1px solid var(--line);
       background: var(--panel);
@@ -62,7 +125,7 @@
 
     .subtitle {
       margin-top: 4px;
-      color: var(--muted);
+      color: #dbeafe;
       font-size: 13px;
     }
 
@@ -77,8 +140,9 @@
       min-height: 38px;
       border: 1px solid var(--line);
       border-radius: 8px;
-      background: #f8fafc;
-      color: var(--muted);
+      background: rgba(255, 255, 255, 0.14);
+      border-color: rgba(255, 255, 255, 0.24);
+      color: #eff6ff;
       padding: 0 12px;
       display: inline-flex;
       align-items: center;
@@ -113,8 +177,25 @@
       opacity: 0.7;
     }
 
+    .primary-nav button.nav-link {
+      width: 100%;
+      border: 0;
+      background: transparent;
+      color: var(--muted);
+      justify-content: flex-start;
+    }
+
+    .primary-nav button.nav-link:hover {
+      background: var(--soft-blue);
+      color: var(--accent);
+    }
+
     .content {
       padding: 18px 0 32px;
+    }
+
+    .content > .actions {
+      margin-bottom: 18px;
     }
 
     .status-grid {
@@ -800,6 +881,23 @@
     }
 
     @media (max-width: 900px) {
+      .app-shell {
+        display: block;
+      }
+
+      .app-header-inner {
+        align-items: stretch;
+        flex-direction: column;
+        padding: 14px 0;
+      }
+
+      .app-sidebar {
+        min-height: 0;
+        position: static;
+        border-right: 0;
+        border-bottom: 1px solid var(--line);
+      }
+
       .topbar-inner {
         align-items: flex-start;
         flex-direction: column;
@@ -984,40 +1082,14 @@
 </head>
 
 <body>
-  <header class="topbar">
-    <div class="topbar-inner">
-      <div class="topbar-main">
-        <div class="topbar-info">
-          <h1>Monitor de Tickets</h1>
+  <div class="app-shell">
+    <header class="app-header">
+      <div class="app-header-inner">
+        <div>
+          <h1>Coordinacion</h1>
           <div class="subtitle" id="lastRefresh">Cargando...</div>
         </div>
-        <nav class="topbar-tabs" aria-label="Secciones">
-          <button class="nav-tab active" type="button" title="Monitor de tickets"
-            onclick="window.location.href='/dashboard'">
-            <span aria-hidden="true">&#9638;</span>
-            Tickets
-          </button>
-          <button class="nav-tab" type="button" title="Ver mensajes de WhatsApp"
-            onclick="window.location.href='/mensajes'">
-            <span aria-hidden="true">&#9993;</span>
-            Mensajes
-          </button>
-          <button class="nav-tab" type="button" title="Ver errores de envio automatico"
-            onclick="window.location.href='/errores'">
-            <span aria-hidden="true">&#9888;</span>
-            Errores
-          </button>
-          <button id="transferBtn" class="nav-tab" type="button" title="Transferir grupos temporalmente" hidden>
-            <span aria-hidden="true">&#8646;</span>
-            Transferir
-          </button>
-          <button id="usersBtn" class="nav-tab" type="button" title="Administrar usuarios" hidden
-            onclick="window.location.href='/usuarios'">
-            <span aria-hidden="true">&#128100;</span>
-            Usuarios
-          </button>
-        </nav>
-        <div class="topbar-session">
+        <div class="actions">
           <span id="sessionBadge" class="session-chip">Sesion</span>
           <button id="logoutBtn" type="button" title="Cerrar sesion">
             <span aria-hidden="true">&#9211;</span>
@@ -1025,7 +1097,35 @@
           </button>
         </div>
       </div>
-      <div class="topbar-actions" aria-label="Acciones del monitor">
+    </header>
+    <aside class="app-sidebar">
+      <nav class="primary-nav" aria-label="Navegacion principal">
+        <a class="nav-link active" href="/dashboard">
+          <span aria-hidden="true">&#9638;</span>
+          Tickets
+        </a>
+        <a class="nav-link" href="/mensajes">
+          <span aria-hidden="true">&#9993;</span>
+          Mensajes
+        </a>
+        <a class="nav-link" href="/errores">
+          <span aria-hidden="true">&#9888;</span>
+          Errores
+        </a>
+        <button id="transferBtn" class="nav-link" type="button" title="Transferir grupos temporalmente" hidden>
+          <span aria-hidden="true">&#8646;</span>
+          Transferir
+        </button>
+        <button id="usersBtn" class="nav-link" type="button" title="Administrar usuarios" hidden
+          onclick="window.location.href='/usuarios'">
+          <span aria-hidden="true">&#128100;</span>
+          Usuarios
+        </button>
+      </nav>
+    </aside>
+
+    <main class="content">
+      <div class="actions" aria-label="Acciones del monitor">
         <button id="refreshBtn" type="button" title="Actualizar ahora">
           <span aria-hidden="true">&#8635;</span>
           Actualizar
@@ -1051,10 +1151,7 @@
           Ciclo
         </button>
       </div>
-    </div>
-  </header>
 
-  <main class="content">
     <section class="status-grid" aria-label="Estado">
       <div class="metric">
         <div class="metric-label">Intervalo</div>
@@ -1139,6 +1236,7 @@
       <div class="empty" id="emptyState" hidden>No hay tickets guardados.</div>
     </section>
   </main>
+  </div>
 
   <div class="toast" id="toast"></div>
 
@@ -1395,6 +1493,8 @@
 
       const job = payload.job || {};
       const cfg = job.config || {};
+      const whatsapp = payload.whatsapp || {};
+      const connectedPhone = getConnectedWhatsAppLabel(whatsapp);
 
       els.intervalBadge.innerHTML = job.active ? badge('Activo', 'good') : badge('Inactivo', 'bad');
       els.nextRun.textContent = 'Cada ' + (cfg.syncIntervalMinutes || '--') + ' min | Proxima: ' + formatTimeLeft(job.nextRunAt);
@@ -1402,13 +1502,13 @@
       els.lastRun.textContent = 'Ultima: ' + formatDateTime(job.lastRunFinishedAt) + ' | Corridas: ' + (job.runCount || 0);
       els.whatsappBadge.innerHTML = payload.whatsappReady ? badge('Conectado', 'good') : badge('No conectado', 'warn');
       els.apiStatus.textContent =
-        'WA: ' + ((payload.whatsapp && payload.whatsapp.state) || '--') +
+        'WA: ' + (whatsapp.state || '--') +
+        ' | Numero: ' + connectedPhone +
         ' | ' +
         'Tickets: ' + (cfg.ticketsApiConfigured ? 'OK' : 'Falta') +
         ' | Estado: ' + (cfg.ticketStatusApiConfigured ? 'OK' : 'Falta') +
         ' | Cliente: ' + (cfg.clientApiConfigured ? 'OK' : 'Falta');
 
-      const whatsapp = payload.whatsapp || {};
       const canReconnectWhatsApp = hasFullAccess();
 
       if (canReconnectWhatsApp || (!payload.whatsappReady && whatsapp.qrSvg)) {
@@ -1904,6 +2004,17 @@
       } catch (error) {
         els.transferError.textContent = error.message;
       }
+    }
+
+    function getConnectedWhatsAppLabel(whatsapp) {
+      const phone = String(whatsapp && whatsapp.phone || '').trim();
+      const name = String(whatsapp && whatsapp.displayName || '').trim();
+
+      if (!phone) {
+        return '--';
+      }
+
+      return name ? phone + ' (' + name + ')' : phone;
     }
 
     function closeTransferModal() {

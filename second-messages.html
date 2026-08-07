@@ -4,7 +4,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>WhatsApp 2</title>
+  <title>Administracion</title>
   <style>
     :root {
       --bg: #e7f0ed;
@@ -888,7 +888,7 @@
     <header class="app-header">
       <div class="app-header-inner">
         <div>
-          <h1>WhatsApp 2</h1>
+          <h1>Administracion</h1>
           <div class="subtitle" id="lastRefresh">Cargando...</div>
         </div>
         <div class="actions">
@@ -2008,7 +2008,8 @@
       state.mediaLimitBytes = Number(data.mediaLimitBytes || state.mediaLimitBytes);
 
       els.whatsappState.textContent = whatsapp.ready ? 'Conectado' : (whatsapp.state || 'Sin estado');
-      els.whatsappDetail.textContent = whatsapp.lastError || `Sesion ${whatsapp.clientId || 'bot-2'} | ${formatDateTime(whatsapp.lastEventAt)}`;
+      els.whatsappDetail.textContent = whatsapp.lastError ||
+        `Sesion ${whatsapp.clientId || 'bot-2'} | Numero: ${getConnectedWhatsAppLabel(whatsapp)} | ${formatDateTime(whatsapp.lastEventAt)}`;
       els.mysqlState.textContent = mysql.ready ? 'Conectado' : 'Sin conexion';
       els.mysqlDetail.textContent = mysql.ready
         ? `${mysql.database}.${mysql.table}`
@@ -2023,6 +2024,17 @@
         els.qrPanel.hidden = true;
         els.qrImage.removeAttribute('src');
       }
+    }
+
+    function getConnectedWhatsAppLabel(whatsapp) {
+      const phone = String(whatsapp && whatsapp.phone || '').trim();
+      const name = String(whatsapp && whatsapp.displayName || '').trim();
+
+      if (!phone) {
+        return '--';
+      }
+
+      return name ? phone + ' (' + name + ')' : phone;
     }
 
     function renderConversationMetrics() {

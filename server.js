@@ -1369,14 +1369,31 @@ async function getWhatsAppStatus() {
     whatsappLastError = error.message;
   }
 
+  const connectedInfo = getConnectedWhatsAppInfo();
+
   return {
     ready: whatsappReady,
     state: whatsappState,
+    phone: connectedInfo.phone,
+    displayName: connectedInfo.displayName,
+    wid: connectedInfo.wid,
     lastEventAt: whatsappLastEventAt,
     lastError: whatsappLastError,
     qr: whatsappReady ? null : whatsappQr,
     qrText: whatsappReady ? null : whatsappQrText,
     qrSvg: whatsappReady ? null : whatsappQrSvg
+  };
+}
+
+function getConnectedWhatsAppInfo() {
+  const info = client && client.info || {};
+  const wid = info.wid && (info.wid._serialized || info.wid.user) || '';
+  const phone = normalizeChatPhone(info.wid && info.wid.user || wid);
+
+  return {
+    phone,
+    displayName: String(info.pushname || info.name || '').trim(),
+    wid: String(wid || '').trim()
   };
 }
 
