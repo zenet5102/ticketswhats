@@ -295,6 +295,7 @@ function requireAuth(allowedRoles) {
     }
 
     recordUserActivity(user);
+    res.setHeader('Set-Cookie', createSessionCookie(user, req));
     req.user = user;
     next();
   };
