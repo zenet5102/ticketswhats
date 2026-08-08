@@ -234,6 +234,31 @@
       line-height: 1.35;
     }
 
+    .transfer-metric {
+      display: flex;
+      flex-direction: column;
+      gap: 9px;
+    }
+
+    .transfer-metric[hidden] {
+      display: none;
+    }
+
+    .transfer-card-action {
+      width: fit-content;
+    }
+
+    .transfer-groups-detail {
+      margin-top: 0;
+    }
+
+    .transfer-groups-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 5px;
+      margin-top: 5px;
+    }
+
     .qr-panel {
       background: var(--panel);
       border: 1px solid var(--line);
@@ -1110,12 +1135,8 @@
         </a>
         <a class="nav-link" href="/errores">
           <span aria-hidden="true">&#9888;</span>
-          Errores
+          Errores de envio
         </a>
-        <button id="transferBtn" class="nav-link" type="button" title="Transferir grupos temporalmente" hidden>
-          <span aria-hidden="true">&#8646;</span>
-          Transferir
-        </button>
         <button id="usersBtn" class="nav-link" type="button" title="Administrar usuarios" hidden
           onclick="window.location.href='/usuarios'">
           <span aria-hidden="true">&#128100;</span>
@@ -1142,10 +1163,6 @@
           <span aria-hidden="true">&#9742;</span>
           Moviles
         </button>
-        <button id="whatsappTopbarReconnectBtn" type="button" title="Reconectar WhatsApp">
-          <span aria-hidden="true">&#8635;</span>
-          WhatsApp
-        </button>
         <button id="runBtn" class="primary" type="button" title="Ejecutar ciclo completo">
           <span aria-hidden="true">&#9658;</span>
           Ciclo
@@ -1163,34 +1180,19 @@
         <div class="metric-value" id="cycleBadge">--</div>
         <div class="metric-detail" id="lastRun">Ultima: --</div>
       </div>
-      <div class="metric">
-        <div class="metric-label">WhatsApp</div>
-        <div class="metric-value" id="whatsappBadge">--</div>
-        <div class="metric-detail" id="apiStatus">API: --</div>
+      <div class="metric transfer-metric" id="transferCard" hidden>
+        <div class="metric-label">Transferir grupos</div>
+        <button id="transferBtn" class="primary transfer-card-action" type="button"
+          title="Transferir grupos temporalmente">
+          <span aria-hidden="true">&#8646;</span>
+          Transferir
+        </button>
+        <div class="metric-detail transfer-groups-detail" id="transferGroupsDetail">Grupos asignados: --</div>
       </div>
       <div class="metric">
         <div class="metric-label">Tickets</div>
         <div class="metric-value" id="ticketCount">0</div>
         <div class="metric-detail" id="ticketSummary">Sin datos</div>
-      </div>
-    </section>
-
-    <section class="qr-panel" id="whatsappQrPanel" hidden>
-      <img id="whatsappQrImage" alt="QR para vincular WhatsApp">
-      <div class="qr-copy">
-        <div class="qr-title">Vincular WhatsApp</div>
-        <div class="qr-detail" id="whatsappQrDetail">Escanea este codigo desde WhatsApp para conectar la sesion.</div>
-        <div class="qr-actions">
-          <button id="whatsappReconnectBtn" type="button" title="Reconectar WhatsApp y generar QR si hace falta">
-            <span aria-hidden="true">&#8635;</span>
-            Reconectar
-          </button>
-          <button id="whatsappResetAuthBtn" type="button"
-            title="Borrar la sesion local de WhatsApp y generar un QR nuevo">
-            <span aria-hidden="true">&#9003;</span>
-            Borrar sesion
-          </button>
-        </div>
       </div>
     </section>
 
@@ -1343,7 +1345,6 @@
     };
 
     const els = {
-      apiStatus: document.getElementById('apiStatus'),
       autoReminderSwitch: document.getElementById('autoReminderSwitch'),
       autoReminderText: document.getElementById('autoReminderText'),
       cycleBadge: document.getElementById('cycleBadge'),
@@ -1371,11 +1372,13 @@
       toast: document.getElementById('toast'),
       transferActiveList: document.getElementById('transferActiveList'),
       transferBtn: document.getElementById('transferBtn'),
+      transferCard: document.getElementById('transferCard'),
       transferClearBtn: document.getElementById('transferClearBtn'),
       transferCloseBtn: document.getElementById('transferCloseBtn'),
       transferError: document.getElementById('transferError'),
       transferForm: document.getElementById('transferForm'),
       transferGroupsBox: document.getElementById('transferGroupsBox'),
+      transferGroupsDetail: document.getElementById('transferGroupsDetail'),
       transferModal: document.getElementById('transferModal'),
       transferSaveBtn: document.getElementById('transferSaveBtn'),
       transferSelectedUser: document.getElementById('transferSelectedUser'),
@@ -1394,14 +1397,7 @@
       templatesModal: document.getElementById('templatesModal'),
       templatesSummary: document.getElementById('templatesSummary'),
       transferUsersList: document.getElementById('transferUsersList'),
-      usersBtn: document.getElementById('usersBtn'),
-      whatsappBadge: document.getElementById('whatsappBadge'),
-      whatsappQrDetail: document.getElementById('whatsappQrDetail'),
-      whatsappQrImage: document.getElementById('whatsappQrImage'),
-      whatsappQrPanel: document.getElementById('whatsappQrPanel'),
-      whatsappReconnectBtn: document.getElementById('whatsappReconnectBtn'),
-      whatsappResetAuthBtn: document.getElementById('whatsappResetAuthBtn'),
-      whatsappTopbarReconnectBtn: document.getElementById('whatsappTopbarReconnectBtn')
+      usersBtn: document.getElementById('usersBtn')
     };
 
     function toDateInputValue(date) {
@@ -1493,48 +1489,10 @@
 
       const job = payload.job || {};
       const cfg = job.config || {};
-      const whatsapp = payload.whatsapp || {};
-      const connectedPhone = getConnectedWhatsAppLabel(whatsapp);
-
       els.intervalBadge.innerHTML = job.active ? badge('Activo', 'good') : badge('Inactivo', 'bad');
       els.nextRun.textContent = 'Cada ' + (cfg.syncIntervalMinutes || '--') + ' min | Proxima: ' + formatTimeLeft(job.nextRunAt);
       els.cycleBadge.innerHTML = job.cycleRunning ? badge('Corriendo', 'warn') : badge('Libre', 'good');
       els.lastRun.textContent = 'Ultima: ' + formatDateTime(job.lastRunFinishedAt) + ' | Corridas: ' + (job.runCount || 0);
-      els.whatsappBadge.innerHTML = payload.whatsappReady ? badge('Conectado', 'good') : badge('No conectado', 'warn');
-      els.apiStatus.textContent =
-        'WA: ' + (whatsapp.state || '--') +
-        ' | Numero: ' + connectedPhone +
-        ' | ' +
-        'Tickets: ' + (cfg.ticketsApiConfigured ? 'OK' : 'Falta') +
-        ' | Estado: ' + (cfg.ticketStatusApiConfigured ? 'OK' : 'Falta') +
-        ' | Cliente: ' + (cfg.clientApiConfigured ? 'OK' : 'Falta');
-
-      const canReconnectWhatsApp = hasFullAccess();
-
-      if (canReconnectWhatsApp || (!payload.whatsappReady && whatsapp.qrSvg)) {
-        els.whatsappQrPanel.hidden = false;
-        els.whatsappQrImage.hidden = payload.whatsappReady || !whatsapp.qrSvg;
-        if (whatsapp.qrSvg) {
-          els.whatsappQrImage.src = whatsapp.qrSvg;
-        } else {
-          els.whatsappQrImage.removeAttribute('src');
-        }
-        els.whatsappQrDetail.textContent = payload.whatsappReady
-          ? 'WhatsApp esta conectado. Usa estos controles solo si necesitas vincular de nuevo.'
-          : whatsapp.qrSvg
-            ? 'Escanea este codigo desde WhatsApp para conectar la sesion.'
-            : 'Si no aparece el QR, toca Reconectar para reiniciar la conexion de WhatsApp.';
-        els.whatsappReconnectBtn.hidden = !canReconnectWhatsApp;
-        els.whatsappReconnectBtn.disabled = !canReconnectWhatsApp;
-        els.whatsappResetAuthBtn.hidden = !canReconnectWhatsApp;
-        els.whatsappResetAuthBtn.disabled = !canReconnectWhatsApp;
-      } else {
-        els.whatsappQrPanel.hidden = true;
-        els.whatsappQrImage.hidden = false;
-        els.whatsappQrImage.removeAttribute('src');
-        els.whatsappReconnectBtn.hidden = true;
-        els.whatsappResetAuthBtn.hidden = true;
-      }
 
       if (job.lastError && job.lastError.message) {
         els.lastRun.textContent += ' | Error: ' + job.lastError.message;
@@ -1577,7 +1535,7 @@
       const inProcess = tickets.filter(ticket => String(ticket.status || '').toLowerCase().includes('proceso')).length;
 
       els.ticketCount.textContent = String(tickets.length);
-      els.ticketSummary.textContent = 'En proceso: ' + inProcess + ' | Avisados: ' + notified + ' | Errores: ' + errors;
+      els.ticketSummary.textContent = 'En proceso: ' + inProcess + ' | Avisados: ' + notified + ' | Errores de envio: ' + errors;
       els.emptyState.hidden = tickets.length > 0;
       els.dateFilter.value = state.selectedDate;
       els.groupsContainer.innerHTML = '';
@@ -1945,6 +1903,21 @@
       }).join('');
     }
 
+    function renderTransferCard() {
+      const groups = Array.isArray(state.transferGroups) ? state.transferGroups : [];
+
+      if (!groups.length) {
+        els.transferGroupsDetail.textContent = 'Grupos asignados: sin grupos detectados.';
+        return;
+      }
+
+      els.transferGroupsDetail.innerHTML =
+        'Grupos asignados:' +
+        '<div class="transfer-groups-list">' +
+        groups.map(group => badge(group, 'blue')).join(' ') +
+        '</div>';
+    }
+
     function renderTransferModal() {
       const selectedUser = getSelectedTransferUser();
       const selectedTransfer = getUserTransfer(selectedUser);
@@ -1980,6 +1953,7 @@
       state.transferGroups = data.groups || [];
       state.transfers = data.transfers || [];
       state.transferHours = data.expiresAfterHours || 0;
+      renderTransferCard();
 
       if (
         state.selectedTransferUsername &&
@@ -2004,17 +1978,6 @@
       } catch (error) {
         els.transferError.textContent = error.message;
       }
-    }
-
-    function getConnectedWhatsAppLabel(whatsapp) {
-      const phone = String(whatsapp && whatsapp.phone || '').trim();
-      const name = String(whatsapp && whatsapp.displayName || '').trim();
-
-      if (!phone) {
-        return '--';
-      }
-
-      return name ? phone + ' (' + name + ')' : phone;
     }
 
     function closeTransferModal() {
@@ -2318,10 +2281,11 @@
       els.sessionBadge.textContent = user.name + ' | ' + roleLabel;
 
       const fullAccess = hasFullAccess();
-      [els.syncBtn, els.statusBtn, els.phonesBtn, els.runBtn, els.saveMessageBtn, els.templatesBtn, els.whatsappTopbarReconnectBtn].forEach(button => {
+      [els.syncBtn, els.statusBtn, els.phonesBtn, els.runBtn, els.saveMessageBtn, els.templatesBtn].forEach(button => {
         button.hidden = !fullAccess;
       });
       els.usersBtn.hidden = user.role !== 'admin';
+      els.transferCard.hidden = !fullAccess;
       els.transferBtn.hidden = !fullAccess;
       els.autoReminderSwitch.disabled = !canManageAutomaticReminder();
       els.autoReminderSwitch.title = canManageAutomaticReminder()
@@ -2380,13 +2344,19 @@
         const statusRequest = fetchJson('/tickets/job-status');
         const ticketsRequest = fetchJson('/tickets?date=' + encodeURIComponent(state.selectedDate));
         const settingsRequest = fetchJson('/settings/message-template');
-        const results = await Promise.all([statusRequest, ticketsRequest, settingsRequest]);
+        const transfersRequest = fetchJson('/transfers');
+        const results = await Promise.all([statusRequest, ticketsRequest, settingsRequest, transfersRequest]);
 
         state.status = results[0];
         state.tickets = results[1].tickets || [];
+        state.transferUsers = results[3].users || [];
+        state.transferGroups = results[3].groups || [];
+        state.transfers = results[3].transfers || [];
+        state.transferHours = results[3].expiresAfterHours || 0;
         renderStatus();
         renderTickets();
         renderMessageSettings(results[2]);
+        renderTransferCard();
         await checkTicketMessageNotifications().catch(() => { });
         els.lastRefresh.textContent = 'Actualizado: ' + new Date().toLocaleTimeString('es-AR');
       } catch (error) {
@@ -2407,9 +2377,7 @@
       els.saveMessageBtn.disabled = disabled || !fullAccess;
       els.templatesBtn.disabled = disabled || !fullAccess;
       els.autoReminderSwitch.disabled = disabled || !canManageAutomaticReminder();
-      els.whatsappReconnectBtn.disabled = disabled || !fullAccess;
-      els.whatsappResetAuthBtn.disabled = disabled || !fullAccess;
-      els.whatsappTopbarReconnectBtn.disabled = disabled || !fullAccess;
+      els.transferBtn.disabled = disabled || !fullAccess;
       els.messageTemplate.disabled = disabled || !fullAccess;
       els.todayBtn.disabled = disabled;
       els.dateFilter.disabled = disabled;
@@ -2570,48 +2538,6 @@
     els.statusBtn.addEventListener('click', () => runAction('/tickets/status', 'Estados'));
     els.phonesBtn.addEventListener('click', () => runAction('/tickets/phones', 'Moviles'));
     els.runBtn.addEventListener('click', () => runAction('/tickets/run', 'Ciclo'));
-    async function reconnectWhatsApp() {
-      setButtons(true);
-      showToast('Reiniciando WhatsApp...');
-
-      try {
-        await fetchJson('/whatsapp/reconnect', {
-          method: 'POST'
-        });
-        showToast('WhatsApp reiniciado. El QR puede tardar unos segundos.');
-        await loadDashboard();
-      } catch (error) {
-        showToast(error.message);
-      } finally {
-        setButtons(false);
-      }
-    }
-
-    els.whatsappReconnectBtn.addEventListener('click', reconnectWhatsApp);
-    els.whatsappTopbarReconnectBtn.addEventListener('click', reconnectWhatsApp);
-
-    async function resetWhatsAppAuth() {
-      if (!window.confirm('Esto borra la sesion local de WhatsApp y genera un QR nuevo. Continuar?')) {
-        return;
-      }
-
-      setButtons(true);
-      showToast('Borrando sesion de WhatsApp...');
-
-      try {
-        await fetchJson('/whatsapp/reset-auth', {
-          method: 'POST'
-        });
-        showToast('Sesion borrada. El QR puede tardar unos segundos.');
-        await loadDashboard();
-      } catch (error) {
-        showToast(error.message);
-      } finally {
-        setButtons(false);
-      }
-    }
-
-    els.whatsappResetAuthBtn.addEventListener('click', resetWhatsAppAuth);
     els.messageTemplate.addEventListener('input', () => {
       if (hasFullAccess()) {
         els.messageStatus.textContent = 'Cambios sin guardar';

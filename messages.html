@@ -249,6 +249,32 @@
       line-height: 1.35;
     }
 
+    .metric-value-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .whatsapp-phone-badge {
+      min-height: 24px;
+      max-width: 100%;
+    }
+
+    .metric-action-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+
+    .icon-button {
+      width: 34px;
+      min-width: 34px;
+      min-height: 34px;
+      padding: 0;
+    }
+
     .qr-panel {
       background: var(--panel);
       border: 1px solid var(--line);
@@ -289,6 +315,13 @@
       color: var(--muted);
       line-height: 1.4;
       margin-bottom: 10px;
+    }
+
+    .qr-actions {
+      margin-top: 10px;
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
     }
 
     .qr-text {
@@ -881,7 +914,7 @@
         </a>
         <a class="nav-link" href="/errores">
           <span aria-hidden="true">&#9888;</span>
-          Errores
+          Errores de envio
         </a>
         <a id="usersLink" class="nav-link" href="/usuarios" hidden>
           <span aria-hidden="true">&#128100;</span>
@@ -891,21 +924,6 @@
     </aside>
 
     <main class="content">
-      <div class="actions" aria-label="Acciones de mensajes">
-        <button id="refreshBtn" type="button" title="Actualizar mensajes">
-          <span aria-hidden="true">&#8635;</span>
-          Actualizar
-        </button>
-        <button id="reconnectBtn" type="button" title="Reconectar WhatsApp">
-          <span aria-hidden="true">&#8635;</span>
-          Reconectar
-        </button>
-        <button id="channelSettingsBtn" type="button" title="Configurar respuesta automatica del canal">
-          <span aria-hidden="true">&#9881;</span>
-          Canal
-        </button>
-      </div>
-
     <section class="status-grid" aria-label="Estado">
       <div class="metric">
         <div class="metric-label">WhatsApp</div>
@@ -914,13 +932,42 @@
       </div>
       <div class="metric">
         <div class="metric-label">Conversaciones</div>
-        <div class="metric-value" id="conversationCount">0</div>
+        <div class="metric-action-row">
+          <div class="metric-value" id="conversationCount">0</div>
+          <button id="channelSettingsBtn" class="icon-button" type="button"
+            title="Configuracion de respuesta automatica" aria-label="Configuracion de respuesta automatica">
+            <span aria-hidden="true">&#9881;</span>
+          </button>
+        </div>
         <div class="metric-detail" id="conversationDetail">Sin actividad</div>
       </div>
       <div class="metric">
         <div class="metric-label">Ultima respuesta</div>
         <div class="metric-value" id="lastIncoming">--</div>
         <div class="metric-detail" id="lastIncomingDetail">--</div>
+      </div>
+    </section>
+
+    <section class="qr-panel" id="whatsappQrPanel" hidden>
+      <img id="whatsappQrImage" alt="QR para vincular WhatsApp">
+      <div class="qr-copy">
+        <div class="qr-title">Vincular WhatsApp</div>
+        <div class="qr-detail" id="whatsappQrDetail">Escanea este codigo desde WhatsApp para conectar la sesion.</div>
+        <div class="qr-actions">
+          <button id="refreshBtn" type="button" title="Actualizar mensajes">
+            <span aria-hidden="true">&#8635;</span>
+            Actualizar
+          </button>
+          <button id="reconnectBtn" type="button" title="Reconectar WhatsApp y generar QR si hace falta">
+            <span aria-hidden="true">&#8635;</span>
+            Reconectar
+          </button>
+          <button id="whatsappResetAuthBtn" type="button"
+            title="Borrar la sesion local de WhatsApp y generar un QR nuevo">
+            <span aria-hidden="true">&#9003;</span>
+            Borrar sesion
+          </button>
+        </div>
       </div>
     </section>
 
@@ -1032,7 +1079,8 @@
       lastIncomingByChat: new Map(),
       notificationAudioContext: null,
       renderedMessagesChatId: '',
-      channelSettings: null
+      channelSettings: null,
+      whatsappReady: false
     };
 
     const els = {
@@ -1075,6 +1123,10 @@
       toast: document.getElementById('toast'),
       usersLink: document.getElementById('usersLink'),
       whatsappDetail: document.getElementById('whatsappDetail'),
+      whatsappQrDetail: document.getElementById('whatsappQrDetail'),
+      whatsappQrImage: document.getElementById('whatsappQrImage'),
+      whatsappQrPanel: document.getElementById('whatsappQrPanel'),
+      whatsappResetAuthBtn: document.getElementById('whatsappResetAuthBtn'),
       whatsappState: document.getElementById('whatsappState')
     };
 
@@ -1606,6 +1658,9 @@
       els.usersLink.hidden = user.role !== 'admin';
       els.reconnectBtn.hidden = !fullAccess;
       els.reconnectBtn.disabled = !fullAccess;
+      els.refreshBtn.disabled = !state.whatsappReady;
+      els.whatsappResetAuthBtn.hidden = !fullAccess;
+      els.whatsappResetAuthBtn.disabled = !fullAccess;
       els.channelSettingsBtn.disabled = !fullAccess;
 
       if (!fullAccess) {
@@ -1725,11 +1780,48 @@
 
     function renderStatus(status) {
       const whatsapp = status.whatsapp || {};
-      const ready = Boolean(whatsapp.ready);
-      els.whatsappState.innerHTML = `<span class="badge ${ready ? 'good' : 'bad'}">${escapeHtml(whatsapp.state || 'UNKNOWN')}</span>`;
+      const ready = Boolean(status.whatsappReady || whatsapp.ready);
+      const connectedPhone = getConnectedWhatsAppLabel(whatsapp);
+      const canReconnectWhatsApp = hasFullAccess();
+      state.whatsappReady = ready;
+
+      els.whatsappState.innerHTML =
+        '<span class="metric-value-row">' +
+        `<span class="badge ${ready ? 'good' : 'bad'}">${escapeHtml(ready ? 'Conectado' : 'No conectado')}</span>` +
+        `<span class="badge blue whatsapp-phone-badge">${escapeHtml(connectedPhone)}</span>` +
+        '</span>';
       els.whatsappDetail.textContent = whatsapp.lastError || (ready
-        ? 'Numero: ' + getConnectedWhatsAppLabel(whatsapp)
+        ? 'WA: ' + (whatsapp.state || '--')
         : 'Sin conexion');
+
+      if (canReconnectWhatsApp || (!ready && whatsapp.qrSvg)) {
+        els.whatsappQrPanel.hidden = false;
+        els.whatsappQrImage.hidden = ready || !whatsapp.qrSvg;
+        if (whatsapp.qrSvg) {
+          els.whatsappQrImage.src = whatsapp.qrSvg;
+        } else {
+          els.whatsappQrImage.removeAttribute('src');
+        }
+        els.whatsappQrDetail.textContent = ready
+          ? 'WhatsApp esta conectado. Usa estos controles solo si necesitas vincular de nuevo.'
+          : whatsapp.qrSvg
+            ? 'Escanea este codigo desde WhatsApp para conectar la sesion.'
+            : 'Si no aparece el QR, toca Reconectar para reiniciar la conexion de WhatsApp.';
+        els.reconnectBtn.hidden = !canReconnectWhatsApp;
+        els.reconnectBtn.disabled = !canReconnectWhatsApp;
+        els.whatsappResetAuthBtn.hidden = !canReconnectWhatsApp;
+        els.whatsappResetAuthBtn.disabled = !canReconnectWhatsApp;
+      } else {
+        els.whatsappQrPanel.hidden = true;
+        els.whatsappQrImage.hidden = false;
+        els.whatsappQrImage.removeAttribute('src');
+        els.reconnectBtn.hidden = true;
+        els.whatsappResetAuthBtn.hidden = true;
+      }
+
+      if (!state.loading) {
+        els.refreshBtn.disabled = !ready;
+      }
     }
 
     function getConnectedWhatsAppLabel(whatsapp) {
@@ -2065,6 +2157,7 @@
       state.loading = true;
       els.refreshBtn.disabled = true;
       els.reconnectBtn.disabled = true;
+      els.whatsappResetAuthBtn.disabled = true;
       els.channelSettingsBtn.disabled = true;
 
       try {
@@ -2080,8 +2173,9 @@
         els.lastRefresh.textContent = `Error: ${error.message}`;
       } finally {
         state.loading = false;
-        els.refreshBtn.disabled = false;
+        els.refreshBtn.disabled = !state.whatsappReady;
         els.reconnectBtn.disabled = !hasFullAccess();
+        els.whatsappResetAuthBtn.disabled = !hasFullAccess();
         els.channelSettingsBtn.disabled = !hasFullAccess();
       }
     }
@@ -2106,6 +2200,37 @@
         els.whatsappDetail.textContent = error.message;
       } finally {
         els.reconnectBtn.disabled = false;
+        els.refreshBtn.disabled = !state.whatsappReady;
+      }
+    }
+
+    async function resetWhatsAppAuth() {
+      if (!hasFullAccess()) {
+        showToast('Permisos insuficientes');
+        return;
+      }
+
+      if (!window.confirm('Esto borra la sesion local de WhatsApp y genera un QR nuevo. Continuar?')) {
+        return;
+      }
+
+      els.reconnectBtn.disabled = true;
+      els.whatsappResetAuthBtn.disabled = true;
+      showToast('Borrando sesion de WhatsApp...');
+
+      try {
+        await fetchJson('/whatsapp/reset-auth', {
+          method: 'POST'
+        });
+        showToast('Sesion borrada. El QR puede tardar unos segundos.');
+        await loadStatus();
+      } catch (error) {
+        showToast(error.message);
+        els.whatsappDetail.textContent = error.message;
+      } finally {
+        els.reconnectBtn.disabled = false;
+        els.whatsappResetAuthBtn.disabled = false;
+        els.refreshBtn.disabled = !state.whatsappReady;
       }
     }
 
@@ -2304,6 +2429,7 @@
     els.otherChatsTab.addEventListener('click', () => setConversationBucket('other'));
     els.moveBucketBtn.addEventListener('click', moveSelectedConversationBucket);
     els.reconnectBtn.addEventListener('click', reconnectWhatsApp);
+    els.whatsappResetAuthBtn.addEventListener('click', resetWhatsAppAuth);
     els.logoutBtn.addEventListener('click', logout);
     els.channelSettingsBtn.addEventListener('click', openChannelSettings);
     els.channelCloseBtn.addEventListener('click', closeChannelSettings);
