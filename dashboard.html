@@ -234,6 +234,20 @@
       line-height: 1.35;
     }
 
+    .metric-action-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+
+    .metric-actions {
+      margin-top: 10px;
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
     .transfer-metric {
       display: flex;
       flex-direction: column;
@@ -1146,38 +1160,27 @@
     </aside>
 
     <main class="content">
-      <div class="actions" aria-label="Acciones del monitor">
-        <button id="refreshBtn" type="button" title="Actualizar ahora">
-          <span aria-hidden="true">&#8635;</span>
-          Actualizar
-        </button>
-        <button id="syncBtn" type="button" title="Traer tickets desde la API">
-          <span aria-hidden="true">&#8645;</span>
-          Sync
-        </button>
-        <button id="statusBtn" type="button" title="Actualizar estados">
-          <span aria-hidden="true">&#8634;</span>
-          Estados
-        </button>
-        <button id="phonesBtn" type="button" title="Completar moviles desde cliente">
-          <span aria-hidden="true">&#9742;</span>
-          Moviles
-        </button>
-        <button id="runBtn" class="primary" type="button" title="Ejecutar ciclo completo">
-          <span aria-hidden="true">&#9658;</span>
-          Ciclo
-        </button>
-      </div>
-
     <section class="status-grid" aria-label="Estado">
       <div class="metric">
         <div class="metric-label">Intervalo</div>
-        <div class="metric-value" id="intervalBadge">--</div>
+        <div class="metric-action-row">
+          <div class="metric-value" id="intervalBadge">--</div>
+          <button id="refreshBtn" type="button" title="Actualizar datos del dashboard">
+            <span aria-hidden="true">&#8635;</span>
+            Actualizar
+          </button>
+        </div>
         <div class="metric-detail" id="nextRun">Proxima: --</div>
       </div>
       <div class="metric">
         <div class="metric-label">Ciclo</div>
-        <div class="metric-value" id="cycleBadge">--</div>
+        <div class="metric-action-row">
+          <div class="metric-value" id="cycleBadge">--</div>
+          <button id="runBtn" class="primary" type="button" title="Ejecutar ciclo completo">
+            <span aria-hidden="true">&#9658;</span>
+            Ciclo
+          </button>
+        </div>
         <div class="metric-detail" id="lastRun">Ultima: --</div>
       </div>
       <div class="metric transfer-metric" id="transferCard" hidden>
@@ -1193,6 +1196,20 @@
         <div class="metric-label">Tickets</div>
         <div class="metric-value" id="ticketCount">0</div>
         <div class="metric-detail" id="ticketSummary">Sin datos</div>
+        <div class="metric-actions" aria-label="Acciones de tickets">
+          <button id="syncBtn" type="button" title="Traer tickets desde la API">
+            <span aria-hidden="true">&#8645;</span>
+            Sync
+          </button>
+          <button id="statusBtn" type="button" title="Actualizar estados">
+            <span aria-hidden="true">&#8634;</span>
+            Estados
+          </button>
+          <button id="phonesBtn" type="button" title="Completar moviles desde cliente">
+            <span aria-hidden="true">&#9742;</span>
+            Moviles
+          </button>
+        </div>
       </div>
     </section>
 
