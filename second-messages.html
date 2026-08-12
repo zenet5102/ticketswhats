@@ -5,6 +5,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Administracion</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
   <style>
     :root {
       --bg: #e7f0ed;
@@ -371,13 +372,46 @@
       border-color: #f0b5b5;
     }
 
-    .new-chat {
-      display: grid;
-      grid-template-columns: minmax(0, 1fr) auto;
+    .conversation-tools {
+      display: flex;
+      align-items: center;
       gap: 8px;
       padding: 12px;
       border-bottom: 1px solid var(--line);
       background: var(--panel-soft);
+    }
+
+    .chat-search {
+      position: relative;
+      min-width: 0;
+      flex: 1 1 auto;
+    }
+
+    .chat-search-icon {
+      position: absolute;
+      left: 11px;
+      top: 50%;
+      transform: translateY(-50%);
+      color: var(--muted);
+      font-size: 15px;
+      pointer-events: none;
+    }
+
+    .chat-search input {
+      width: 100%;
+      padding-left: 34px;
+    }
+
+    .new-chat-button {
+      width: 38px;
+      min-width: 38px;
+      height: 38px;
+      padding: 0;
+      border-radius: 8px;
+      display: inline-grid;
+      place-items: center;
+      font-size: 19px;
+      line-height: 1;
     }
 
     .chat-list {
@@ -404,6 +438,16 @@
     .chat-item:hover,
     .chat-item.active {
       background: var(--accent-pale);
+    }
+
+    .chat-item.has-new-incoming {
+      background: #fff7ed;
+      box-shadow: inset 4px 0 0 #f97316;
+    }
+
+    .chat-item.has-new-incoming:hover,
+    .chat-item.has-new-incoming.active {
+      background: #ffedd5;
     }
 
     .chat-item.active {
@@ -777,8 +821,8 @@
         width: min(100% - 20px, 1680px);
       }
 
-      .new-chat {
-        grid-template-columns: 1fr;
+      .conversation-tools {
+        align-items: stretch;
       }
 
       .bubble {
@@ -880,6 +924,19 @@
       font-size: 13px;
       font-weight: 700;
     }
+
+    .modal-field {
+      display: grid;
+      gap: 6px;
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .modal-field textarea {
+      min-height: 110px;
+      resize: vertical;
+    }
   </style>
 </head>
 
@@ -949,9 +1006,15 @@
           <div class="panel-title">Chats</div>
           <span id="loadedBadge" class="badge">0</span>
         </div>
-        <div class="new-chat">
-          <input id="phoneInput" type="tel" inputmode="tel" placeholder="1162446858 o 5491162446858" autocomplete="off">
-          <button id="startChatBtn" type="button">Nuevo</button>
+        <div class="conversation-tools">
+          <input id="phoneInput" type="hidden" autocomplete="off">
+          <div class="chat-search">
+            <i class="bi bi-search chat-search-icon" aria-hidden="true"></i>
+            <input id="chatSearchInput" type="search" inputmode="tel" placeholder="Buscar por telefono" autocomplete="off" aria-label="Buscar por telefono">
+          </div>
+          <button id="startChatBtn" class="new-chat-button" type="button" title="Nuevo chat" aria-label="Nuevo chat">
+            <i class="bi bi-chat-left-text" aria-hidden="true"></i>
+          </button>
         </div>
         <div id="chatList" class="chat-list">
           <div class="empty">Cargando chats...</div>
@@ -1044,6 +1107,32 @@
       </div>
     </form>
   </div>
+  <div id="newChatModal" class="ticket-modal" aria-hidden="true">
+    <form id="newChatForm" class="ticket-dialog">
+      <div class="ticket-dialog-head">
+        <div>
+          <div class="ticket-dialog-title">Nuevo chat</div>
+          <div class="chat-meta">Validar numero en WhatsApp secundario antes de iniciar.</div>
+        </div>
+        <button id="newChatCancelBtn" type="button">Cancelar</button>
+      </div>
+      <div class="ticket-dialog-body">
+        <div class="modal-field">
+          <span>Numero</span>
+          <input id="newChatPhoneInput" type="tel" inputmode="tel" placeholder="1162446858 o 5491162446858" autocomplete="off">
+        </div>
+        <div class="modal-field">
+          <span>Mensaje</span>
+          <textarea id="newChatMessageInput" placeholder="Mensaje inicial" spellcheck="true"></textarea>
+        </div>
+        <div id="newChatValidationState" class="chat-meta">Ingresa un numero para validar.</div>
+        <div id="newChatStatus" class="ticket-status"></div>
+      </div>
+      <div class="ticket-dialog-actions">
+        <button id="newChatSubmitBtn" class="primary" type="submit" disabled>Iniciar chat</button>
+      </div>
+    </form>
+  </div>
   <script>
     function openImageModal(src) {
       document.getElementById('modalImage').src = src;
@@ -1071,7 +1160,15 @@
       clientLoadedFor: '',
       mediaLimitBytes: 15 * 1024 * 1024,
       loading: false,
-      renderedMessagesChatId: ''
+      renderedMessagesChatId: '',
+      chatSearch: '',
+      lastIncomingByChat: new Map(),
+      newIncomingChatIds: new Set(),
+      incomingTrackingReady: false,
+      incomingTrackingStartedAt: 0,
+      newChatValidationRequestId: 0,
+      newChatValidation: null,
+      newChatValidationTimer: null
     };
 
     const els = {
@@ -1080,6 +1177,7 @@
       chatDetail: document.getElementById('chatDetail'),
       chatList: document.getElementById('chatList'),
       chatMeta: document.getElementById('chatMeta'),
+      chatSearchInput: document.getElementById('chatSearchInput'),
       chatTitle: document.getElementById('chatTitle'),
       clientBadge: document.getElementById('clientBadge'),
       clientBody: document.getElementById('clientBody'),
@@ -1097,6 +1195,14 @@
       messageList: document.getElementById('messageList'),
       mysqlDetail: document.getElementById('mysqlDetail'),
       mysqlState: document.getElementById('mysqlState'),
+      newChatCancelBtn: document.getElementById('newChatCancelBtn'),
+      newChatForm: document.getElementById('newChatForm'),
+      newChatMessageInput: document.getElementById('newChatMessageInput'),
+      newChatModal: document.getElementById('newChatModal'),
+      newChatPhoneInput: document.getElementById('newChatPhoneInput'),
+      newChatStatus: document.getElementById('newChatStatus'),
+      newChatSubmitBtn: document.getElementById('newChatSubmitBtn'),
+      newChatValidationState: document.getElementById('newChatValidationState'),
       phoneInput: document.getElementById('phoneInput'),
       qrImage: document.getElementById('qrImage'),
       qrPanel: document.getElementById('qrPanel'),
@@ -1364,6 +1470,74 @@
       }
 
       return phone || chatId || (/@lid$/i.test(String(conversation.chat_id || '')) ? 'Telefono real pendiente' : 'Sin telefono');
+    }
+
+    function getConversationSearchText(conversation) {
+      if (!conversation) {
+        return '';
+      }
+
+      return [
+        getConversationPhone(conversation),
+        conversation.phone,
+        conversation.display_phone,
+        conversation.chat_id,
+        getPhoneFromChatId(conversation.chat_id),
+        getConversationName(conversation),
+        getConversationMeta(conversation),
+        conversation.contact_name,
+        conversation.display_name
+      ]
+        .filter(Boolean)
+        .join(' ');
+    }
+
+    function getFilteredConversations() {
+      const search = cleanPhone(state.chatSearch);
+
+      if (!search) {
+        return state.conversations;
+      }
+
+      return state.conversations.filter(conversation => cleanPhone(getConversationSearchText(conversation)).includes(search));
+    }
+
+    function getUnreadConversationCount() {
+      const knownChatIds = new Set(
+        state.conversations
+          .map(conversation => String(conversation && conversation.chat_id || '').trim())
+          .filter(Boolean)
+      );
+
+      return [...state.newIncomingChatIds].filter(chatId => knownChatIds.has(chatId)).length;
+    }
+
+    function detectNewIncomingMessages(conversations) {
+      const shouldTrack = state.incomingTrackingReady;
+
+      for (const conversation of conversations) {
+        const chatId = String(conversation && conversation.chat_id || '').trim();
+        const timestamp = Number(conversation && conversation.last_incoming_ts || 0);
+
+        if (!chatId || !Number.isFinite(timestamp) || timestamp <= 0) {
+          continue;
+        }
+
+        const previousTimestamp = state.lastIncomingByChat.get(chatId) || 0;
+
+        const isNewConversationMessage = !previousTimestamp && timestamp >= state.incomingTrackingStartedAt - 5000;
+
+        if (shouldTrack && ((previousTimestamp && timestamp > previousTimestamp) || isNewConversationMessage)) {
+          state.newIncomingChatIds.add(chatId);
+        }
+
+        state.lastIncomingByChat.set(chatId, Math.max(previousTimestamp, timestamp));
+      }
+
+      if (!state.incomingTrackingReady) {
+        state.incomingTrackingReady = true;
+        state.incomingTrackingStartedAt = Date.now();
+      }
     }
 
     function getSelectedConversation() {
@@ -2038,27 +2212,35 @@
     }
 
     function renderConversationMetrics() {
-      const count = state.conversations.length;
+      const filteredCount = getFilteredConversations().length;
+      const unreadCount = getUnreadConversationCount();
       const lastIncoming = state.conversations
         .map(item => Number(item.last_incoming_ts || 0))
         .filter(Boolean)
         .sort((left, right) => right - left)[0];
 
-      els.chatCount.textContent = String(count);
-      els.loadedBadge.textContent = String(count);
-      els.chatDetail.textContent = lastIncoming ? `Ultima entrada ${formatDateTime(lastIncoming)}` : 'Sin entradas';
+      els.chatCount.textContent = String(unreadCount);
+      els.loadedBadge.textContent = String(filteredCount);
+      els.chatDetail.textContent = unreadCount
+        ? `${unreadCount} sin leer | ${state.conversations.length} chats`
+        : (lastIncoming ? `Sin leer 0 | Ultima entrada ${formatDateTime(lastIncoming)}` : 'Sin entradas');
     }
 
     function renderConversations() {
       renderConversationMetrics();
+      const conversations = getFilteredConversations();
 
-      if (!state.conversations.length) {
-        els.chatList.innerHTML = '<div class="empty">Sin chats guardados en MySQL.</div>';
+      if (!conversations.length) {
+        els.chatList.innerHTML = state.chatSearch
+          ? '<div class="empty">Sin chats para ese telefono.</div>'
+          : '<div class="empty">Sin chats guardados en MySQL.</div>';
         return;
       }
 
-      els.chatList.innerHTML = state.conversations.map(conversation => {
+      els.chatList.innerHTML = conversations.map(conversation => {
         const active = conversation.chat_id === state.selectedChatId ? ' active' : '';
+        const hasNewIncoming = state.newIncomingChatIds.has(String(conversation.chat_id || '').trim());
+        const incomingClass = hasNewIncoming ? ' has-new-incoming' : '';
         const pinned = isChatPinned(conversation.chat_id);
         const pinnedClass = pinned ? ' pinned' : '';
         const pinnedLabel = pinned ? 'Fijado' : 'Fijar';
@@ -2069,7 +2251,7 @@
         const phoneStatusTone = hasRealConversationPhone(conversation) ? 'good' : 'warn';
 
         return `
-          <div class="chat-item${active}" role="button" tabindex="0" data-chat-id="${escapeHtml(conversation.chat_id)}">
+          <div class="chat-item${active}${incomingClass}" role="button" tabindex="0" data-chat-id="${escapeHtml(conversation.chat_id)}">
             <div class="chat-top">
               <div class="chat-name-row">
                 <button class="pin-chat-btn${pinnedClass}" type="button" data-pin-chat-id="${escapeHtml(conversation.chat_id)}" title="${escapeHtml(pinned ? 'Quitar fijado' : 'Fijar chat')}">${escapeHtml(pinnedLabel)}</button>
@@ -2079,6 +2261,7 @@
             </div>
             <div class="chat-preview">${escapeHtml(preview || '--')}</div>
             <div class="chat-owner-row">
+              ${hasNewIncoming ? '<span class="badge chat-owner warn">Nuevo</span>' : ''}
               <span class="badge chat-owner ${escapeHtml(getConversationOwnerTone(conversation))}">${escapeHtml(getConversationOwnerText(conversation))}</span>
               <span class="badge chat-owner ${escapeHtml(phoneStatusTone)}">${escapeHtml(phoneStatus)}</span>
             </div>
@@ -2097,6 +2280,7 @@
       for (const button of els.chatList.querySelectorAll('.chat-item')) {
         const selectChat = () => {
           state.selectedChatId = button.dataset.chatId || '';
+          state.newIncomingChatIds.delete(String(state.selectedChatId || '').trim());
           state.draftPhone = '';
           state.draftName = '';
           state.draftClientId = '';
@@ -2330,6 +2514,7 @@
       try {
         const data = await fetchJson('/api/chats');
         state.conversations = data.conversations || [];
+        detectNewIncomingMessages(state.conversations);
         sortConversations();
 
         if (!options.preserveSelection && !state.selectedChatId && !state.draftPhone && state.conversations.length) {
@@ -2380,6 +2565,147 @@
         els.lastRefresh.textContent = 'Actualizado ' + formatDateTime(Date.now());
       } finally {
         state.loading = false;
+      }
+    }
+
+    function setNewChatValidationState(message, tone = '') {
+      els.newChatValidationState.textContent = message;
+      els.newChatValidationState.style.color = tone || '';
+    }
+
+    function resetNewChatValidation(message = 'Ingresa un numero para validar.') {
+      state.newChatValidation = null;
+      els.newChatSubmitBtn.disabled = true;
+      els.newChatStatus.textContent = '';
+      setNewChatValidationState(message);
+    }
+
+    function openNewChatModal(prefill = {}) {
+      clearTimeout(state.newChatValidationTimer);
+      els.newChatPhoneInput.value = prefill.phone || '';
+      els.newChatMessageInput.value = prefill.message || '';
+      els.newChatModal.dataset.name = prefill.name || '';
+      els.newChatModal.dataset.clientId = prefill.clientId || '';
+      resetNewChatValidation();
+      els.newChatModal.classList.add('visible');
+      els.newChatModal.setAttribute('aria-hidden', 'false');
+
+      if (els.newChatPhoneInput.value.trim()) {
+        scheduleNewChatValidation(0);
+      }
+
+      setTimeout(() => {
+        (els.newChatPhoneInput.value.trim() ? els.newChatMessageInput : els.newChatPhoneInput).focus();
+      }, 0);
+    }
+
+    function closeNewChatModal() {
+      clearTimeout(state.newChatValidationTimer);
+      state.newChatValidationRequestId += 1;
+      els.newChatModal.classList.remove('visible');
+      els.newChatModal.setAttribute('aria-hidden', 'true');
+      els.newChatStatus.textContent = '';
+    }
+
+    function prepareDraftChat(phone, options = {}) {
+      const normalizedPhone = normalizeNewChatPhone(phone);
+
+      if (!normalizedPhone) {
+        els.sendError.textContent = 'Falta telefono';
+        return false;
+      }
+
+      state.selectedChatId = '';
+      state.draftPhone = normalizedPhone;
+      state.draftName = String(options.name || '').trim();
+      state.draftClientId = String(options.clientId || '').trim();
+      state.clientDetails = null;
+      state.clientCandidates = [];
+      state.clientTickets = [];
+      state.clientLiveData = null;
+      state.clientLiveReceivedAt = '';
+      state.clientLoadedFor = '';
+      els.phoneInput.value = normalizedPhone;
+      els.sendError.textContent = '';
+      els.replyMessage.value = options.message || '';
+      renderConversations();
+      renderChatHeader();
+      renderMessages([]);
+      loadClientDetails({ force: true }).catch(() => { });
+      resolveDraftContact(normalizedPhone, state.draftName).catch(() => { });
+      els.replyMessage.focus();
+
+      return true;
+    }
+
+    async function validateNewChatPhone() {
+      const phone = normalizeNewChatPhone(els.newChatPhoneInput.value);
+      const requestId = state.newChatValidationRequestId + 1;
+      state.newChatValidationRequestId = requestId;
+      state.newChatValidation = null;
+      els.newChatSubmitBtn.disabled = true;
+      els.newChatStatus.textContent = '';
+
+      if (!phone) {
+        setNewChatValidationState('Ingresa un numero para validar.');
+        return null;
+      }
+
+      setNewChatValidationState('Validando numero...');
+
+      try {
+        const data = await fetchJson('/api/whatsapp/check-number?phone=' + encodeURIComponent(phone));
+
+        if (requestId !== state.newChatValidationRequestId) {
+          return null;
+        }
+
+        if (!data.exists) {
+          setNewChatValidationState('El numero no existe en WhatsApp.', 'var(--bad)');
+          return null;
+        }
+
+        state.newChatValidation = {
+          phone: data.phone || phone,
+          chatId: data.chatId || ''
+        };
+        els.newChatPhoneInput.value = state.newChatValidation.phone;
+        els.newChatSubmitBtn.disabled = false;
+        setNewChatValidationState('Numero valido en WhatsApp.', 'var(--good)');
+
+        return state.newChatValidation;
+      } catch (error) {
+        if (requestId !== state.newChatValidationRequestId) {
+          return null;
+        }
+
+        setNewChatValidationState('No se pudo validar el numero.', 'var(--bad)');
+        els.newChatStatus.textContent = error.message;
+        return null;
+      }
+    }
+
+    function scheduleNewChatValidation(delay = 450) {
+      clearTimeout(state.newChatValidationTimer);
+      state.newChatValidationRequestId += 1;
+      resetNewChatValidation('Esperando validacion...');
+      state.newChatValidationTimer = setTimeout(validateNewChatPhone, delay);
+    }
+
+    async function startNewChatFromModal(event) {
+      event.preventDefault();
+      const validation = state.newChatValidation || await validateNewChatPhone();
+
+      if (!validation) {
+        return;
+      }
+
+      if (prepareDraftChat(validation.phone, {
+        message: els.newChatMessageInput.value,
+        name: els.newChatModal.dataset.name || '',
+        clientId: els.newChatModal.dataset.clientId || ''
+      })) {
+        closeNewChatModal();
       }
     }
 
@@ -2549,34 +2875,24 @@
       if (event.key === 'Escape' && els.ticketModal.classList.contains('visible')) {
         closeTicketModal();
       }
+
+      if (event.key === 'Escape' && els.newChatModal.classList.contains('visible')) {
+        closeNewChatModal();
+      }
     });
 
-    els.startChatBtn.addEventListener('click', () => {
-      const phone = normalizeNewChatPhone(els.phoneInput.value);
-
-      if (!phone) {
-        els.sendError.textContent = 'Falta telefono';
-        return;
+    els.newChatCancelBtn.addEventListener('click', closeNewChatModal);
+    els.newChatModal.addEventListener('click', event => {
+      if (event.target === els.newChatModal) {
+        closeNewChatModal();
       }
-
-      state.selectedChatId = '';
-      state.draftPhone = phone;
-      state.draftName = '';
-      state.draftClientId = '';
-      state.clientDetails = null;
-      state.clientCandidates = [];
-      state.clientTickets = [];
-      state.clientLiveData = null;
-      state.clientLiveReceivedAt = '';
-      state.clientLoadedFor = '';
-      els.phoneInput.value = '';
-      els.sendError.textContent = '';
+    });
+    els.newChatForm.addEventListener('submit', startNewChatFromModal);
+    els.newChatPhoneInput.addEventListener('input', () => scheduleNewChatValidation());
+    els.startChatBtn.addEventListener('click', () => openNewChatModal());
+    els.chatSearchInput.addEventListener('input', () => {
+      state.chatSearch = els.chatSearchInput.value;
       renderConversations();
-      renderChatHeader();
-      renderMessages([]);
-      loadClientDetails({ force: true }).catch(() => { });
-      resolveDraftContact(phone).catch(() => { });
-      els.replyMessage.focus();
     });
 
     els.mediaInput.addEventListener('change', () => {
@@ -2627,12 +2943,22 @@
     });
     function openPhoneFromQuery() {
       const params = new URLSearchParams(window.location.search);
-      const phone = normalizeNewChatPhone(params.get('tel'));
+      const phone = normalizeNewChatPhone(params.get('tel') || params.get('phone') || params.get('telefono') || params.get('movil'));
       const ida = String(params.get('IDA') || params.get('ida') || params.get('id') || '').trim();
       const name = String(params.get('name') || params.get('cliente') || params.get('clientName') || '').trim();
       const message = params.get('message') || params.get('template') || params.get('msg') || '';
 
       if (!phone && !ida) {
+        return;
+      }
+
+      if (phone) {
+        openNewChatModal({
+          phone,
+          name,
+          clientId: ida,
+          message
+        });
         return;
       }
 
