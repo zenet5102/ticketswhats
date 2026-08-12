@@ -142,6 +142,7 @@ const config = {
   notificationChannelReplyCooldownHours: parseNonNegativeInteger(process.env.NOTIFICATION_CHANNEL_REPLY_COOLDOWN_HOURS, 24),
   notificationChannelSuppressAfterManualHours: parseNonNegativeInteger(process.env.NOTIFICATION_CHANNEL_SUPPRESS_AFTER_MANUAL_HOURS, 24),
   requestTimeoutMs: parsePositiveInteger(process.env.TICKETS_API_TIMEOUT_MS, 15000),
+  clientRequestTimeoutMs: parsePositiveInteger(process.env.CLIENT_API_TIMEOUT_MS, 30000),
   autoStartTicketJobs: parseBoolean(process.env.AUTO_START_TICKET_JOBS, true),
   ticketsApiUrl: process.env.TICKETS_API_URL || '',
   ticketStatusApiUrl: process.env.TICKET_STATUS_API_URL || process.env.TICKETS_API_URL || '',

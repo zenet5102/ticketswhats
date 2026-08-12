@@ -283,7 +283,11 @@ function hasBody(method) {
 
 async function fetchJson(url, options = {}) {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), config.requestTimeoutMs);
+  const parsedTimeoutMs = Number.parseInt(options.timeoutMs, 10);
+  const timeoutMs = Number.isFinite(parsedTimeoutMs) && parsedTimeoutMs > 0
+    ? parsedTimeoutMs
+    : config.requestTimeoutMs;
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
   const method = String(options.method || 'GET').toUpperCase();
   const bodyFormat = String(options.bodyFormat || 'json').toLowerCase();
   const requestHasBody = hasBody(method);
@@ -724,6 +728,7 @@ async function fetchClientInfo(clientId) {
   const payload = await fetchJson(config.clientApiUrl, {
     method: config.clientApiMethod,
     bodyFormat: config.clientApiBodyFormat,
+    timeoutMs: config.clientRequestTimeoutMs,
     body: buildClientBody(clientId)
   });
   const record = extractFirstRecord(payload);
