@@ -70,6 +70,8 @@ function initializeDatabase(database = getDb()) {
       from_me INTEGER NOT NULL DEFAULT 0,
       ack INTEGER,
       source TEXT,
+      sent_by_username TEXT,
+      sent_by_name TEXT,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
 
@@ -175,6 +177,8 @@ function initializeDatabase(database = getDb()) {
   ensureWhatsAppMessageColumn(database, 'media_mime', 'TEXT');
   ensureWhatsAppMessageColumn(database, 'media_data', 'TEXT');
   ensureWhatsAppMessageColumn(database, 'media_filename', 'TEXT');
+  ensureWhatsAppMessageColumn(database, 'sent_by_username', 'TEXT');
+  ensureWhatsAppMessageColumn(database, 'sent_by_name', 'TEXT');
   ensureUserColumn(database, 'groups_json', "TEXT NOT NULL DEFAULT '[]'");
   ensureAutomaticMessageTemplateColumn(database, 'active', 'INTEGER NOT NULL DEFAULT 1');
   ensureAutomaticMessageTemplateColumn(database, 'sort_order', 'INTEGER NOT NULL DEFAULT 0');
@@ -1132,9 +1136,11 @@ function saveWhatsAppMessage(message = {}) {
       timestamp_iso,
       from_me,
       ack,
-      source
+      source,
+      sent_by_username,
+      sent_by_name
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       chat_id = CASE
         WHEN excluded.source = 'whatsapp'
@@ -1158,6 +1164,8 @@ function saveWhatsAppMessage(message = {}) {
       media_data = COALESCE(excluded.media_data, whatsapp_messages.media_data),
       media_filename = COALESCE(excluded.media_filename, whatsapp_messages.media_filename),
       ack = COALESCE(excluded.ack, whatsapp_messages.ack),
+      sent_by_username = COALESCE(excluded.sent_by_username, whatsapp_messages.sent_by_username),
+      sent_by_name = COALESCE(excluded.sent_by_name, whatsapp_messages.sent_by_name),
       source = CASE
         WHEN excluded.source = 'whatsapp'
           AND whatsapp_messages.source IN ('ticket', 'ticket-response', 'notification-channel', 'manual', 'inbox', 'bot')
@@ -1178,7 +1186,9 @@ function saveWhatsAppMessage(message = {}) {
     new Date(timestamp).toISOString(),
     message.fromMe ? 1 : 0,
     Number.isFinite(Number(message.ack)) ? Number(message.ack) : null,
-    String(message.source || '').trim() || null
+    String(message.source || '').trim() || null,
+    String(message.sentByUsername || '').trim() || null,
+    String(message.sentByName || '').trim() || null
   );
 
   return getWhatsAppMessage(id);

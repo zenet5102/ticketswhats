@@ -1491,7 +1491,9 @@ async function sendWhatsApp(phone, message, source = 'bot', options = {}) {
       timestampTs: getWhatsAppTimestampMs(sentMessage && sentMessage.timestamp),
       fromMe: true,
       ack: sentMessage && sentMessage.ack,
-      source
+      source,
+      sentByUsername: options.sentByUsername,
+      sentByName: options.sentByName
     });
   } catch (error) {
     console.warn('Mensaje enviado, pero no se pudo guardar el historial:', error.message);
@@ -1711,7 +1713,10 @@ app.post('/messages/send', requirePrivileged, async (req, res) => {
       });
     }
 
-    const sentMessage = await sendWhatsApp(target, cleanMessage, 'inbox');
+    const sentMessage = await sendWhatsApp(target, cleanMessage, 'inbox', {
+      sentByUsername: req.user && req.user.username,
+      sentByName: req.user && req.user.name
+    });
     const fallbackChatId = isDirectChatId(target) ? target : `${cleanPhone}@c.us`;
     const chatId = getMessageChatId(sentMessage, fallbackChatId);
     const responseMessage = sentMessage && sentMessage._savedMessage || {
@@ -1725,7 +1730,9 @@ app.post('/messages/send', requirePrivileged, async (req, res) => {
       timestamp_ts: getWhatsAppTimestampMs(sentMessage && sentMessage.timestamp),
       from_me: 1,
       ack: Number.isFinite(Number(sentMessage && sentMessage.ack)) ? Number(sentMessage.ack) : null,
-      source: 'inbox'
+      source: 'inbox',
+      sent_by_username: req.user && req.user.username || null,
+      sent_by_name: req.user && req.user.name || null
     };
 
     let ticket = null;
