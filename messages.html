@@ -5,6 +5,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Mensajes WhatsApp</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
   <style>
     :root {
       --bg: #f6f7f9;
@@ -425,22 +426,46 @@
       white-space: nowrap;
     }
 
-    .new-chat {
+    .conversation-tools {
       padding: 12px;
       border-bottom: 1px solid var(--line);
-      display: grid;
-      grid-template-columns: minmax(0, 1fr) auto;
+      display: flex;
+      align-items: center;
       gap: 8px;
+      background: #ffffff;
     }
 
     .chat-search {
-      padding: 10px 12px;
-      border-bottom: 1px solid var(--line);
-      background: #ffffff;
+      position: relative;
+      min-width: 0;
+      flex: 1 1 auto;
+    }
+
+    .chat-search-icon {
+      position: absolute;
+      left: 11px;
+      top: 50%;
+      transform: translateY(-50%);
+      color: var(--muted);
+      font-size: 15px;
+      pointer-events: none;
     }
 
     .chat-search input {
       width: 100%;
+      padding-left: 34px;
+    }
+
+    .new-chat-button {
+      width: 38px;
+      min-width: 38px;
+      height: 38px;
+      padding: 0;
+      border-radius: 8px;
+      display: inline-grid;
+      place-items: center;
+      font-size: 22px;
+      line-height: 1;
     }
 
     .conversation-tabs {
@@ -813,6 +838,16 @@
       letter-spacing: 0;
     }
 
+    .modal-field {
+      display: grid;
+      gap: 6px;
+    }
+
+    .modal-field textarea {
+      min-height: 110px;
+      resize: vertical;
+    }
+
     .preview-box {
       border: 1px solid var(--line);
       border-radius: 8px;
@@ -997,12 +1032,15 @@
           <div class="panel-title">Conversaciones</div>
           <span class="badge blue" id="loadedBadge">0</span>
         </div>
-        <div class="new-chat">
-          <input id="phoneInput" type="tel" inputmode="tel" placeholder="1162446858 o 5491162446858" autocomplete="off">
-          <button id="startChatBtn" type="button" title="Abrir conversacion">Nuevo</button>
-        </div>
-        <div class="chat-search">
-          <input id="chatSearchInput" type="search" inputmode="tel" placeholder="Buscar por telefono" autocomplete="off">
+        <div class="conversation-tools">
+          <input id="phoneInput" type="hidden" autocomplete="off">
+          <div class="chat-search">
+            <i class="bi bi-search chat-search-icon" aria-hidden="true"></i>
+            <input id="chatSearchInput" type="search" inputmode="tel" placeholder="Buscar por telefono" autocomplete="off" aria-label="Buscar por telefono">
+          </div>
+          <button id="startChatBtn" class="new-chat-button" type="button" title="Nuevo chat" aria-label="Nuevo chat">
+            <i class="bi bi-chat-left-text" aria-hidden="true"></i>
+          </button>
         </div>
         <div class="conversation-tabs" role="tablist" aria-label="Tipo de conversaciones">
           <button id="mainChatsTab" class="conversation-tab active" type="button">Principal</button>
@@ -1083,6 +1121,34 @@
     </section>
   </div>
 
+  <div id="newChatModal" class="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="newChatModalTitle" hidden>
+    <section class="modal">
+      <div class="modal-head">
+        <div>
+          <div id="newChatModalTitle" class="modal-title">Nuevo chat</div>
+          <div class="chat-meta">Validar numero de WhatsApp antes de iniciar la conversacion.</div>
+        </div>
+        <button id="newChatCloseBtn" type="button" title="Cerrar">Cerrar</button>
+      </div>
+      <form id="newChatForm" class="modal-body">
+        <div class="modal-field">
+          <div class="field-label">Numero</div>
+          <input id="newChatPhoneInput" type="tel" inputmode="tel" placeholder="1162446858 o 5491162446858" autocomplete="off">
+        </div>
+        <div class="modal-field">
+          <div class="field-label">Mensaje</div>
+          <textarea id="newChatMessageInput" placeholder="Escribir mensaje inicial..." spellcheck="true"></textarea>
+        </div>
+        <div id="newChatValidationState" class="chat-meta">Ingresa un numero para validar.</div>
+        <div id="newChatError" class="error-text"></div>
+        <div class="modal-actions">
+          <button id="newChatCancelBtn" type="button">Cancelar</button>
+          <button id="newChatStartBtn" class="primary" type="submit" disabled>Iniciar chat</button>
+        </div>
+      </form>
+    </section>
+  </div>
+
   <div class="toast" id="toast"></div>
 
   <script>
@@ -1105,7 +1171,10 @@
       renderedMessagesChatId: '',
       channelSettings: null,
       whatsappReady: false,
-      chatSearch: ''
+      chatSearch: '',
+      newChatValidationRequestId: 0,
+      newChatValidation: null,
+      newChatValidationTimer: null
     };
 
     const els = {
@@ -1134,6 +1203,15 @@
       mainChatsTab: document.getElementById('mainChatsTab'),
       messageList: document.getElementById('messageList'),
       moveBucketBtn: document.getElementById('moveBucketBtn'),
+      newChatCancelBtn: document.getElementById('newChatCancelBtn'),
+      newChatCloseBtn: document.getElementById('newChatCloseBtn'),
+      newChatError: document.getElementById('newChatError'),
+      newChatForm: document.getElementById('newChatForm'),
+      newChatMessageInput: document.getElementById('newChatMessageInput'),
+      newChatModal: document.getElementById('newChatModal'),
+      newChatPhoneInput: document.getElementById('newChatPhoneInput'),
+      newChatStartBtn: document.getElementById('newChatStartBtn'),
+      newChatValidationState: document.getElementById('newChatValidationState'),
       otherChatsTab: document.getElementById('otherChatsTab'),
       phoneInput: document.getElementById('phoneInput'),
       reconnectBtn: document.getElementById('reconnectBtn'),
@@ -1898,6 +1976,16 @@
       return state.activeConversationBucket === 'other' ? state.otherConversations : state.conversations;
     }
 
+    function getUnreadConversationCount() {
+      const knownChatIds = new Set(
+        [...state.conversations, ...state.otherConversations]
+          .map(conversation => String(conversation && conversation.chat_id || '').trim())
+          .filter(Boolean)
+      );
+
+      return [...state.newIncomingChatIds].filter(chatId => knownChatIds.has(chatId)).length;
+    }
+
     function findConversationByChatId(chatId) {
       const cleanChatId = String(chatId || '').trim();
 
@@ -1935,13 +2023,14 @@
       const activeConversations = getActiveConversations();
       const filteredConversations = getFilteredConversations();
       const count = filteredConversations.length;
+      const unreadCount = getUnreadConversationCount();
       const lastIncoming = state.conversations
         .filter(conversation => conversation.last_incoming_ts)
         .sort((a, b) => Number(b.last_incoming_ts) - Number(a.last_incoming_ts))[0];
 
-      els.conversationCount.textContent = state.conversations.length;
+      els.conversationCount.textContent = unreadCount;
       els.loadedBadge.textContent = count;
-      els.conversationDetail.textContent = `${state.conversations.length} principal | ${state.otherConversations.length} otros`;
+      els.conversationDetail.textContent = `${unreadCount} sin leer | ${state.conversations.length} principal | ${state.otherConversations.length} otros`;
 
       if (lastIncoming) {
         els.lastIncoming.textContent = formatDateTime(lastIncoming.last_incoming_ts);
@@ -2361,28 +2450,150 @@
       }
     }
 
-    function startChatFromPhone() {
+    function setNewChatValidationState(message, tone = '') {
+      els.newChatValidationState.textContent = message;
+      els.newChatValidationState.style.color = tone || '';
+    }
+
+    function resetNewChatValidation(message = 'Ingresa un numero para validar.') {
+      state.newChatValidation = null;
+      els.newChatStartBtn.disabled = true;
+      els.newChatError.textContent = '';
+      setNewChatValidationState(message);
+    }
+
+    function openNewChatModal(prefill = {}) {
       if (!hasFullAccess()) {
-        els.sendError.textContent = 'Permisos insuficientes';
+        showToast('Permisos insuficientes');
         return;
       }
 
-      const phone = normalizeNewChatPhone(els.phoneInput.value);
+      clearTimeout(state.newChatValidationTimer);
+      els.newChatPhoneInput.value = prefill.phone || '';
+      els.newChatMessageInput.value = prefill.message || '';
+      resetNewChatValidation();
+      els.newChatModal.hidden = false;
 
-      if (!phone) {
+      if (els.newChatPhoneInput.value.trim()) {
+        scheduleNewChatValidation(0);
+      }
+
+      setTimeout(() => {
+        (els.newChatPhoneInput.value.trim() ? els.newChatMessageInput : els.newChatPhoneInput).focus();
+      }, 0);
+    }
+
+    function closeNewChatModal() {
+      clearTimeout(state.newChatValidationTimer);
+      state.newChatValidationRequestId += 1;
+      els.newChatModal.hidden = true;
+      els.newChatError.textContent = '';
+    }
+
+    function prepareManualChat(phone, message = '', chatId = '') {
+      const normalizedPhone = normalizeNewChatPhone(phone);
+
+      if (!normalizedPhone) {
         els.sendError.textContent = 'Falta telefono';
-        return;
+        return false;
       }
 
-      state.selectedChatId = `${phone}@c.us`;
+      els.phoneInput.value = normalizedPhone;
+      state.selectedChatId = chatId || `${normalizedPhone}@c.us`;
       state.selectionLocked = true;
       state.manualChatPending = true;
       els.sendError.textContent = '';
+      els.replyMessage.value = message || '';
       renderConversations();
       renderChatHeader(null);
       renderMessages([]);
       setComposerEnabled(true);
       els.replyMessage.focus();
+
+      return true;
+    }
+
+    async function validateNewChatPhone() {
+      const phone = normalizeNewChatPhone(els.newChatPhoneInput.value);
+      const requestId = state.newChatValidationRequestId + 1;
+      state.newChatValidationRequestId = requestId;
+      state.newChatValidation = null;
+      els.newChatStartBtn.disabled = true;
+      els.newChatError.textContent = '';
+
+      if (!phone) {
+        setNewChatValidationState('Ingresa un numero para validar.');
+        return null;
+      }
+
+      setNewChatValidationState('Validando numero...');
+
+      try {
+        const data = await fetchJson('/messages/validate-phone', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ phone })
+        });
+
+        if (requestId !== state.newChatValidationRequestId) {
+          return null;
+        }
+
+        if (!data.exists) {
+          setNewChatValidationState('El numero no existe en WhatsApp.', 'var(--bad)');
+          state.newChatValidation = null;
+          els.newChatStartBtn.disabled = true;
+          return null;
+        }
+
+        state.newChatValidation = {
+          phone: data.phone || phone,
+          chatId: data.chatId || `${phone}@c.us`
+        };
+        els.newChatPhoneInput.value = state.newChatValidation.phone;
+        els.newChatStartBtn.disabled = false;
+        setNewChatValidationState('Numero valido en WhatsApp.', 'var(--good)');
+
+        return state.newChatValidation;
+      } catch (error) {
+        if (requestId !== state.newChatValidationRequestId) {
+          return null;
+        }
+
+        state.newChatValidation = null;
+        els.newChatStartBtn.disabled = true;
+        setNewChatValidationState('No se pudo validar el numero.', 'var(--bad)');
+        els.newChatError.textContent = error.message;
+        return null;
+      }
+    }
+
+    function scheduleNewChatValidation(delay = 450) {
+      clearTimeout(state.newChatValidationTimer);
+      state.newChatValidationRequestId += 1;
+      resetNewChatValidation('Esperando validacion...');
+      state.newChatValidationTimer = setTimeout(validateNewChatPhone, delay);
+    }
+
+    async function startNewChatFromModal(event) {
+      event.preventDefault();
+
+      if (!hasFullAccess()) {
+        els.newChatError.textContent = 'Permisos insuficientes';
+        return;
+      }
+
+      const validation = state.newChatValidation || await validateNewChatPhone();
+
+      if (!validation) {
+        return;
+      }
+
+      if (prepareManualChat(validation.phone, els.newChatMessageInput.value, validation.chatId)) {
+        closeNewChatModal();
+      }
     }
 
     function applyInitialComposerParams() {
@@ -2391,21 +2602,8 @@
       const message = params.get('message') || params.get('template') || params.get('msg') || '';
       state.ticketExternalId = String(params.get('ticketExternalId') || params.get('ticket') || '').trim();
 
-      if (phone) {
-        els.phoneInput.value = phone;
-        const normalizedPhone = normalizeNewChatPhone(phone);
-
-        if (normalizedPhone) {
-          state.selectedChatId = `${normalizedPhone}@c.us`;
-          state.manualChatPending = true;
-          renderChatHeader(null);
-          renderMessages([]);
-          setComposerEnabled(true);
-        }
-      }
-
-      if (message) {
-        els.replyMessage.value = message;
+      if (phone || message) {
+        openNewChatModal({ phone, message });
       }
     }
 
@@ -2506,19 +2704,22 @@
         closeChannelSettings();
       }
     });
+    els.newChatCloseBtn.addEventListener('click', closeNewChatModal);
+    els.newChatCancelBtn.addEventListener('click', closeNewChatModal);
+    els.newChatForm.addEventListener('submit', startNewChatFromModal);
+    els.newChatPhoneInput.addEventListener('input', () => scheduleNewChatValidation());
+    els.newChatModal.addEventListener('click', event => {
+      if (event.target === els.newChatModal) {
+        closeNewChatModal();
+      }
+    });
     document.addEventListener('pointerdown', unlockNotificationSound, { once: true });
     document.addEventListener('keydown', unlockNotificationSound, { once: true });
     els.replyForm.addEventListener('submit', sendReply);
-    els.startChatBtn.addEventListener('click', startChatFromPhone);
+    els.startChatBtn.addEventListener('click', () => openNewChatModal());
     els.chatSearchInput.addEventListener('input', () => {
       state.chatSearch = els.chatSearchInput.value;
       renderConversations();
-    });
-    els.phoneInput.addEventListener('keydown', event => {
-      if (event.key === 'Enter') {
-        event.preventDefault();
-        startChatFromPhone();
-      }
     });
 
     async function init() {

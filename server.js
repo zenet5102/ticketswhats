@@ -1699,6 +1699,24 @@ app.get('/messages', requireLoggedIn, async (req, res) => {
   }
 });
 
+app.post('/messages/validate-phone', requirePrivileged, async (req, res) => {
+  try {
+    const result = await validateWhatsAppTarget(req.body && req.body.phone);
+
+    res.json({
+      success: true,
+      ...result
+    });
+  } catch (error) {
+    const status = error.message.includes('todavia no esta conectado') ? 503 : 400;
+
+    res.status(status).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
 app.post('/messages/send', requirePrivileged, async (req, res) => {
   try {
     const targetChatId = String(req.body && req.body.chatId || '').trim();
