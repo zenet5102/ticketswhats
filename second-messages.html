@@ -2220,10 +2220,10 @@
         .sort((left, right) => right - left)[0];
 
       els.chatCount.textContent = String(unreadCount);
-      els.loadedBadge.textContent = String(filteredCount);
+      els.loadedBadge.textContent = String(unreadCount);
       els.chatDetail.textContent = unreadCount
-        ? `${unreadCount} sin leer | ${state.conversations.length} chats`
-        : (lastIncoming ? `Sin leer 0 | Ultima entrada ${formatDateTime(lastIncoming)}` : 'Sin entradas');
+        ? `${unreadCount} sin leer | ${filteredCount} visibles | ${state.conversations.length} chats`
+        : (lastIncoming ? `Sin leer 0 | ${filteredCount} visibles | Ultima entrada ${formatDateTime(lastIncoming)}` : 'Sin entradas');
     }
 
     function renderConversations() {
