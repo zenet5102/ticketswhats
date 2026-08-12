@@ -1158,8 +1158,7 @@ function getMediaLabel(mimetype, fallbackType) {
 }
 
 function shouldStoreInlineMedia(mimetype) {
-  const cleanMime = String(mimetype || '').toLowerCase();
-  return cleanMime.startsWith('image/') || cleanMime.startsWith('audio/');
+  return Boolean(String(mimetype || '').trim());
 }
 
 async function getMessageMediaInfo(message) {
@@ -1329,10 +1328,10 @@ async function sendNotificationChannelReply(storedMessage) {
 function isMissingStoredMedia(message) {
   const body = String(message.body || '').toLowerCase();
   const mime = String(message.media_mime || '').toLowerCase();
-  const canRenderInline = mime.startsWith('image/') || mime.startsWith('audio/');
-  const mediaPlaceholder = /^\[(image|imagen|audio|ptt) sin texto\]$/.test(body);
+  const canStoreInline = Boolean(mime);
+  const mediaPlaceholder = /^\[(image|imagen|audio|ptt|video|archivo|document) sin texto\]$/.test(body);
 
-  return !message.media_data && (canRenderInline || mediaPlaceholder);
+  return !message.media_data && (canStoreInline || mediaPlaceholder);
 }
 
 async function backfillChatMedia(chatId) {

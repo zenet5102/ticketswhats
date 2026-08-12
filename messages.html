@@ -623,6 +623,16 @@
       margin-bottom: 8px;
     }
 
+    .message-video {
+      display: block;
+      width: min(100%, 420px);
+      max-height: 360px;
+      border-radius: 8px;
+      border: 1px solid #c8d9ff;
+      background: #000000;
+      margin-bottom: 8px;
+    }
+
     .media-chip {
       display: inline-flex;
       align-items: center;
@@ -699,6 +709,16 @@
     .ticket-value {
       font-weight: 700;
       overflow-wrap: anywhere;
+    }
+
+    .media-chip a {
+      color: var(--accent);
+      font-weight: 700;
+      text-decoration: none;
+    }
+
+    .media-chip a:hover {
+      text-decoration: underline;
     }
 
     .composer-actions {
@@ -1494,17 +1514,33 @@
       const filename = String(message.media_filename || '').trim();
       const body = String(message.body || '').trim();
       const dataUrlMime = mime.replace(/\s*;\s*/g, ';');
+      const dataUrl = data ? `data:${escapeHtml(dataUrlMime)};base64,${escapeHtml(data)}` : '';
+      const downloadName = filename || `whatsapp-${getMediaLabelFromMime(mime).toLowerCase()}`;
 
       if (mime.startsWith('image/') && data) {
-        return `<img class="message-image" src="data:${escapeHtml(dataUrlMime)};base64,${escapeHtml(data)}" alt="Imagen de WhatsApp">`;
+        return `<img class="message-image" src="${dataUrl}" alt="Imagen de WhatsApp">`;
       }
 
       if (mime.startsWith('audio/') && data) {
-        return `<audio class="message-audio" controls preload="metadata" src="data:${escapeHtml(dataUrlMime)};base64,${escapeHtml(data)}"></audio>`;
+        return `<audio class="message-audio" controls preload="metadata" src="${dataUrl}"></audio>`;
+      }
+
+      if (mime.startsWith('video/') && data) {
+        return `<video class="message-video" controls preload="metadata" src="${dataUrl}"></video>`;
+      }
+
+      if (mime && data) {
+        const label = getMediaLabelFromMime(mime);
+        const detail = filename ? `${label}: ${filename}` : label;
+        return `<div class="media-chip"><a href="${dataUrl}" download="${escapeHtml(downloadName)}">${escapeHtml(detail)}</a></div>`;
       }
 
       if (mime.startsWith('audio/')) {
         return '<div class="media-chip">Audio no disponible</div>';
+      }
+
+      if (mime.startsWith('video/')) {
+        return '<div class="media-chip">Video no disponible</div>';
       }
 
       if (mime) {
