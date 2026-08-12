@@ -729,6 +729,20 @@ function attachBucketOverride(conversation, overridesByChatId) {
   };
 }
 
+function sortConversationsByLatest(conversations) {
+  return [...conversations].sort((left, right) => {
+    const rightTime = Number(right && right.timestamp_ts || 0);
+    const leftTime = Number(left && left.timestamp_ts || 0);
+    const timeDelta = rightTime - leftTime;
+
+    if (timeDelta) {
+      return timeDelta;
+    }
+
+    return getConversationChatId(left).localeCompare(getConversationChatId(right));
+  });
+}
+
 function splitConversationBuckets(conversations, requestedLimit) {
   const overridesByChatId = new Map(
     listWhatsAppConversationBucketOverrides()
@@ -739,8 +753,8 @@ function splitConversationBuckets(conversations, requestedLimit) {
   const forcedOther = withOverrides.filter(conversation => conversation.conversation_bucket_override === 'other');
   const autoConversations = withOverrides.filter(conversation => !conversation.conversation_bucket_override);
   const trackedConversations = [
-    ...forcedMain,
-    ...autoConversations.filter(isTrackedConversation)
+    ...sortConversationsByLatest(forcedMain),
+    ...sortConversationsByLatest(autoConversations.filter(isTrackedConversation))
   ]
     .slice(0, requestedLimit);
   const representedChatIds = getRepresentedChatIds(trackedConversations);
@@ -748,8 +762,10 @@ function splitConversationBuckets(conversations, requestedLimit) {
   return {
     conversations: trackedConversations,
     otherConversations: [
-      ...forcedOther,
-      ...autoConversations.filter(conversation => isOtherConversation(conversation) && !representedChatIds.has(getConversationChatId(conversation)))
+      ...sortConversationsByLatest(forcedOther),
+      ...sortConversationsByLatest(
+        autoConversations.filter(conversation => isOtherConversation(conversation) && !representedChatIds.has(getConversationChatId(conversation)))
+      )
     ]
       .slice(0, requestedLimit)
   };
