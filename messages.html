@@ -433,6 +433,16 @@
       gap: 8px;
     }
 
+    .chat-search {
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--line);
+      background: #ffffff;
+    }
+
+    .chat-search input {
+      width: 100%;
+    }
+
     .conversation-tabs {
       padding: 8px;
       border-bottom: 1px solid var(--line);
@@ -479,6 +489,16 @@
     .conversation:hover,
     .conversation.active {
       background: #edf8f5;
+    }
+
+    .conversation.has-new-incoming {
+      background: #fff7ed;
+      box-shadow: inset 4px 0 0 #f97316;
+    }
+
+    .conversation.has-new-incoming:hover,
+    .conversation.has-new-incoming.active {
+      background: #ffedd5;
     }
 
     .conversation-top,
@@ -981,6 +1001,9 @@
           <input id="phoneInput" type="tel" inputmode="tel" placeholder="1162446858 o 5491162446858" autocomplete="off">
           <button id="startChatBtn" type="button" title="Abrir conversacion">Nuevo</button>
         </div>
+        <div class="chat-search">
+          <input id="chatSearchInput" type="search" inputmode="tel" placeholder="Buscar por telefono" autocomplete="off">
+        </div>
         <div class="conversation-tabs" role="tablist" aria-label="Tipo de conversaciones">
           <button id="mainChatsTab" class="conversation-tab active" type="button">Principal</button>
           <button id="otherChatsTab" class="conversation-tab" type="button">Otros chats</button>
@@ -1077,10 +1100,12 @@
       messageNotificationReady: false,
       messageNotificationStartedAt: 0,
       lastIncomingByChat: new Map(),
+      newIncomingChatIds: new Set(),
       notificationAudioContext: null,
       renderedMessagesChatId: '',
       channelSettings: null,
-      whatsappReady: false
+      whatsappReady: false,
+      chatSearch: ''
     };
 
     const els = {
@@ -1096,6 +1121,7 @@
       channelTemplate: document.getElementById('channelTemplate'),
       chatDirection: document.getElementById('chatDirection'),
       chatMeta: document.getElementById('chatMeta'),
+      chatSearchInput: document.getElementById('chatSearchInput'),
       chatTitle: document.getElementById('chatTitle'),
       conversationCount: document.getElementById('conversationCount'),
       conversationDetail: document.getElementById('conversationDetail'),
@@ -1245,6 +1271,37 @@
       }
 
       return parts.filter(Boolean).join(' | ') || '--';
+    }
+
+    function getConversationSearchText(conversation) {
+      if (!conversation) {
+        return '';
+      }
+
+      return [
+        conversation.phone,
+        conversation.chat_id,
+        getPhoneFromChatId(conversation.chat_id),
+        getConversationName(conversation),
+        getConversationMeta(conversation),
+        conversation.ticket_external_id,
+        conversation.ticket_ida,
+        conversation.ticket_razon_social,
+        conversation.contact_name
+      ]
+        .filter(Boolean)
+        .join(' ');
+    }
+
+    function getFilteredConversations() {
+      const conversations = getActiveConversations();
+      const search = cleanPhone(state.chatSearch);
+
+      if (!search) {
+        return conversations;
+      }
+
+      return conversations.filter(conversation => cleanPhone(getConversationSearchText(conversation)).includes(search));
     }
 
     function parseTicketPayload(ticket) {
@@ -1615,15 +1672,17 @@
         const previousTimestamp = state.lastIncomingByChat.get(chatId) || 0;
         const isNewConversationMessage = !hadPrevious && timestamp >= state.messageNotificationStartedAt - 5000;
 
-        if (
-          shouldNotify &&
-          isTicketConversation(conversation) &&
-          ((hadPrevious && timestamp > previousTimestamp) || isNewConversationMessage)
-        ) {
-          hasNewMessage = true;
+        const isNewIncoming = shouldNotify && ((hadPrevious && timestamp > previousTimestamp) || isNewConversationMessage);
 
-          if (isRescheduleResponse(conversation)) {
-            hasUrgentMessage = true;
+        if (isNewIncoming) {
+          state.newIncomingChatIds.add(chatId);
+
+          if (isTicketConversation(conversation)) {
+            hasNewMessage = true;
+
+            if (isRescheduleResponse(conversation)) {
+              hasUrgentMessage = true;
+            }
           }
         }
 
@@ -1874,7 +1933,8 @@
 
     function renderConversationMetrics() {
       const activeConversations = getActiveConversations();
-      const count = activeConversations.length;
+      const filteredConversations = getFilteredConversations();
+      const count = filteredConversations.length;
       const lastIncoming = state.conversations
         .filter(conversation => conversation.last_incoming_ts)
         .sort((a, b) => Number(b.last_incoming_ts) - Number(a.last_incoming_ts))[0];
@@ -1894,23 +1954,27 @@
 
     function renderConversations() {
       renderConversationMetrics();
-      const conversations = getActiveConversations();
+      const conversations = getFilteredConversations();
 
       if (!conversations.length) {
-        els.conversationList.innerHTML = '<div class="empty">Sin conversaciones guardadas.</div>';
+        els.conversationList.innerHTML = state.chatSearch
+          ? '<div class="empty">Sin conversaciones para ese telefono.</div>'
+          : '<div class="empty">Sin conversaciones guardadas.</div>';
         return;
       }
 
       els.conversationList.innerHTML = conversations.map(conversation => {
         const active = conversation.chat_id === state.selectedChatId ? ' active' : '';
+        const hasNewIncoming = state.newIncomingChatIds.has(String(conversation.chat_id || '').trim());
+        const incomingClass = hasNewIncoming ? ' has-new-incoming' : '';
         const tone = conversation.direction === 'incoming' ? 'good' : 'warn';
-        const label = conversation.direction === 'incoming' ? 'Respondio' : 'Enviado';
+        const label = hasNewIncoming ? 'Nuevo' : (conversation.direction === 'incoming' ? 'Respondio' : 'Enviado');
         const meta = getConversationMeta(conversation);
         const bodyPreview = conversation.body || '';
         const preview = meta && meta !== '--' ? `${meta} | ${bodyPreview}` : bodyPreview;
 
         return `
-          <button class="conversation${active}" type="button" data-chat-id="${escapeHtml(conversation.chat_id)}">
+          <button class="conversation${active}${incomingClass}" type="button" data-chat-id="${escapeHtml(conversation.chat_id)}">
             <div class="conversation-top">
               <div class="conversation-name">${escapeHtml(getConversationName(conversation))}</div>
               <div class="conversation-time">${escapeHtml(formatDateTime(conversation.timestamp_ts))}</div>
@@ -2116,7 +2180,7 @@
       const data = await fetchJson('/messages/conversations');
       state.conversations = data.conversations || [];
       state.otherConversations = data.otherConversations || [];
-      detectNewTicketMessages(state.conversations);
+      detectNewTicketMessages([...state.conversations, ...state.otherConversations]);
 
       const activeConversations = getActiveConversations();
       const selectedInActiveBucket = activeConversations.some(conversation => conversation.chat_id === state.selectedChatId);
@@ -2238,6 +2302,7 @@
       state.selectedChatId = chatId || '';
       state.selectionLocked = Boolean(state.selectedChatId);
       state.manualChatPending = false;
+      state.newIncomingChatIds.delete(String(state.selectedChatId || '').trim());
       const conversation = findConversationByChatId(state.selectedChatId);
       state.ticketExternalId = String(conversation && conversation.ticket_external_id || '').trim();
       state.ticket = null;
@@ -2445,6 +2510,10 @@
     document.addEventListener('keydown', unlockNotificationSound, { once: true });
     els.replyForm.addEventListener('submit', sendReply);
     els.startChatBtn.addEventListener('click', startChatFromPhone);
+    els.chatSearchInput.addEventListener('input', () => {
+      state.chatSearch = els.chatSearchInput.value;
+      renderConversations();
+    });
     els.phoneInput.addEventListener('keydown', event => {
       if (event.key === 'Enter') {
         event.preventDefault();
