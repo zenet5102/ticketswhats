@@ -275,6 +275,18 @@
       word-break: break-word;
     }
 
+    .metric-value-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .whatsapp-phone-badge {
+      min-height: 24px;
+      max-width: 100%;
+    }
+
     .metric-detail {
       margin-top: 7px;
       color: var(--muted);
@@ -358,6 +370,12 @@
       color: var(--good);
       background: var(--good-soft);
       border-color: #b9e4ce;
+    }
+
+    .badge.blue {
+      color: #1d4ed8;
+      background: #eaf1ff;
+      border-color: #bfd3ff;
     }
 
     .badge.warn {
@@ -2181,9 +2199,14 @@
       const mysql = data.mysql || {};
       state.mediaLimitBytes = Number(data.mediaLimitBytes || state.mediaLimitBytes);
 
-      els.whatsappState.textContent = whatsapp.ready ? 'Conectado' : (whatsapp.state || 'Sin estado');
+      const connectedPhone = getConnectedWhatsAppLabel(whatsapp);
+      els.whatsappState.innerHTML =
+        '<span class="metric-value-row">' +
+        `<span class="badge ${whatsapp.ready ? 'good' : 'bad'}">${escapeHtml(whatsapp.ready ? 'Conectado' : 'No conectado')}</span>` +
+        `<span class="badge blue whatsapp-phone-badge">${escapeHtml(connectedPhone)}</span>` +
+        '</span>';
       els.whatsappDetail.textContent = whatsapp.lastError ||
-        `Sesion ${whatsapp.clientId || 'bot-2'} | Numero: ${getConnectedWhatsAppLabel(whatsapp)} | ${formatDateTime(whatsapp.lastEventAt)}`;
+        `Sesion ${whatsapp.clientId || 'bot-2'} | ${formatDateTime(whatsapp.lastEventAt)}`;
       els.mysqlState.textContent = mysql.ready ? 'Conectado' : 'Sin conexion';
       els.mysqlDetail.textContent = mysql.ready
         ? `${mysql.database}.${mysql.table}`

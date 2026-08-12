@@ -250,6 +250,20 @@
       line-height: 1.35;
     }
 
+    .metric-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 10px;
+    }
+
+    .metric-actions button {
+      min-height: 28px;
+      flex: 1 1 86px;
+      padding: 0 8px;
+      font-size: 12px;
+    }
+
     .metric-value-row {
       display: flex;
       align-items: center;
@@ -1004,6 +1018,21 @@
         <div class="metric-label">WhatsApp</div>
         <div class="metric-value" id="whatsappState">--</div>
         <div class="metric-detail" id="whatsappDetail">--</div>
+        <div class="metric-actions" aria-label="Acciones de conexion">
+          <button id="refreshBtn" type="button" title="Actualizar mensajes">
+            <span aria-hidden="true">&#8635;</span>
+            Actualizar
+          </button>
+          <button id="reconnectBtn" type="button" title="Reconectar WhatsApp y generar QR si hace falta">
+            <span aria-hidden="true">&#8635;</span>
+            Reconectar
+          </button>
+          <button id="whatsappResetAuthBtn" type="button"
+            title="Borrar la sesion local de WhatsApp y generar un QR nuevo">
+            <span aria-hidden="true">&#9003;</span>
+            Borrar sesion
+          </button>
+        </div>
       </div>
       <div class="metric">
         <div class="metric-label">Conversaciones</div>
@@ -1028,21 +1057,6 @@
       <div class="qr-copy">
         <div class="qr-title">Vincular WhatsApp</div>
         <div class="qr-detail" id="whatsappQrDetail">Escanea este codigo desde WhatsApp para conectar la sesion.</div>
-        <div class="qr-actions">
-          <button id="refreshBtn" type="button" title="Actualizar mensajes">
-            <span aria-hidden="true">&#8635;</span>
-            Actualizar
-          </button>
-          <button id="reconnectBtn" type="button" title="Reconectar WhatsApp y generar QR si hace falta">
-            <span aria-hidden="true">&#8635;</span>
-            Reconectar
-          </button>
-          <button id="whatsappResetAuthBtn" type="button"
-            title="Borrar la sesion local de WhatsApp y generar un QR nuevo">
-            <span aria-hidden="true">&#9003;</span>
-            Borrar sesion
-          </button>
-        </div>
       </div>
     </section>
 
@@ -1967,33 +1981,21 @@
         ? 'WA: ' + (whatsapp.state || '--')
         : 'Sin conexion');
 
-      if (canReconnectWhatsApp || (!ready && whatsapp.qrSvg)) {
+      if (!ready && whatsapp.qrSvg) {
         els.whatsappQrPanel.hidden = false;
-        els.whatsappQrImage.hidden = ready || !whatsapp.qrSvg;
-        if (whatsapp.qrSvg) {
-          els.whatsappQrImage.src = whatsapp.qrSvg;
-        } else {
-          els.whatsappQrImage.removeAttribute('src');
-        }
-        els.whatsappQrDetail.textContent = ready
-          ? 'WhatsApp esta conectado. Usa estos controles solo si necesitas vincular de nuevo.'
-          : whatsapp.qrSvg
-            ? 'Escanea este codigo desde WhatsApp para conectar la sesion.'
-            : 'Si no aparece el QR, toca Reconectar para reiniciar la conexion de WhatsApp.';
-        els.reconnectBtn.hidden = !canReconnectWhatsApp;
-        els.reconnectBtn.disabled = !canReconnectWhatsApp;
-        els.whatsappResetAuthBtn.hidden = !canReconnectWhatsApp;
-        els.whatsappResetAuthBtn.disabled = !canReconnectWhatsApp;
+        els.whatsappQrImage.hidden = false;
+        els.whatsappQrImage.src = whatsapp.qrSvg;
+        els.whatsappQrDetail.textContent = 'Escanea este codigo desde WhatsApp para conectar la sesion.';
       } else {
         els.whatsappQrPanel.hidden = true;
         els.whatsappQrImage.hidden = false;
         els.whatsappQrImage.removeAttribute('src');
-        els.reconnectBtn.hidden = true;
-        els.whatsappResetAuthBtn.hidden = true;
       }
 
       if (!state.loading) {
         els.refreshBtn.disabled = !ready;
+        els.reconnectBtn.disabled = !canReconnectWhatsApp;
+        els.whatsappResetAuthBtn.disabled = !canReconnectWhatsApp;
       }
     }
 
