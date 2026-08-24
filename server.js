@@ -815,8 +815,12 @@ function canReadChat(user, chatId) {
   return candidatePhones.some(candidatePhone => candidatePhone && phones.has(candidatePhone));
 }
 
+function canSendToAnyTarget(user) {
+  return Boolean(user && (user.isAdmin || user.role === 'usuario'));
+}
+
 function canSendToTarget(user, chatId, phone) {
-  if (user && user.isAdmin) {
+  if (canSendToAnyTarget(user)) {
     return true;
   }
 
@@ -1815,7 +1819,7 @@ app.post('/messages/send', requirePrivileged, async (req, res) => {
       });
     }
 
-    if (ticketExternalId && !canAccessTicket(req.user, ticketExternalId)) {
+    if (ticketExternalId && !canSendToAnyTarget(req.user) && !canAccessTicket(req.user, ticketExternalId)) {
       return res.status(403).json({
         success: false,
         error: 'Ticket fuera de los grupos asignados'
