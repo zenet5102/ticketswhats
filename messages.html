@@ -1177,7 +1177,7 @@
         <div id="newChatError" class="error-text"></div>
         <div class="modal-actions">
           <button id="newChatCancelBtn" type="button">Cancelar</button>
-          <button id="newChatStartBtn" class="primary" type="submit" disabled>Iniciar chat</button>
+          <button id="newChatStartBtn" class="primary" type="submit" disabled>Enviar</button>
         </div>
       </form>
     </section>
@@ -2629,8 +2629,56 @@
         return;
       }
 
-      if (prepareManualChat(validation.phone, els.newChatMessageInput.value, validation.chatId)) {
+      const message = els.newChatMessageInput.value.trim();
+
+      if (!message) {
+        els.newChatError.textContent = 'Falta mensaje';
+        els.newChatMessageInput.focus();
+        return;
+      }
+
+      els.newChatStartBtn.disabled = true;
+      els.newChatError.textContent = 'Enviando...';
+
+      try {
+        const data = await fetchJson('/messages/send', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            chatId: validation.chatId,
+            phone: validation.phone,
+            message,
+            ticketExternalId: state.ticketExternalId
+          })
+        });
+
+        els.newChatError.textContent = '';
+        els.replyMessage.value = '';
+        els.sendError.textContent = 'Enviado';
+
+        if (data.message && data.message.chat_id) {
+          state.selectedChatId = data.message.chat_id;
+          state.selectionLocked = true;
+          state.manualChatPending = true;
+        } else {
+          state.selectedChatId = validation.chatId || `${validation.phone}@c.us`;
+          state.selectionLocked = true;
+          state.manualChatPending = true;
+        }
+
+        if (data.ticket) {
+          state.ticket = data.ticket;
+        }
+
         closeNewChatModal();
+        showToast('Mensaje enviado');
+        await loadConversations(true);
+        await loadMessages();
+      } catch (error) {
+        els.newChatError.textContent = error.message;
+        els.newChatStartBtn.disabled = false;
       }
     }
 
