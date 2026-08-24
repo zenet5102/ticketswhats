@@ -751,6 +751,10 @@ async function getMessageMediaInfo(message) {
       return mediaInfo;
     } catch (error) {
       if (attempt === mediaDownloadRetryDelaysMs.length - 1) {
+        if (handleTransientWhatsAppError(error, 'media-download-error')) {
+          return {};
+        }
+
         console.warn('No se pudo descargar media de WhatsApp secundario:', error.message);
       }
     }
@@ -872,6 +876,11 @@ async function backfillChatMedia(chatId, options = {}) {
       }
     }
   } catch (error) {
+    if (handleTransientWhatsAppError(error, 'media-backfill-error')) {
+      console.warn(`WhatsApp secundario se recargo mientras se recuperaba media del chat ${chatId}. Se reintentara luego.`);
+      return;
+    }
+
     console.warn(`No se pudo recuperar media del chat secundario ${chatId}:`, error.message);
   }
 }
@@ -1061,6 +1070,20 @@ function createTransientWhatsAppError(error) {
   return nextError;
 }
 
+function handleTransientWhatsAppError(error, reason) {
+  if (!isTransientWhatsAppError(error)) {
+    return false;
+  }
+
+  const transientError = createTransientWhatsAppError(error);
+  whatsappLastError = transientError.message;
+  markWhatsAppState('SESSION_REFRESHING', false);
+  restartWhatsAppClient(reason).catch(restartError => {
+    console.warn('No se pudo reiniciar WhatsApp secundario tras error transitorio:', restartError.message);
+  });
+  return true;
+}
+
 function isUnconfirmedWhatsAppSendError(error) {
   return Boolean(error && error.code === 'WHATSAPP_SEND_UNCONFIRMED');
 }
@@ -1099,7 +1122,11 @@ async function getWhatsAppStatus() {
         markWhatsAppState(state, state === 'CONNECTED');
       }
     } catch (error) {
-      whatsappLastError = error.message;
+      if (handleTransientWhatsAppError(error, 'status-check-error')) {
+        // Keep returning the current status object below.
+      } else {
+        whatsappLastError = error.message;
+      }
     }
   }
 

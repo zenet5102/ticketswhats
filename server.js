@@ -1043,6 +1043,50 @@ async function restartWhatsAppClient(reason = 'manual', options = {}) {
   }
 }
 
+function isTransientWhatsAppError(error) {
+  if (error && error.code === 'WHATSAPP_TRANSIENT') {
+    return true;
+  }
+
+  const message = String(error && error.message || error || '').toLowerCase();
+
+  return message.includes('attempted to use detached frame') ||
+    message.includes('detached frame') ||
+    message.includes('frame was detached') ||
+    message.includes('execution context was destroyed') ||
+    message.includes('target closed') ||
+    message.includes('session closed') ||
+    message.includes('page crashed') ||
+    message.includes('browser has disconnected') ||
+    message.includes('most likely the page has been closed') ||
+    message.includes('protocol error');
+}
+
+function createTransientWhatsAppError(error) {
+  const detail = String(error && error.message || error || '').trim();
+  const nextError = new Error(detail
+    ? `WhatsApp se recargo durante la operacion. Reintentando cuando vuelva a conectar. Detalle: ${detail}`
+    : 'WhatsApp se recargo durante la operacion. Reintentando cuando vuelva a conectar.');
+
+  nextError.code = 'WHATSAPP_TRANSIENT';
+  nextError.cause = error;
+  return nextError;
+}
+
+function handleTransientWhatsAppError(error, reason) {
+  if (!isTransientWhatsAppError(error)) {
+    return false;
+  }
+
+  const transientError = createTransientWhatsAppError(error);
+  whatsappLastError = transientError.message;
+  markWhatsAppState('SESSION_REFRESHING', false);
+  restartWhatsAppClient(reason).catch(restartError => {
+    console.warn('No se pudo reiniciar WhatsApp tras error transitorio:', restartError.message);
+  });
+  return true;
+}
+
 function getWhatsAppTimestampMs(timestamp) {
   const value = Number(timestamp);
 
@@ -1201,6 +1245,10 @@ async function getMessageMediaInfo(message) {
       return mediaInfo;
     } catch (error) {
       if (attempt === mediaDownloadRetryDelaysMs.length - 1) {
+        if (handleTransientWhatsAppError(error, 'media-download-error')) {
+          return {};
+        }
+
         console.warn('No se pudo descargar media de WhatsApp:', error.message);
       }
     }
@@ -1245,6 +1293,7 @@ async function storeWhatsAppMessage(message, source = 'whatsapp') {
       source
     });
   } catch (error) {
+    handleTransientWhatsAppError(error, 'media-download-error');
     console.warn('No se pudo guardar mensaje de WhatsApp:', error.message);
     return null;
   }
@@ -1381,6 +1430,11 @@ async function backfillChatMedia(chatId) {
       }
     }
   } catch (error) {
+    if (handleTransientWhatsAppError(error, 'media-backfill-error')) {
+      console.warn(`WhatsApp se recargo mientras se recuperaba media del chat ${chatId}. Se reintentara luego.`);
+      return;
+    }
+
     console.warn(`No se pudo recuperar media del chat ${chatId}:`, error.message);
   }
 }
@@ -1397,7 +1451,11 @@ async function getWhatsAppStatus() {
       }
     }
   } catch (error) {
-    whatsappLastError = error.message;
+    if (handleTransientWhatsAppError(error, 'status-check-error')) {
+      // Keep returning the current status object below.
+    } else {
+      whatsappLastError = error.message;
+    }
   }
 
   const connectedInfo = getConnectedWhatsAppInfo();
@@ -1496,19 +1554,28 @@ async function sendWhatsApp(phone, message, source = 'bot', options = {}) {
   console.log('Enviando a:', targetChatId || cleanPhone);
 
   let chatId = targetChatId;
+  let sentMessage = null;
 
-  if (!chatId) {
-    const numberId = await client.getNumberId(cleanPhone);
+  try {
+    if (!chatId) {
+      const numberId = await client.getNumberId(cleanPhone);
 
-    if (!numberId) {
-      throw new Error('El numero no existe en WhatsApp o no se pudo resolver');
+      if (!numberId) {
+        throw new Error('El numero no existe en WhatsApp o no se pudo resolver');
+      }
+
+      chatId = numberId._serialized;
     }
 
-    chatId = numberId._serialized;
-  }
+    console.log('Chat ID resuelto:', chatId);
+    sentMessage = await client.sendMessage(chatId, fullMessage);
+  } catch (error) {
+    if (handleTransientWhatsAppError(error, 'send-error')) {
+      throw createTransientWhatsAppError(error);
+    }
 
-  console.log('Chat ID resuelto:', chatId);
-  const sentMessage = await client.sendMessage(chatId, fullMessage);
+    throw error;
+  }
   const sentMessageId = getStoredMessageId(sentMessage, chatId, 'outgoing');
   let savedMessage = null;
 
