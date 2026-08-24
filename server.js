@@ -89,6 +89,7 @@ let whatsappRestarting = false;
 let client = null;
 const maxStoredMediaBytes = 8 * 1024 * 1024;
 const lastMediaBackfillByChat = new Map();
+const mediaDownloadRetryDelaysMs = [0, 750, 2000];
 const notificationChannelReplyByChat = new Map();
 const notificationChannelReplyCooldownMs = config.notificationChannelReplyCooldownHours * 60 * 60 * 1000;
 const notificationChannelSuppressAfterManualMs = config.notificationChannelSuppressAfterManualHours * 60 * 60 * 1000;
@@ -1161,36 +1162,51 @@ function shouldStoreInlineMedia(mimetype) {
   return Boolean(String(mimetype || '').trim());
 }
 
+function wait(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
 async function getMessageMediaInfo(message) {
   if (!message.hasMedia || !message.downloadMedia) {
     return {};
   }
 
-  try {
-    const media = await message.downloadMedia();
+  for (let attempt = 0; attempt < mediaDownloadRetryDelaysMs.length; attempt += 1) {
+    const delay = mediaDownloadRetryDelaysMs[attempt];
 
-    if (!media || !media.mimetype) {
-      return {};
+    if (delay) {
+      await wait(delay);
     }
 
-    const mediaInfo = {
-      mediaMime: media.mimetype,
-      mediaFilename: media.filename || (message._data && message._data.filename) || ''
-    };
+    try {
+      const media = await message.downloadMedia();
 
-    if (shouldStoreInlineMedia(media.mimetype) && media.data) {
-      const mediaBytes = Buffer.byteLength(media.data, 'base64');
+      if (!media || !media.mimetype) {
+        continue;
+      }
 
-      if (mediaBytes <= maxStoredMediaBytes) {
-        mediaInfo.mediaData = media.data;
+      const mediaInfo = {
+        mediaMime: media.mimetype,
+        mediaFilename: media.filename || (message._data && message._data.filename) || ''
+      };
+
+      if (shouldStoreInlineMedia(media.mimetype) && media.data) {
+        const mediaBytes = Buffer.byteLength(media.data, 'base64');
+
+        if (mediaBytes <= maxStoredMediaBytes) {
+          mediaInfo.mediaData = media.data;
+        }
+      }
+
+      return mediaInfo;
+    } catch (error) {
+      if (attempt === mediaDownloadRetryDelaysMs.length - 1) {
+        console.warn('No se pudo descargar media de WhatsApp:', error.message);
       }
     }
-
-    return mediaInfo;
-  } catch (error) {
-    console.warn('No se pudo descargar media de WhatsApp:', error.message);
-    return {};
   }
+
+  return {};
 }
 
 async function storeWhatsAppMessage(message, source = 'whatsapp') {

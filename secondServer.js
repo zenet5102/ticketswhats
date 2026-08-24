@@ -69,6 +69,7 @@ const maxRequestBodyMb = parsePositiveInteger(process.env.SECOND_APP_JSON_LIMIT_
 const messageQueueIntervalMinutes = parsePositiveInteger(process.env.SECOND_MESSAGE_QUEUE_INTERVAL_MINUTES, 10);
 const messageQueueBatchSize = parsePositiveInteger(process.env.SECOND_MESSAGE_QUEUE_BATCH_SIZE, 20);
 const whatsappSendTimeoutMs = parsePositiveInteger(process.env.SECOND_WHATSAPP_SEND_TIMEOUT_SECONDS, 60) * 1000;
+const mediaDownloadRetryDelaysMs = [0, 750, 2000];
 const secondMessageSettingsPath = path.join(__dirname, 'data', 'second-message-settings.json');
 const phantomBajaSyncHour = Math.min(parseNonNegativeInteger(process.env.PHANTOM_BAJA_SYNC_HOUR, 3), 23);
 const phantomBajaSyncMinute = Math.min(parseNonNegativeInteger(process.env.PHANTOM_BAJA_SYNC_MINUTE, 0), 59);
@@ -87,6 +88,7 @@ let client = null;
 let messageQueueRunning = false;
 let phantomBajaSyncRunning = false;
 let phantomBajaSyncTimer = null;
+const lastMediaBackfillByChat = new Map();
 const phantomBajaSyncState = {
   active: false,
   running: false,
@@ -710,36 +712,51 @@ function getInlineBase64MediaInfo(value) {
   };
 }
 
+function wait(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
 async function getMessageMediaInfo(message) {
   if (!message || !message.hasMedia || !message.downloadMedia) {
     return {};
   }
 
-  try {
-    const media = await message.downloadMedia();
+  for (let attempt = 0; attempt < mediaDownloadRetryDelaysMs.length; attempt += 1) {
+    const delay = mediaDownloadRetryDelaysMs[attempt];
 
-    if (!media || !media.mimetype) {
-      return {};
+    if (delay) {
+      await wait(delay);
     }
 
-    const mediaInfo = {
-      mediaMime: media.mimetype,
-      mediaFilename: media.filename || (message._data && message._data.filename) || ''
-    };
+    try {
+      const media = await message.downloadMedia();
 
-    if (media.data) {
-      const mediaBytes = Buffer.byteLength(media.data, 'base64');
+      if (!media || !media.mimetype) {
+        continue;
+      }
 
-      if (mediaBytes <= maxStoredMediaBytes) {
-        mediaInfo.mediaData = media.data;
+      const mediaInfo = {
+        mediaMime: media.mimetype,
+        mediaFilename: media.filename || (message._data && message._data.filename) || ''
+      };
+
+      if (media.data) {
+        const mediaBytes = Buffer.byteLength(media.data, 'base64');
+
+        if (mediaBytes <= maxStoredMediaBytes) {
+          mediaInfo.mediaData = media.data;
+        }
+      }
+
+      return mediaInfo;
+    } catch (error) {
+      if (attempt === mediaDownloadRetryDelaysMs.length - 1) {
+        console.warn('No se pudo descargar media de WhatsApp secundario:', error.message);
       }
     }
-
-    return mediaInfo;
-  } catch (error) {
-    console.warn('No se pudo descargar media de WhatsApp secundario:', error.message);
-    return {};
   }
+
+  return {};
 }
 
 async function storeWhatsAppMessage(message, source = 'whatsapp-second') {
@@ -793,6 +810,70 @@ async function storeWhatsAppMessage(message, source = 'whatsapp-second') {
     source,
     ownerUsername
   });
+}
+
+function isMissingStoredMedia(message) {
+  const body = String(message && message.body || '').toLowerCase();
+  const mime = String(message && message.media_mime || '').toLowerCase();
+  const canStoreInline = Boolean(mime);
+  const mediaPlaceholder = /^\[(image|imagen|audio|ptt|video|archivo|document) sin texto\]$/.test(body);
+
+  return !message.media_data && (canStoreInline || mediaPlaceholder);
+}
+
+async function fetchRecentMessagesForMediaBackfill(chatId) {
+  const cleanChatId = String(chatId || '').trim();
+  const cleanPhone = normalizeChatPhone(cleanChatId);
+  const candidates = [
+    cleanChatId,
+    cleanPhone ? `${cleanPhone}@c.us` : ''
+  ].filter(Boolean);
+  const uniqueCandidates = [...new Set(candidates)];
+
+  for (const candidate of uniqueCandidates) {
+    try {
+      const chat = await client.getChatById(candidate);
+      return await chat.fetchMessages({ limit: 80 });
+    } catch (error) {
+      // Try the next possible WhatsApp id for aliased chats.
+    }
+  }
+
+  return [];
+}
+
+async function backfillChatMedia(chatId, options = {}) {
+  const now = Date.now();
+  const lastBackfill = lastMediaBackfillByChat.get(chatId) || 0;
+
+  if (!client || !whatsappReady || now - lastBackfill < 30000) {
+    return;
+  }
+
+  const storedMessages = await listWhatsAppMessages(chatId, 80, options);
+  const missingIds = new Set(
+    storedMessages
+      .filter(isMissingStoredMedia)
+      .map(message => message.id)
+  );
+
+  if (!missingIds.size) {
+    return;
+  }
+
+  lastMediaBackfillByChat.set(chatId, now);
+
+  try {
+    const recentMessages = await fetchRecentMessagesForMediaBackfill(chatId);
+
+    for (const message of recentMessages) {
+      if (message.id && missingIds.has(message.id._serialized)) {
+        await storeWhatsAppMessage(message, 'whatsapp-second');
+      }
+    }
+  } catch (error) {
+    console.warn(`No se pudo recuperar media del chat secundario ${chatId}:`, error.message);
+  }
 }
 
 function createWhatsAppClient() {
@@ -3065,12 +3146,16 @@ app.get('/api/messages', requireLoggedIn, async (req, res) => {
       }
     }
 
+    const messageScope = {
+      ownerUsername: scopedOwnerUsername,
+      includeUnassigned: !canSeeAllOwnedChats(req.user)
+    };
+
+    await backfillChatMedia(chatId, messageScope);
+
     res.json({
       success: true,
-      messages: await listWhatsAppMessages(chatId, req.query.limit, {
-        ownerUsername: scopedOwnerUsername,
-        includeUnassigned: !canSeeAllOwnedChats(req.user)
-      })
+      messages: await listWhatsAppMessages(chatId, req.query.limit, messageScope)
     });
   } catch (error) {
     res.status(500).json({
