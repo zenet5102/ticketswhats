@@ -89,10 +89,15 @@ let whatsappRestarting = false;
 let client = null;
 const maxStoredMediaBytes = 8 * 1024 * 1024;
 const lastMediaBackfillByChat = new Map();
+const lastRecentMessagesSyncByChat = new Map();
 const mediaDownloadRetryDelaysMs = [0, 750, 2000];
 const notificationChannelReplyByChat = new Map();
 const notificationChannelReplyCooldownMs = config.notificationChannelReplyCooldownHours * 60 * 60 * 1000;
 const notificationChannelSuppressAfterManualMs = config.notificationChannelSuppressAfterManualHours * 60 * 60 * 1000;
+const recentMessagesSyncIntervalMs = parsePositiveInteger(process.env.WHATSAPP_RECENT_MESSAGES_SYNC_INTERVAL_MS, 5000);
+const recentMessagesSyncChatCooldownMs = parsePositiveInteger(process.env.WHATSAPP_RECENT_MESSAGES_SYNC_CHAT_COOLDOWN_MS, 12000);
+const recentMessagesSyncChatLimit = parsePositiveInteger(process.env.WHATSAPP_RECENT_MESSAGES_SYNC_CHAT_LIMIT, 35);
+const recentMessagesSyncMessageLimit = parsePositiveInteger(process.env.WHATSAPP_RECENT_MESSAGES_SYNC_MESSAGE_LIMIT, 12);
 const whatsappAuthRoot = path.resolve(__dirname, '.wwebjs_auth');
 const whatsappAuthSessionDir = path.resolve(whatsappAuthRoot, 'session-bot-1');
 const temporaryTransferHours = parsePositiveInteger(
@@ -100,6 +105,8 @@ const temporaryTransferHours = parsePositiveInteger(
   parsePositiveInteger(process.env.AUTH_SESSION_HOURS, 12)
 );
 const temporaryGroupTransfers = new Map();
+let recentMessagesSyncRunning = false;
+let lastRecentMessagesSyncAt = 0;
 
 function parsePositiveInteger(value, fallback) {
   const parsed = Number.parseInt(value, 10);
@@ -1303,6 +1310,88 @@ async function storeWhatsAppMessage(message, source = 'whatsapp') {
   }
 }
 
+function getChatSortTimestamp(chat) {
+  const value = Number(chat && (chat.timestamp || chat.lastMessage && chat.lastMessage.timestamp));
+
+  if (!Number.isFinite(value) || value <= 0) {
+    return 0;
+  }
+
+  return value < 1000000000000 ? value * 1000 : value;
+}
+
+function isSyncableWhatsAppChat(chat) {
+  const chatId = String(chat && chat.id && chat.id._serialized || '').trim();
+
+  return Boolean(chatId && chatId !== 'status@broadcast' && !chatId.endsWith('@g.us'));
+}
+
+async function syncRecentWhatsAppMessages(options = {}) {
+  const now = Date.now();
+
+  if (!client || !whatsappReady || recentMessagesSyncRunning) {
+    return;
+  }
+
+  if (!options.force && now - lastRecentMessagesSyncAt < recentMessagesSyncIntervalMs) {
+    return;
+  }
+
+  recentMessagesSyncRunning = true;
+  lastRecentMessagesSyncAt = now;
+
+  try {
+    const chats = await client.getChats();
+    const recentChats = chats
+      .filter(isSyncableWhatsAppChat)
+      .sort((left, right) => {
+        const unreadDelta = Number(right.unreadCount || 0) - Number(left.unreadCount || 0);
+
+        if (unreadDelta) {
+          return unreadDelta;
+        }
+
+        return getChatSortTimestamp(right) - getChatSortTimestamp(left);
+      })
+      .slice(0, recentMessagesSyncChatLimit);
+
+    for (const chat of recentChats) {
+      const chatId = String(chat && chat.id && chat.id._serialized || '').trim();
+      const lastChatSync = lastRecentMessagesSyncByChat.get(chatId) || 0;
+
+      if (!options.force && now - lastChatSync < recentMessagesSyncChatCooldownMs) {
+        continue;
+      }
+
+      lastRecentMessagesSyncByChat.set(chatId, now);
+
+      try {
+        const messages = await chat.fetchMessages({ limit: recentMessagesSyncMessageLimit });
+
+        for (const message of messages) {
+          await storeWhatsAppMessage(message, 'whatsapp');
+        }
+      } catch (error) {
+        if (handleTransientWhatsAppError(error, 'recent-messages-sync-error')) {
+          console.warn(`WhatsApp se recargo mientras se sincronizaban mensajes recientes de ${chatId}.`);
+          return;
+        }
+
+        console.warn(`No se pudieron sincronizar mensajes recientes de ${chatId}:`, error.message);
+      }
+    }
+  } catch (error) {
+    if (handleTransientWhatsAppError(error, 'recent-chats-sync-error')) {
+      console.warn('WhatsApp se recargo mientras se listaban chats recientes.');
+      return;
+    }
+
+    console.warn('No se pudieron sincronizar chats recientes de WhatsApp:', error.message);
+  } finally {
+    recentMessagesSyncRunning = false;
+  }
+}
+
 async function processIncomingTicketResponse(storedMessage) {
   if (!storedMessage || storedMessage.direction !== 'incoming') {
     return null;
@@ -1492,6 +1581,7 @@ function getConnectedWhatsAppInfo() {
 
 setInterval(() => {
   getWhatsAppStatus().catch(() => {});
+  syncRecentWhatsAppMessages().catch(() => {});
 }, 15000);
 
 function isWhatsAppReady() {
@@ -1696,8 +1786,9 @@ async function handleResponseNotificationTest(req, res) {
 app.post('/notifications/test', requirePrivileged, handleResponseNotificationTest);
 app.post('/notifications/test-response', requirePrivileged, handleResponseNotificationTest);
 
-app.get('/messages/conversations', requireLoggedIn, (req, res) => {
+app.get('/messages/conversations', requireLoggedIn, async (req, res) => {
   try {
+    await syncRecentWhatsAppMessages();
     const buckets = listConversationBucketsForUser(req.user, req.query.limit);
 
     res.json({
