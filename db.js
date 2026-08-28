@@ -1351,21 +1351,37 @@ function preferMessageForVisualDuplicate(current, candidate) {
   const currentSourcePriority = getMessageSourcePriority(current);
   const candidateSourcePriority = getMessageSourcePriority(candidate);
 
+  let preferred = current;
+
   if (candidateSourcePriority !== currentSourcePriority) {
-    return candidateSourcePriority > currentSourcePriority ? candidate : current;
+    preferred = candidateSourcePriority > currentSourcePriority ? candidate : current;
+    return mergeMessageSenderDetails(preferred, preferred === candidate ? current : candidate);
   }
 
   const currentAck = Number(current.ack);
   const candidateAck = Number(candidate.ack);
 
   if (Number.isFinite(candidateAck) && (!Number.isFinite(currentAck) || candidateAck > currentAck)) {
-    return candidate;
+    return mergeMessageSenderDetails(candidate, current);
   }
 
   const currentTime = Number(current.timestamp_ts || 0);
   const candidateTime = Number(candidate.timestamp_ts || 0);
 
-  return candidateTime >= currentTime ? candidate : current;
+  preferred = candidateTime >= currentTime ? candidate : current;
+  return mergeMessageSenderDetails(preferred, preferred === candidate ? current : candidate);
+}
+
+function mergeMessageSenderDetails(preferred, fallback) {
+  if (!preferred || !fallback) {
+    return preferred;
+  }
+
+  return {
+    ...preferred,
+    sent_by_username: preferred.sent_by_username || fallback.sent_by_username,
+    sent_by_name: preferred.sent_by_name || fallback.sent_by_name
+  };
 }
 
 function dedupeVisualMessages(rows) {
