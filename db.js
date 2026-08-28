@@ -1553,6 +1553,8 @@ function listWhatsAppMessages(chatId, limit = 200) {
       from_me,
       ack,
       source,
+      sent_by_username,
+      sent_by_name,
       created_at
     FROM (
       SELECT *

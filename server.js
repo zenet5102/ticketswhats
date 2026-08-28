@@ -1740,7 +1740,10 @@ async function validateWhatsAppTarget(phone) {
 app.post('/send', requirePrivileged, async (req, res) => {
   try {
     const { phone, message } = req.body;
-    await sendWhatsApp(phone, message, 'manual');
+    await sendWhatsApp(phone, message, 'manual', {
+      sentByUsername: req.user && req.user.username,
+      sentByName: req.user && req.user.name
+    });
     res.json({ success: true });
   } catch (error) {
     const status = error.message.includes('todavia no esta conectado') ? 503 : 500;

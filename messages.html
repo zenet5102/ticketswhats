@@ -2175,6 +2175,8 @@
         message && message.ack,
         message && message.direction || '',
         message && message.from_me,
+        message && message.sent_by_username || '',
+        message && message.sent_by_name || '',
         message && message.timestamp_ts || ''
       ]);
     }
@@ -2194,14 +2196,17 @@
       const media = renderMessageMedia(message);
       const body = String(message.body || '').trim();
       const showBody = body && (!media || !isMediaPlaceholder(body));
-      const personPrefix = direction === 'outgoing' ? 'Para' : 'De';
+      const personPrefix = direction === 'outgoing' ? 'Enviado por' : 'De';
+      const person = direction === 'outgoing'
+        ? (message.sent_by_name || message.sent_by_username || 'Sistema')
+        : getMessagePerson(message, conversation);
       const key = getMessageKey(message, index);
       const renderKey = getMessageRenderKey(message);
 
       return `
         <div class="message-row ${direction}" data-message-key="${escapeHtml(key)}" data-render-key="${escapeHtml(renderKey)}">
           <div class="bubble">
-            <div class="message-person">${personPrefix}: ${escapeHtml(getMessagePerson(message, conversation))}</div>
+            <div class="message-person">${personPrefix}: ${escapeHtml(person)}</div>
             ${media}
             ${showBody ? `<div class="message-text">${escapeHtml(body)}</div>` : ''}
             <div class="message-meta">
