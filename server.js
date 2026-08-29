@@ -4,6 +4,7 @@ const qrcode = require('qrcode-terminal');
 const QRCode = require('qrcode-terminal/vendor/QRCode');
 const QRErrorCorrectLevel = require('qrcode-terminal/vendor/QRCode/QRErrorCorrectLevel');
 const cors = require('cors');
+const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const { config } = require('./config');
@@ -32,10 +33,12 @@ const {
   listWhatsAppChatPhones,
   listWhatsAppConversations,
   listWhatsAppMessages,
+  getAppState,
   getRecentOutgoingMessage,
   getRecentOutgoingMessageBySource,
   normalizeChatPhone,
   saveWhatsAppMessage,
+  setAppState,
   setWhatsAppConversationBucketOverride,
   updateAutomaticMessageTemplate,
   updateTicketPhone,
@@ -77,6 +80,7 @@ const {
   syncTickets
 } = require('./ticketsJob');
 const { getTodayDateString } = require('./ticketApi');
+const secondDb = require('./secondMessageDb');
 
 let whatsappReady = false;
 let whatsappState = 'starting';
@@ -87,6 +91,31 @@ let whatsappQrText = null;
 let whatsappQrSvg = null;
 let whatsappRestarting = false;
 let client = null;
+const whatsappAccounts = [
+  {
+    id: 'bot-1',
+    label: process.env.WHATSAPP_PRIMARY_LABEL || 'Numero 1',
+    clientId: process.env.WHATSAPP_PRIMARY_CLIENT_ID || 'bot-1'
+  },
+  {
+    id: 'bot-2',
+    label: process.env.WHATSAPP_SECONDARY_LABEL || 'Numero 2',
+    clientId: process.env.SECOND_WHATSAPP_CLIENT_ID || 'bot-2'
+  }
+];
+const whatsappAccountStates = new Map(whatsappAccounts.map(account => [account.id, {
+  ...account,
+  ready: false,
+  state: 'starting',
+  lastEventAt: null,
+  lastError: null,
+  qr: null,
+  qrText: null,
+  qrSvg: null,
+  restarting: false,
+  initializing: false,
+  client: null
+}]));
 const maxStoredMediaBytes = 8 * 1024 * 1024;
 const lastMediaBackfillByChat = new Map();
 const lastRecentMessagesSyncByChat = new Map();
@@ -100,11 +129,42 @@ const recentMessagesSyncChatLimit = parsePositiveInteger(process.env.WHATSAPP_RE
 const recentMessagesSyncMessageLimit = parsePositiveInteger(process.env.WHATSAPP_RECENT_MESSAGES_SYNC_MESSAGE_LIMIT, 12);
 const whatsappAuthRoot = path.resolve(__dirname, '.wwebjs_auth');
 const whatsappAuthSessionDir = path.resolve(whatsappAuthRoot, 'session-bot-1');
+const secondMaxStoredMediaBytes = parsePositiveInteger(process.env.SECOND_APP_MAX_STORED_MEDIA_MB, 15) * 1024 * 1024;
+const secondMessageQueueIntervalMinutes = parsePositiveInteger(process.env.SECOND_MESSAGE_QUEUE_INTERVAL_MINUTES, 10);
+const secondMessageQueueBatchSize = parsePositiveInteger(process.env.SECOND_MESSAGE_QUEUE_BATCH_SIZE, 20);
+const secondMessageSettingsPath = path.join(__dirname, 'data', 'second-message-settings.json');
+const phantomBajaSyncHour = Math.min(parseNonNegativeInteger(process.env.PHANTOM_BAJA_SYNC_HOUR, 3), 23);
+const phantomBajaSyncMinute = Math.min(parseNonNegativeInteger(process.env.PHANTOM_BAJA_SYNC_MINUTE, 0), 59);
+const phantomBajaSyncLimit = Math.min(parsePositiveInteger(process.env.PHANTOM_BAJA_SYNC_LIMIT, 500), 500);
 const temporaryTransferHours = parsePositiveInteger(
   process.env.GROUP_TRANSFER_HOURS,
   parsePositiveInteger(process.env.AUTH_SESSION_HOURS, 12)
 );
 const temporaryGroupTransfers = new Map();
+let secondMessageQueueRunning = false;
+let phantomBajaSyncRunning = false;
+let phantomBajaSyncTimer = null;
+const secondMessageQueueState = {
+  active: false,
+  intervalMinutes: secondMessageQueueIntervalMinutes,
+  batchSize: secondMessageQueueBatchSize,
+  startedAt: null,
+  lastRunStartedAt: null,
+  lastRunFinishedAt: null,
+  nextRunAt: null,
+  lastResult: null,
+  lastError: null,
+  runCount: 0
+};
+const phantomBajaSyncState = {
+  active: false,
+  running: false,
+  lastRunStartedAt: null,
+  lastRunFinishedAt: null,
+  nextRunAt: null,
+  lastResult: null,
+  lastError: null
+};
 let recentMessagesSyncRunning = false;
 let lastRecentMessagesSyncAt = 0;
 
@@ -113,20 +173,165 @@ function parsePositiveInteger(value, fallback) {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
-function markWhatsAppState(state, ready = state === 'CONNECTED') {
-  whatsappState = state;
-  whatsappReady = Boolean(ready);
-  whatsappLastEventAt = new Date().toISOString();
+function parseNonNegativeInteger(value, fallback) {
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
+}
 
-  if (ready) {
-    clearWhatsAppQr();
+function nowIso() {
+  return new Date().toISOString();
+}
+
+function normalizeOwnerUsername(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function getUserOwnerUsername(user) {
+  return normalizeOwnerUsername(user && user.username);
+}
+
+function canSeeAllOwnedChats(user) {
+  return Boolean(user && (user.isAdmin || user.role === 'admin'));
+}
+
+function getScopedOwnerUsername(user) {
+  return canSeeAllOwnedChats(user) ? '' : getUserOwnerUsername(user);
+}
+
+function getPhantomPlatformUserName(user) {
+  const username = String(user && user.username || '').trim();
+  const fallback = String(user && user.name || 'usuario').trim() || 'usuario';
+  const cleanName = username || fallback;
+  return cleanName.startsWith('_') ? cleanName : `_${cleanName}`;
+}
+
+function getWhatsAppAccountState(accountId = 'bot-1') {
+  refreshWhatsAppAccountLabels();
+  return whatsappAccountStates.get(accountId) || whatsappAccountStates.get('bot-1');
+}
+
+function getWhatsAppAccountConfig(accountId = 'bot-1') {
+  return getWhatsAppAccountState(accountId);
+}
+
+function isValidWhatsAppAccount(accountId) {
+  return whatsappAccountStates.has(String(accountId || '').trim());
+}
+
+function getDefaultWhatsAppAccountId(user) {
+  const accounts = Array.isArray(user && user.whatsappAccounts) ? user.whatsappAccounts : [];
+  const accountId = String(accounts[0] || user && user.whatsappAccount || '').trim();
+  return isValidWhatsAppAccount(accountId) ? accountId : 'bot-1';
+}
+
+function canAccessWhatsAppAccount(user, accountId) {
+  if (!isValidWhatsAppAccount(accountId)) {
+    return false;
+  }
+
+  if (user && user.isAdmin) {
+    return true;
+  }
+
+  return getAllowedWhatsAppAccountIds(user).includes(accountId);
+}
+
+function getAllowedWhatsAppAccountIds(user) {
+  if (user && user.isAdmin) {
+    return whatsappAccounts.map(account => account.id);
+  }
+
+  const accounts = Array.isArray(user && user.whatsappAccounts)
+    ? user.whatsappAccounts.filter(isValidWhatsAppAccount)
+    : [];
+
+  return accounts.length ? accounts : [getDefaultWhatsAppAccountId(user)];
+}
+
+function getPublicWhatsAppAccounts(user) {
+  refreshWhatsAppAccountLabels();
+  const allowed = new Set(getAllowedWhatsAppAccountIds(user));
+  return whatsappAccounts
+    .filter(account => allowed.has(account.id))
+    .map(account => ({
+      id: account.id,
+      label: account.label,
+      clientId: account.clientId
+    }));
+}
+
+function getWhatsAppAccountLabelState() {
+  try {
+    return JSON.parse(getAppState('whatsapp_account_labels', '{}') || '{}') || {};
+  } catch (error) {
+    return {};
   }
 }
 
-function clearWhatsAppQr() {
-  whatsappQr = null;
-  whatsappQrText = null;
-  whatsappQrSvg = null;
+function refreshWhatsAppAccountLabels() {
+  const labels = getWhatsAppAccountLabelState();
+
+  for (const account of whatsappAccounts) {
+    const state = whatsappAccountStates.get(account.id);
+    const label = String(labels[account.id] || account.label || account.id).trim() || account.id;
+
+    account.label = label;
+
+    if (state) {
+      state.label = label;
+    }
+  }
+}
+
+function updateWhatsAppAccountLabel(accountId, label) {
+  const cleanAccountId = String(accountId || '').trim();
+
+  if (!isValidWhatsAppAccount(cleanAccountId)) {
+    throw new Error('Sesion WhatsApp invalida');
+  }
+
+  const cleanLabel = String(label || '').trim().slice(0, 80);
+
+  if (!cleanLabel) {
+    throw new Error('Falta nombre de sesion');
+  }
+
+  const labels = getWhatsAppAccountLabelState();
+  labels[cleanAccountId] = cleanLabel;
+  setAppState('whatsapp_account_labels', JSON.stringify(labels));
+  refreshWhatsAppAccountLabels();
+
+  return getWhatsAppAccountState(cleanAccountId);
+}
+
+function markWhatsAppState(state, ready = state === 'CONNECTED', accountId = 'bot-1') {
+  const account = getWhatsAppAccountState(accountId);
+  account.state = state;
+  account.ready = Boolean(ready);
+  account.lastEventAt = new Date().toISOString();
+
+  if (account.id === 'bot-1') {
+    whatsappState = account.state;
+    whatsappReady = account.ready;
+    whatsappLastEventAt = account.lastEventAt;
+  }
+
+  if (ready) {
+    clearWhatsAppQr(account.id);
+  }
+}
+
+function clearWhatsAppQr(accountId = 'bot-1') {
+  const account = getWhatsAppAccountState(accountId);
+  account.qr = null;
+  account.qrText = null;
+  account.qrSvg = null;
+
+  if (account.id === 'bot-1') {
+    whatsappQr = null;
+    whatsappQrText = null;
+    whatsappQrSvg = null;
+  }
 }
 
 function createQrText(input) {
@@ -169,7 +374,9 @@ function createQrSvgDataUrl(input) {
 
 const app = express();
 app.use(cors());
-app.use(express.json());
+app.use(express.json({
+  limit: `${parsePositiveInteger(process.env.SECOND_APP_JSON_LIMIT_MB, 25)}mb`
+}));
 
 const requireLoggedIn = requireAuth();
 const requirePrivileged = requireLoggedIn;
@@ -204,6 +411,7 @@ app.get('/users', requireAdmin, (req, res) => {
     success: true,
     roles: allowedRoles,
     groups: listAvailableUserGroups(),
+    whatsappAccounts: getPublicWhatsAppAccounts(req.user),
     users: listAppUsers()
   });
 });
@@ -313,6 +521,34 @@ app.get('/dashboard', requireLoggedIn, (req, res) => {
 
 app.get('/mensajes', requireLoggedIn, (req, res) => {
   sendHtmlFile(res, 'messages.html');
+});
+
+app.get('/cola', requireLoggedIn, (req, res) => {
+  sendHtmlFile(res, 'queue.html');
+});
+
+app.get('/phantom', requireLoggedIn, (req, res) => {
+  res.redirect('/phantom/suspendidos');
+});
+
+app.get('/phantom/suspendidos', requireLoggedIn, (req, res) => {
+  sendHtmlFile(res, 'phantom.html');
+});
+
+app.get('/phantom/activos', requireLoggedIn, (req, res) => {
+  sendHtmlFile(res, 'phantom.html');
+});
+
+app.get('/phantom/clientes', requireLoggedIn, (req, res) => {
+  sendHtmlFile(res, 'phantom.html');
+});
+
+app.get('/phantom/baja', requireLoggedIn, (req, res) => {
+  sendHtmlFile(res, 'phantom.html');
+});
+
+app.get('/whatsapp', requireAdmin, (req, res) => {
+  sendHtmlFile(res, 'whatsapp.html');
 });
 
 app.get('/errores', requireLoggedIn, (req, res) => {
@@ -697,23 +933,32 @@ function getConversationChatId(conversation) {
   return String(conversation && conversation.chat_id || '').trim();
 }
 
+function getConversationAccountId(conversation) {
+  return String(conversation && conversation.whatsapp_account || conversation && conversation.accountId || 'bot-1').trim() || 'bot-1';
+}
+
+function getConversationIdentity(conversation) {
+  return `${getConversationAccountId(conversation)}:${getConversationChatId(conversation)}`;
+}
+
 function getRepresentedChatIds(conversations) {
   const represented = new Set();
 
   for (const conversation of conversations) {
     const chatId = getConversationChatId(conversation);
+    const accountId = getConversationAccountId(conversation);
 
     if (!chatId) {
       continue;
     }
 
-    represented.add(chatId);
+    represented.add(`${accountId}:${chatId}`);
 
-    for (const message of listWhatsAppMessages(chatId, 80)) {
+    for (const message of listWhatsAppMessages(chatId, 80, { accountId })) {
       const messageChatId = String(message && message.chat_id || '').trim();
 
       if (messageChatId) {
-        represented.add(messageChatId);
+        represented.add(`${accountId}:${messageChatId}`);
       }
     }
   }
@@ -723,7 +968,8 @@ function getRepresentedChatIds(conversations) {
 
 function attachBucketOverride(conversation, overridesByChatId) {
   const chatId = getConversationChatId(conversation);
-  const override = overridesByChatId.get(chatId);
+  const accountId = getConversationAccountId(conversation);
+  const override = overridesByChatId.get(`${accountId}:${chatId}`);
 
   if (!override) {
     return conversation;
@@ -754,7 +1000,10 @@ function sortConversationsByLatest(conversations) {
 function splitConversationBuckets(conversations, requestedLimit) {
   const overridesByChatId = new Map(
     listWhatsAppConversationBucketOverrides()
-      .map(override => [String(override.chat_id || '').trim(), override])
+      .map(override => [
+        `${String(override.whatsapp_account || 'bot-1').trim() || 'bot-1'}:${String(override.chat_id || '').trim()}`,
+        override
+      ])
   );
   const withOverrides = conversations.map(conversation => attachBucketOverride(conversation, overridesByChatId));
   const forcedMain = withOverrides.filter(conversation => conversation.conversation_bucket_override === 'main');
@@ -772,7 +1021,7 @@ function splitConversationBuckets(conversations, requestedLimit) {
     otherConversations: [
       ...sortConversationsByLatest(forcedOther),
       ...sortConversationsByLatest(
-        autoConversations.filter(conversation => isOtherConversation(conversation) && !representedChatIds.has(getConversationChatId(conversation)))
+        autoConversations.filter(conversation => isOtherConversation(conversation) && !representedChatIds.has(getConversationIdentity(conversation)))
       )
     ]
       .slice(0, requestedLimit)
@@ -781,10 +1030,12 @@ function splitConversationBuckets(conversations, requestedLimit) {
 
 function listConversationBucketsForUser(user, limit) {
   const requestedLimit = Math.min(Math.max(Number(limit) || 100, 1), 300);
+  const accountIds = getAllowedWhatsAppAccountIds(user);
+  const allConversations = accountIds.flatMap(accountId => listWhatsAppConversations(1000, { accountId }));
 
   if (user && user.isAdmin) {
     return splitConversationBuckets(
-      attachTicketInfoToConversations(user, listWhatsAppConversations(1000)),
+      attachTicketInfoToConversations(user, allConversations),
       requestedLimit
     );
   }
@@ -801,14 +1052,18 @@ function listConversationBucketsForUser(user, limit) {
   return splitConversationBuckets(
     attachTicketInfoToConversations(
       user,
-      listWhatsAppConversations(1000)
+      allConversations
         .filter(conversation => conversationMatchesPhones(conversation, phones))
     ),
     requestedLimit
   );
 }
 
-function canReadChat(user, chatId) {
+function canReadChat(user, chatId, accountId = 'bot-1') {
+  if (!canAccessWhatsAppAccount(user, accountId)) {
+    return false;
+  }
+
   if (user && user.isAdmin) {
     return true;
   }
@@ -826,7 +1081,11 @@ function canSendToAnyTarget(user) {
   return Boolean(user && (user.isAdmin || user.role === 'usuario'));
 }
 
-function canSendToTarget(user, chatId, phone) {
+function canSendToTarget(user, chatId, phone, accountId = 'bot-1') {
+  if (!canAccessWhatsAppAccount(user, accountId)) {
+    return false;
+  }
+
   if (canSendToAnyTarget(user)) {
     return true;
   }
@@ -843,7 +1102,7 @@ function canSendToTarget(user, chatId, phone) {
   }
 
   if (cleanChatId) {
-    if (canReadChat(user, cleanChatId)) {
+    if (canReadChat(user, cleanChatId, accountId)) {
       return true;
     }
 
@@ -888,10 +1147,13 @@ function incomingMessageMatchesAnyTicket(storedMessage) {
   });
 }
 
-function createWhatsAppClient() {
+function createWhatsAppClient(accountId = 'bot-1') {
+  const account = getWhatsAppAccountConfig(accountId);
+
   return new Client({
     authStrategy: new LocalAuth({
-      clientId: 'bot-1'
+      clientId: account.clientId,
+      dataPath: whatsappAuthRoot
     }),
     puppeteer: {
       headless: true,
@@ -907,16 +1169,18 @@ function createWhatsAppClient() {
   });
 }
 
-function removeWhatsAppAuthSession() {
+function removeWhatsAppAuthSession(accountId = 'bot-1') {
+  const account = getWhatsAppAccountConfig(accountId);
+  const authSessionDir = path.resolve(whatsappAuthRoot, `session-${account.clientId}`);
   const rootWithSeparator = whatsappAuthRoot.endsWith(path.sep)
     ? whatsappAuthRoot
     : `${whatsappAuthRoot}${path.sep}`;
 
-  if (!whatsappAuthSessionDir.startsWith(rootWithSeparator)) {
+  if (!authSessionDir.startsWith(rootWithSeparator)) {
     throw new Error('Ruta de sesion WhatsApp invalida');
   }
 
-  fs.rmSync(whatsappAuthSessionDir, {
+  fs.rmSync(authSessionDir, {
     force: true,
     recursive: true,
     maxRetries: 5,
@@ -924,57 +1188,82 @@ function removeWhatsAppAuthSession() {
   });
 }
 
-function attachWhatsAppEvents(instance) {
+function attachWhatsAppEvents(instance, accountId = 'bot-1') {
+  const account = getWhatsAppAccountConfig(accountId);
+
   instance.on('qr', qr => {
-    markWhatsAppState('QR', false);
-    whatsappLastError = null;
-    whatsappQr = qr;
-    whatsappQrText = createQrText(qr);
-    whatsappQrSvg = createQrSvgDataUrl(qr);
-    console.log('Escanea este QR con WhatsApp:');
+    markWhatsAppState('QR', false, account.id);
+    account.lastError = null;
+    account.qr = qr;
+    account.qrText = createQrText(qr);
+    account.qrSvg = createQrSvgDataUrl(qr);
+
+    if (account.id === 'bot-1') {
+      whatsappLastError = null;
+      whatsappQr = account.qr;
+      whatsappQrText = account.qrText;
+      whatsappQrSvg = account.qrSvg;
+    }
+
+    console.log(`Escanea este QR con WhatsApp (${account.label}):`);
     qrcode.generate(qr, { small: true });
   });
 
   instance.on('authenticated', () => {
-    markWhatsAppState('AUTHENTICATED', false);
-    clearWhatsAppQr();
-    console.log('WhatsApp autenticado');
+    markWhatsAppState('AUTHENTICATED', false, account.id);
+    clearWhatsAppQr(account.id);
+    console.log(`WhatsApp autenticado (${account.label})`);
   });
 
   instance.on('auth_failure', msg => {
-    markWhatsAppState('AUTH_FAILURE', false);
-    clearWhatsAppQr();
-    whatsappLastError = String(msg || 'Fallo de autenticacion');
-    console.error('Fallo de autenticacion:', msg);
+    markWhatsAppState('AUTH_FAILURE', false, account.id);
+    clearWhatsAppQr(account.id);
+    account.lastError = String(msg || 'Fallo de autenticacion');
+
+    if (account.id === 'bot-1') {
+      whatsappLastError = account.lastError;
+    }
+
+    console.error(`Fallo de autenticacion (${account.label}):`, msg);
   });
 
   instance.on('ready', () => {
-    markWhatsAppState('CONNECTED', true);
-    whatsappLastError = null;
-    console.log('WhatsApp conectado');
+    markWhatsAppState('CONNECTED', true, account.id);
+    account.lastError = null;
+
+    if (account.id === 'bot-1') {
+      whatsappLastError = null;
+    }
+
+    console.log(`WhatsApp conectado (${account.label})`);
   });
 
   instance.on('change_state', state => {
-    markWhatsAppState(state || 'UNKNOWN', state === 'CONNECTED');
-    console.log('Estado de WhatsApp:', state);
+    markWhatsAppState(state || 'UNKNOWN', state === 'CONNECTED', account.id);
+    console.log(`Estado de WhatsApp (${account.label}):`, state);
   });
 
   instance.on('disconnected', reason => {
-    markWhatsAppState(`DISCONNECTED: ${reason}`, false);
-    clearWhatsAppQr();
-    console.log('WhatsApp desconectado:', reason);
+    markWhatsAppState(`DISCONNECTED: ${reason}`, false, account.id);
+    clearWhatsAppQr(account.id);
+    console.log(`WhatsApp desconectado (${account.label}):`, reason);
   });
 
   instance.on('message', message => {
-    storeWhatsAppMessage(message, 'whatsapp')
-      .then(storedMessage => processIncomingTicketResponse(storedMessage))
+    storeWhatsAppMessage(message, 'whatsapp', account.id)
+      .then(storedMessage => {
+        if (account.id === 'bot-1') {
+          return processIncomingTicketResponse(storedMessage);
+        }
+        return null;
+      })
       .catch(error => {
         console.warn('No se pudo guardar mensaje entrante:', error.message);
       });
   });
 
   instance.on('message_create', message => {
-    storeWhatsAppMessage(message, 'whatsapp').catch(error => {
+    storeWhatsAppMessage(message, 'whatsapp', account.id).catch(error => {
       console.warn('No se pudo guardar mensaje creado:', error.message);
     });
   });
@@ -1003,54 +1292,95 @@ function canAccessTicket(user, ticketExternalId) {
   return listVisibleTicketsForUser(user).some(ticket => String(ticket.external_id || '') === cleanExternalId);
 }
 
-async function initializeWhatsAppClient() {
-  client = createWhatsAppClient();
-  attachWhatsAppEvents(client);
+async function initializeWhatsAppClient(accountId = 'bot-1') {
+  const account = getWhatsAppAccountState(accountId);
 
-  try {
-    await client.initialize();
-  } catch (error) {
-    markWhatsAppState('INIT_ERROR', false);
-    whatsappLastError = error.message;
-    console.error('Error iniciando WhatsApp:', error);
-    throw error;
+  if (account.initializing) {
+    return account.client;
   }
 
-  return client;
+  if (account.client && !account.restarting) {
+    return account.client;
+  }
+
+  account.initializing = true;
+  account.client = createWhatsAppClient(account.id);
+  if (account.id === 'bot-1') {
+    client = account.client;
+  }
+  attachWhatsAppEvents(account.client, account.id);
+
+  try {
+    await account.client.initialize();
+  } catch (error) {
+    markWhatsAppState('INIT_ERROR', false, account.id);
+    account.lastError = error.message;
+    if (account.id === 'bot-1') {
+      whatsappLastError = error.message;
+    }
+    console.error(`Error iniciando WhatsApp (${account.label}):`, error);
+    throw error;
+  } finally {
+    account.initializing = false;
+  }
+
+  return account.client;
+}
+
+async function initializeWhatsAppClients() {
+  for (const account of whatsappAccounts) {
+    initializeWhatsAppClient(account.id).catch(() => {});
+  }
 }
 
 async function restartWhatsAppClient(reason = 'manual', options = {}) {
-  if (whatsappRestarting) {
-    return getWhatsAppStatus();
+  const accountId = isValidWhatsAppAccount(options.accountId) ? options.accountId : 'bot-1';
+  const account = getWhatsAppAccountState(accountId);
+
+  if (account.restarting) {
+    return getWhatsAppStatus(account.id);
   }
 
-  whatsappRestarting = true;
-  markWhatsAppState(options.resetAuth ? 'RESETTING_AUTH' : 'RESTARTING', false);
-  whatsappLastError = null;
-  clearWhatsAppQr();
-  console.log(`Reiniciando WhatsApp (${reason})`);
+  account.restarting = true;
 
-  const oldClient = client;
-  client = null;
+  if (account.id === 'bot-1') {
+    whatsappRestarting = true;
+  }
+
+  markWhatsAppState(options.resetAuth ? 'RESETTING_AUTH' : 'RESTARTING', false, account.id);
+  account.lastError = null;
+  clearWhatsAppQr(account.id);
+  console.log(`Reiniciando WhatsApp ${account.label} (${reason})`);
+
+  const oldClient = account.client;
+  account.client = null;
+
+  if (account.id === 'bot-1') {
+    client = null;
+    whatsappLastError = null;
+  }
 
   if (oldClient) {
     try {
       await oldClient.destroy();
     } catch (error) {
-      console.warn('No se pudo cerrar cliente WhatsApp anterior:', error.message);
+      console.warn(`No se pudo cerrar cliente WhatsApp anterior (${account.label}):`, error.message);
     }
   }
 
   try {
     if (options.resetAuth) {
-      removeWhatsAppAuthSession();
-      console.log('Sesion local de WhatsApp eliminada');
+      removeWhatsAppAuthSession(account.id);
+      console.log(`Sesion local de WhatsApp eliminada (${account.label})`);
     }
 
-    initializeWhatsAppClient().catch(() => {});
-    return getWhatsAppStatus();
+    initializeWhatsAppClient(account.id).catch(() => {});
+    return getWhatsAppStatus(account.id);
   } finally {
-    whatsappRestarting = false;
+    account.restarting = false;
+    if (account.id === 'bot-1') {
+      whatsappRestarting = false;
+    }
   }
 }
 
@@ -1084,16 +1414,22 @@ function createTransientWhatsAppError(error) {
   return nextError;
 }
 
-function handleTransientWhatsAppError(error, reason) {
+function handleTransientWhatsAppError(error, reason, accountId = 'bot-1') {
   if (!isTransientWhatsAppError(error)) {
     return false;
   }
 
+  const account = getWhatsAppAccountState(accountId);
   const transientError = createTransientWhatsAppError(error);
-  whatsappLastError = transientError.message;
-  markWhatsAppState('SESSION_REFRESHING', false);
-  restartWhatsAppClient(reason).catch(restartError => {
-    console.warn('No se pudo reiniciar WhatsApp tras error transitorio:', restartError.message);
+  account.lastError = transientError.message;
+
+  if (account.id === 'bot-1') {
+    whatsappLastError = transientError.message;
+  }
+
+  markWhatsAppState('SESSION_REFRESHING', false, account.id);
+  restartWhatsAppClient(reason, { accountId: account.id }).catch(restartError => {
+    console.warn(`No se pudo reiniciar WhatsApp tras error transitorio (${account.label}):`, restartError.message);
   });
   return true;
 }
@@ -1163,12 +1499,14 @@ function getContactPhone(contact, chatId) {
   return phone;
 }
 
-async function getMessageContactInfo(message, chatId) {
+async function getMessageContactInfo(message, chatId, accountId = 'bot-1') {
+  const account = getWhatsAppAccountState(accountId);
+  const accountClient = account.client || client;
   let contact = null;
 
-  if (client && message.fromMe && chatId) {
+  if (accountClient && message.fromMe && chatId) {
     try {
-      contact = await client.getContactById(chatId);
+      contact = await accountClient.getContactById(chatId);
     } catch (error) {
       contact = null;
     }
@@ -1221,7 +1559,7 @@ function wait(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-async function getMessageMediaInfo(message) {
+async function getMessageMediaInfo(message, accountId = 'bot-1') {
   if (!message.hasMedia || !message.downloadMedia) {
     return {};
   }
@@ -1256,7 +1594,7 @@ async function getMessageMediaInfo(message) {
       return mediaInfo;
     } catch (error) {
       if (attempt === mediaDownloadRetryDelaysMs.length - 1) {
-        if (handleTransientWhatsAppError(error, 'media-download-error')) {
+        if (handleTransientWhatsAppError(error, 'media-download-error', accountId)) {
           return {};
         }
 
@@ -1268,7 +1606,7 @@ async function getMessageMediaInfo(message) {
   return {};
 }
 
-async function storeWhatsAppMessage(message, source = 'whatsapp') {
+async function storeWhatsAppMessage(message, source = 'whatsapp', accountId = 'bot-1') {
   try {
     const chatId = getMessageChatId(message);
 
@@ -1279,14 +1617,14 @@ async function storeWhatsAppMessage(message, source = 'whatsapp') {
     const direction = message.fromMe ? 'outgoing' : 'incoming';
     const rawBody = String(message.body || message.caption || '').trim();
     const systemTypes = new Set(['e2e_notification', 'notification_template', 'ciphertext']);
-    const mediaInfo = await getMessageMediaInfo(message);
+    const mediaInfo = await getMessageMediaInfo(message, accountId);
 
     if (!rawBody && systemTypes.has(String(message.type || '').toLowerCase())) {
       return null;
     }
 
     const body = rawBody || `[${getMediaLabel(mediaInfo.mediaMime, message.type)} sin texto]`;
-    const contactInfo = await getMessageContactInfo(message, chatId);
+    const contactInfo = await getMessageContactInfo(message, chatId, accountId);
 
     return saveWhatsAppMessage({
       id: getStoredMessageId(message, chatId, direction),
@@ -1301,10 +1639,11 @@ async function storeWhatsAppMessage(message, source = 'whatsapp') {
       timestampTs: getWhatsAppTimestampMs(message.timestamp),
       fromMe: Boolean(message.fromMe),
       ack: message.ack,
-      source
+      source,
+      whatsappAccount: accountId
     });
   } catch (error) {
-    handleTransientWhatsAppError(error, 'media-download-error');
+    handleTransientWhatsAppError(error, 'media-download-error', accountId);
     console.warn('No se pudo guardar mensaje de WhatsApp:', error.message);
     return null;
   }
@@ -1492,15 +1831,19 @@ function isMissingStoredMedia(message) {
   return !message.media_data && (canStoreInline || mediaPlaceholder);
 }
 
-async function backfillChatMedia(chatId) {
+async function backfillChatMedia(chatId, accountId = 'bot-1') {
   const now = Date.now();
-  const lastBackfill = lastMediaBackfillByChat.get(chatId) || 0;
+  const account = getWhatsAppAccountState(accountId);
+  const backfillKey = `${account.id}:${chatId}`;
+  const lastBackfill = lastMediaBackfillByChat.get(backfillKey) || 0;
 
-  if (!client || !whatsappReady || now - lastBackfill < 30000) {
+  if (!account.client || !account.ready || now - lastBackfill < 30000) {
     return;
   }
 
-  const storedMessages = listWhatsAppMessages(chatId, 80);
+  const storedMessages = listWhatsAppMessages(chatId, 80, {
+    accountId: account.id
+  });
   const missingIds = new Set(
     storedMessages
       .filter(isMissingStoredMedia)
@@ -1511,19 +1854,19 @@ async function backfillChatMedia(chatId) {
     return;
   }
 
-  lastMediaBackfillByChat.set(chatId, now);
+  lastMediaBackfillByChat.set(backfillKey, now);
 
   try {
-    const chat = await client.getChatById(chatId);
+    const chat = await account.client.getChatById(chatId);
     const recentMessages = await chat.fetchMessages({ limit: 80 });
 
     for (const message of recentMessages) {
       if (message.id && missingIds.has(message.id._serialized)) {
-        await storeWhatsAppMessage(message, 'whatsapp');
+        await storeWhatsAppMessage(message, 'whatsapp', account.id);
       }
     }
   } catch (error) {
-    if (handleTransientWhatsAppError(error, 'media-backfill-error')) {
+    if (handleTransientWhatsAppError(error, 'media-backfill-error', account.id)) {
       console.warn(`WhatsApp se recargo mientras se recuperaba media del chat ${chatId}. Se reintentara luego.`);
       return;
     }
@@ -1532,43 +1875,64 @@ async function backfillChatMedia(chatId) {
   }
 }
 
-initializeWhatsAppClient().catch(() => {});
+initializeWhatsAppClients();
 
-async function getWhatsAppStatus() {
+async function getWhatsAppStatus(accountId = 'bot-1') {
+  const account = getWhatsAppAccountState(accountId);
+  const accountClient = account.client;
+
   try {
-    if (client && client.pupPage) {
-      const state = await client.getState();
+    if (accountClient && accountClient.pupPage) {
+      const state = await accountClient.getState();
 
       if (state) {
-        markWhatsAppState(state, state === 'CONNECTED');
+        markWhatsAppState(state, state === 'CONNECTED', account.id);
       }
     }
   } catch (error) {
-    if (handleTransientWhatsAppError(error, 'status-check-error')) {
+    if (handleTransientWhatsAppError(error, 'status-check-error', account.id)) {
       // Keep returning the current status object below.
     } else {
-      whatsappLastError = error.message;
+      account.lastError = error.message;
+
+      if (account.id === 'bot-1') {
+        whatsappLastError = error.message;
+      }
     }
   }
 
-  const connectedInfo = getConnectedWhatsAppInfo();
+  const connectedInfo = getConnectedWhatsAppInfo(account.id);
 
   return {
-    ready: whatsappReady,
-    state: whatsappState,
+    id: account.id,
+    label: account.label,
+    clientId: account.clientId,
+    ready: account.ready,
+    state: account.state,
     phone: connectedInfo.phone,
     displayName: connectedInfo.displayName,
     wid: connectedInfo.wid,
-    lastEventAt: whatsappLastEventAt,
-    lastError: whatsappLastError,
-    qr: whatsappReady ? null : whatsappQr,
-    qrText: whatsappReady ? null : whatsappQrText,
-    qrSvg: whatsappReady ? null : whatsappQrSvg
+    lastEventAt: account.lastEventAt,
+    lastError: account.lastError,
+    qr: account.ready ? null : account.qr,
+    qrText: account.ready ? null : account.qrText,
+    qrSvg: account.ready ? null : account.qrSvg
   };
 }
 
-function getConnectedWhatsAppInfo() {
-  const info = client && client.info || {};
+async function getWhatsAppAccountsStatus() {
+  const accounts = [];
+
+  for (const account of whatsappAccounts) {
+    accounts.push(await getWhatsAppStatus(account.id));
+  }
+
+  return accounts;
+}
+
+function getConnectedWhatsAppInfo(accountId = 'bot-1') {
+  const account = getWhatsAppAccountState(accountId);
+  const info = account.client && account.client.info || {};
   const wid = info.wid && (info.wid._serialized || info.wid.user) || '';
   const phone = normalizeChatPhone(info.wid && info.wid.user || wid);
 
@@ -1580,12 +1944,12 @@ function getConnectedWhatsAppInfo() {
 }
 
 setInterval(() => {
-  getWhatsAppStatus().catch(() => {});
+  getWhatsAppAccountsStatus().catch(() => {});
   syncRecentWhatsAppMessages().catch(() => {});
 }, 15000);
 
 function isWhatsAppReady() {
-  return whatsappReady;
+  return getWhatsAppAccountState('bot-1').ready;
 }
 
 function getTicketExternalId(ticket) {
@@ -1628,10 +1992,15 @@ function getAutomaticMessageDefaultBody() {
 }
 
 async function sendWhatsApp(phone, message, source = 'bot', options = {}) {
-  await getWhatsAppStatus();
+  const accountId = isValidWhatsAppAccount(options.accountId || options.whatsappAccount)
+    ? String(options.accountId || options.whatsappAccount).trim()
+    : 'bot-1';
+  const account = getWhatsAppAccountState(accountId);
 
-  if (!client || !whatsappReady) {
-    throw new Error(`WhatsApp todavia no esta conectado (${whatsappState})`);
+  await getWhatsAppStatus(account.id);
+
+  if (!account.client || !account.ready) {
+    throw new Error(`${account.label} todavia no esta conectado (${account.state})`);
   }
 
   const target = String(phone || '').trim();
@@ -1645,14 +2014,14 @@ async function sendWhatsApp(phone, message, source = 'bot', options = {}) {
     throw new Error('Faltan phone o message');
   }
 
-  console.log('Enviando a:', targetChatId || cleanPhone);
+  console.log(`Enviando desde ${account.label} a:`, targetChatId || cleanPhone);
 
   let chatId = targetChatId;
   let sentMessage = null;
 
   try {
     if (!chatId) {
-      const numberId = await client.getNumberId(cleanPhone);
+      const numberId = await account.client.getNumberId(cleanPhone);
 
       if (!numberId) {
         throw new Error('El numero no existe en WhatsApp o no se pudo resolver');
@@ -1662,9 +2031,9 @@ async function sendWhatsApp(phone, message, source = 'bot', options = {}) {
     }
 
     console.log('Chat ID resuelto:', chatId);
-    sentMessage = await client.sendMessage(chatId, fullMessage);
+    sentMessage = await account.client.sendMessage(chatId, fullMessage);
   } catch (error) {
-    if (handleTransientWhatsAppError(error, 'send-error')) {
+    if (handleTransientWhatsAppError(error, 'send-error', account.id)) {
       throw createTransientWhatsAppError(error);
     }
 
@@ -1685,7 +2054,8 @@ async function sendWhatsApp(phone, message, source = 'bot', options = {}) {
       ack: sentMessage && sentMessage.ack,
       source,
       sentByUsername: options.sentByUsername,
-      sentByName: options.sentByName
+      sentByName: options.sentByName,
+      whatsappAccount: account.id
     });
   } catch (error) {
     console.warn('Mensaje enviado, pero no se pudo guardar el historial:', error.message);
@@ -1715,11 +2085,13 @@ async function sendWhatsApp(phone, message, source = 'bot', options = {}) {
   return sentMessage;
 }
 
-async function validateWhatsAppTarget(phone) {
-  await getWhatsAppStatus();
+async function validateWhatsAppTarget(phone, accountId = 'bot-1') {
+  const account = getWhatsAppAccountState(accountId);
 
-  if (!client || !whatsappReady) {
-    throw new Error(`WhatsApp todavia no esta conectado (${whatsappState})`);
+  await getWhatsAppStatus(account.id);
+
+  if (!account.client || !account.ready) {
+    throw new Error(`${account.label} todavia no esta conectado (${account.state})`);
   }
 
   const cleanPhone = normalizeChatPhone(phone);
@@ -1728,21 +2100,1041 @@ async function validateWhatsAppTarget(phone) {
     throw new Error('Falta telefono');
   }
 
-  const numberId = await client.getNumberId(cleanPhone);
+  const numberId = await account.client.getNumberId(cleanPhone);
 
   return {
     exists: Boolean(numberId),
     phone: cleanPhone,
-    chatId: numberId && numberId._serialized || ''
+    chatId: numberId && numberId._serialized || '',
+    accountId: account.id
   };
+}
+
+function readSecondMessageSettings() {
+  if (!fs.existsSync(secondMessageSettingsPath)) {
+    return {};
+  }
+
+  try {
+    return JSON.parse(fs.readFileSync(secondMessageSettingsPath, 'utf8')) || {};
+  } catch (error) {
+    console.warn('No se pudo leer data/second-message-settings.json. Se usan valores por defecto.');
+    return {};
+  }
+}
+
+function writeSecondMessageSettings(settings) {
+  fs.mkdirSync(path.dirname(secondMessageSettingsPath), { recursive: true });
+  fs.writeFileSync(secondMessageSettingsPath, JSON.stringify(settings, null, 2), 'utf8');
+}
+
+function parseSecondMessageTemplates(value) {
+  const source = Array.isArray(value)
+    ? value
+    : String(value || '').split(/^\s*---+\s*$/m);
+
+  return source
+    .map(template => {
+      if (template && typeof template === 'object' && !Array.isArray(template)) {
+        return String(template.body ?? template.template ?? template.text ?? '').trim();
+      }
+
+      return String(template || '').trim();
+    })
+    .filter(Boolean);
+}
+
+const secondMessageTemplatePlaceholders = [
+  'id',
+  'razon_social',
+  'cliente',
+  'deuda',
+  'estado',
+  'movil',
+  'telefono',
+  'fecha_ultima_factura',
+  'comprobantes_adeudados'
+];
+
+function getDefaultSecondMessageTemplate() {
+  return String(
+    process.env.SECOND_MESSAGE_TEMPLATE ||
+    'Hola {razon_social}, registramos deuda pendiente por {deuda}. Por favor comunicate con administracion para regularizarla.'
+  ).trim();
+}
+
+function normalizeSecondMessageTemplateName(value, fallback) {
+  return String(value || fallback || 'Template').trim().slice(0, 120) || 'Template';
+}
+
+function createSecondMessageTemplateId() {
+  return `tpl_${Date.now().toString(36)}_${crypto.randomBytes(3).toString('hex')}`;
+}
+
+function normalizeSecondMessageTemplateRecords(value) {
+  const source = Array.isArray(value)
+    ? value
+    : parseSecondMessageTemplates(value).map(body => ({ body }));
+  const usedIds = new Set();
+  const records = [];
+  const now = nowIso();
+
+  source.forEach((item, index) => {
+    const record = item && typeof item === 'object' && !Array.isArray(item) ? item : { body: item };
+    const body = String(record.body ?? record.template ?? record.text ?? '').trim();
+
+    if (!body) {
+      return;
+    }
+
+    let id = String(record.id || '').trim();
+    if (!/^[a-zA-Z0-9_-]{1,80}$/.test(id) || usedIds.has(id)) {
+      id = `tpl_${index + 1}`;
+      let suffix = 2;
+      while (usedIds.has(id)) {
+        id = `tpl_${index + 1}_${suffix}`;
+        suffix += 1;
+      }
+    }
+
+    usedIds.add(id);
+    records.push({
+      id,
+      name: normalizeSecondMessageTemplateName(record.name ?? record.title, `Template ${records.length + 1}`),
+      body,
+      createdAt: String(record.createdAt || record.created_at || now),
+      updatedAt: String(record.updatedAt || record.updated_at || now)
+    });
+  });
+
+  return records;
+}
+
+function getSecondMessageTemplateRecords(settings = readSecondMessageSettings()) {
+  const source = Array.isArray(settings.messageTemplates)
+    ? settings.messageTemplates
+    : Array.isArray(settings.templates)
+      ? settings.templates
+      : settings.template || getDefaultSecondMessageTemplate();
+  const configured = normalizeSecondMessageTemplateRecords(source);
+
+  return configured.length ? configured : normalizeSecondMessageTemplateRecords([{
+    id: 'tpl_default',
+    name: 'Mensaje principal',
+    body: getDefaultSecondMessageTemplate()
+  }]);
+}
+
+function persistSecondMessageTemplateRecords(records, settings = readSecondMessageSettings()) {
+  const cleanRecords = normalizeSecondMessageTemplateRecords(records);
+
+  if (!cleanRecords.length) {
+    throw new Error('Debe quedar al menos un template');
+  }
+
+  settings.template = cleanRecords[0].body;
+  settings.templates = cleanRecords.map(record => record.body);
+  settings.messageTemplates = cleanRecords;
+  settings.cursor = Number.isFinite(Number(settings.cursor)) ? Number(settings.cursor) % cleanRecords.length : 0;
+  settings.updatedAt = nowIso();
+  writeSecondMessageSettings(settings);
+  return cleanRecords;
+}
+
+function getNextSecondMessageTemplate() {
+  const settings = readSecondMessageSettings();
+  const records = getSecondMessageTemplateRecords(settings);
+  const index = Number.isFinite(Number(settings.cursor)) ? Number(settings.cursor) % records.length : 0;
+  const template = records[index];
+  settings.cursor = (index + 1) % records.length;
+  persistSecondMessageTemplateRecords(records, settings);
+
+  return {
+    id: template.id,
+    name: template.name,
+    template: template.body,
+    index,
+    total: records.length
+  };
+}
+
+function createSecondMessageTemplate(input = {}) {
+  const settings = readSecondMessageSettings();
+  const records = getSecondMessageTemplateRecords(settings);
+  const now = nowIso();
+  const body = String(input.body ?? input.template ?? input.text ?? '').trim();
+
+  if (!body) {
+    throw new Error('El mensaje no puede estar vacio');
+  }
+
+  const template = {
+    id: createSecondMessageTemplateId(),
+    name: normalizeSecondMessageTemplateName(input.name ?? input.title, `Template ${records.length + 1}`),
+    body,
+    createdAt: now,
+    updatedAt: now
+  };
+  persistSecondMessageTemplateRecords([...records, template], settings);
+  return template;
+}
+
+function updateSecondMessageTemplate(id, input = {}) {
+  const settings = readSecondMessageSettings();
+  const records = getSecondMessageTemplateRecords(settings);
+  const index = records.findIndex(record => record.id === String(id || '').trim());
+
+  if (index === -1) {
+    throw new Error('Template no encontrado');
+  }
+
+  const body = Object.prototype.hasOwnProperty.call(input, 'body') ||
+    Object.prototype.hasOwnProperty.call(input, 'template') ||
+    Object.prototype.hasOwnProperty.call(input, 'text')
+    ? String(input.body ?? input.template ?? input.text ?? '').trim()
+    : records[index].body;
+
+  if (!body) {
+    throw new Error('El mensaje no puede estar vacio');
+  }
+
+  const template = {
+    ...records[index],
+    name: normalizeSecondMessageTemplateName(input.name ?? input.title, records[index].name),
+    body,
+    updatedAt: nowIso()
+  };
+  const nextRecords = records.slice();
+  nextRecords[index] = template;
+  persistSecondMessageTemplateRecords(nextRecords, settings);
+  return template;
+}
+
+function deleteSecondMessageTemplate(id) {
+  const settings = readSecondMessageSettings();
+  const records = getSecondMessageTemplateRecords(settings);
+  const template = records.find(record => record.id === String(id || '').trim());
+
+  if (!template) {
+    throw new Error('Template no encontrado');
+  }
+
+  if (records.length === 1) {
+    throw new Error('Debe quedar al menos un template');
+  }
+
+  persistSecondMessageTemplateRecords(records.filter(record => record.id !== template.id), settings);
+  return template;
+}
+
+function getMessageTemplatesPayload(selectedTemplate = null) {
+  const messageTemplates = getSecondMessageTemplateRecords();
+
+  return {
+    success: true,
+    template: messageTemplates.map(record => record.body).join('\n---\n'),
+    templates: messageTemplates.map(record => record.body),
+    messageTemplates,
+    selectedTemplate,
+    placeholders: secondMessageTemplatePlaceholders
+  };
+}
+
+function renderStringTemplate(template, variables = {}) {
+  return String(template || '').replace(/\{([a-zA-Z0-9_]+)\}/g, (match, key) => {
+    const value = variables[key];
+    return value === undefined || value === null ? match : String(value);
+  });
+}
+
+function buildPhantomUrl(baseUrl, params = {}) {
+  const url = new URL(baseUrl);
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined && value !== null && value !== '') {
+      url.searchParams.set(key, String(value));
+    }
+  }
+  return url.toString();
+}
+
+function normalizePhantomQueryValue(value) {
+  const text = String(value === undefined || value === null ? '' : value).trim();
+  if (!/%[0-9a-f]{2}/i.test(text)) {
+    return text;
+  }
+  try {
+    return decodeURIComponent(text);
+  } catch (error) {
+    return text;
+  }
+}
+
+function getPhantomHeaders(extraHeaders = {}) {
+  let configuredHeaders = {};
+  if (process.env.PHANTOM_API_HEADERS) {
+    try {
+      const parsed = JSON.parse(process.env.PHANTOM_API_HEADERS);
+      configuredHeaders = parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+    } catch (error) {
+      console.warn('PHANTOM_API_HEADERS no es JSON valido. Se ignora.');
+    }
+  }
+  return { ...configuredHeaders, ...extraHeaders };
+}
+
+function stripPhantomBom(value) {
+  return String(value === undefined || value === null ? '' : value)
+    .replace(/^(?:\uFEFF|\u00EF\u00BB\u00BF|\u00C3\u00AF\u00C2\u00BB\u00C2\u00BF)/, '')
+    .trim();
+}
+
+function parsePhantomPayload(text) {
+  const cleanText = stripPhantomBom(text);
+  if (!cleanText) {
+    return null;
+  }
+  try {
+    let parsed = JSON.parse(cleanText);
+    for (let index = 0; index < 2 && typeof parsed === 'string'; index += 1) {
+      const nested = stripPhantomBom(parsed);
+      if (!nested || !/^[\[{]/.test(nested)) {
+        break;
+      }
+      parsed = JSON.parse(nested);
+    }
+    return parsed;
+  } catch (error) {
+    return cleanText;
+  }
+}
+
+function extractPhantomToken(text) {
+  const cleanText = stripPhantomBom(text);
+  const parsed = parsePhantomPayload(cleanText);
+
+  if (typeof parsed === 'string') {
+    return stripPhantomBom(parsed.replace(/^"|"$/g, ''));
+  }
+
+  if (parsed && typeof parsed === 'object') {
+    const candidates = [
+      parsed.token,
+      parsed.Token,
+      parsed.access_token,
+      parsed.accessToken,
+      parsed.data && parsed.data.token,
+      parsed.data && parsed.data.Token,
+      parsed.result && parsed.result.token,
+      parsed.resultado && parsed.resultado.token
+    ];
+    const token = candidates.find(value => value !== undefined && value !== null && String(value).trim() !== '');
+    return token === undefined ? '' : stripPhantomBom(token);
+  }
+
+  return cleanText;
+}
+
+function extractPhantomTokenFromHeaders(headers) {
+  if (!headers || typeof headers.get !== 'function') {
+    return '';
+  }
+
+  for (const candidate of [headers.get('token'), headers.get('x-token'), headers.get('x-auth-token'), headers.get('authorization')]) {
+    const token = extractPhantomToken(String(candidate || '').replace(/^Bearer\s+/i, ''));
+    if (token) {
+      return token;
+    }
+  }
+
+  const setCookie = headers.get('set-cookie') || '';
+  const cookieMatch = setCookie.match(/(?:^|[;,\s])(?:token|phantom_token|auth_token)=([^;,\s]+)/i);
+  return cookieMatch ? stripPhantomBom(cookieMatch[1]) : '';
+}
+
+function formatPhantomError(status, text) {
+  const payload = parsePhantomPayload(text);
+  const detail = payload && typeof payload === 'object'
+    ? payload.error || payload.message || payload.msg || JSON.stringify(payload)
+    : String(payload || '').trim();
+  return detail ? `HTTP ${status}: ${detail}` : `HTTP ${status}`;
+}
+
+function extractPhantomRows(payload) {
+  if (Array.isArray(payload)) {
+    return payload;
+  }
+
+  if (!payload || typeof payload !== 'object') {
+    return payload === undefined || payload === null ? [] : [{ value: payload }];
+  }
+
+  return [
+    payload.abonados,
+    payload.Abonados,
+    payload.data,
+    payload.datos,
+    payload.Datos,
+    payload.results,
+    payload.resultados,
+    payload.items,
+    payload.records,
+    payload.list,
+    payload.lista,
+    payload.result,
+    payload.Result,
+    payload.response,
+    payload.respuesta
+  ].find(Array.isArray) || [payload];
+}
+
+function getFirstPhantomValue(row, keys, fallback = '') {
+  if (!row || typeof row !== 'object' || Array.isArray(row)) {
+    return fallback;
+  }
+
+  for (const key of keys) {
+    if (row[key] !== undefined && row[key] !== null && row[key] !== '') {
+      return row[key];
+    }
+  }
+
+  return fallback;
+}
+
+function formatPhantomDateOnly(value) {
+  const text = String(value === undefined || value === null ? '' : value).trim();
+  const match = text.match(/^(\d{4})-(\d{2})-(\d{2})(?:[ T]\d{2}:\d{2}:\d{2})?/);
+  return match ? `${match[3]}/${match[2]}/${match[1]}` : text;
+}
+
+function invertPhantomSign(value) {
+  if (value === undefined || value === null || value === '') {
+    return '';
+  }
+
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? -value : value;
+  }
+
+  const text = String(value).trim();
+  if (!text || /^-?\s*0+(?:[,.]0+)?$/.test(text)) {
+    return text.replace(/^-\s*/, '');
+  }
+  if (/^-\s*/.test(text)) {
+    return text.replace(/^-\s*/, '');
+  }
+  if (/^\+\s*/.test(text)) {
+    return '-' + text.replace(/^\+\s*/, '');
+  }
+  return '-' + text;
+}
+
+function parseDecimalValue(value) {
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? value : 0;
+  }
+
+  const clean = String(value === undefined || value === null ? '' : value).trim().replace(/\s/g, '').replace(/[$%]/g, '');
+  if (/^-?\d{1,3}(\.\d{3})*(,\d+)?$/.test(clean)) {
+    return Number(clean.replace(/\./g, '').replace(',', '.')) || 0;
+  }
+  if (/^-?\d+([.,]\d+)?$/.test(clean)) {
+    return Number(clean.replace(',', '.')) || 0;
+  }
+  return Number(clean) || 0;
+}
+
+function hasDebtOrOverdueReceipts(row = {}) {
+  return parseDecimalValue(row.deuda) !== 0 || parseDecimalValue(row.comprobantesAdeudados) !== 0;
+}
+
+function formatPhantomClientRows(rows, options = {}) {
+  const formattedRows = rows.map(row => {
+    const razonFallback = [row && row.Apellido, row && row.Nombre].filter(Boolean).join(' ');
+    const balance = getFirstPhantomValue(row, ['Balance_CC', 'BalanceCC', 'Balance', 'balance', 'Saldo', 'SaldoCC', 'SaldoCuentaCorriente']);
+    return {
+      id: getFirstPhantomValue(row, ['ID', 'Id', 'id', 'IDA', 'ida', 'ClienteID', 'Cliente_Id', 'Codigo', 'CodigoCliente']),
+      razonSocial: getFirstPhantomValue(row, ['RS', 'RazonSocial', 'Razon_Social', 'Razon Social', 'Razon', 'razon_social'], razonFallback),
+      deuda: invertPhantomSign(balance),
+      estado: getFirstPhantomValue(row, ['Estado', 'estado']),
+      movil: getFirstPhantomValue(row, ['Movil', 'Movil', 'movil', 'Celular', 'celular', 'Mobile', 'TelefonoMovil', 'TelMovil', 'Movi', 'movi']),
+      telefono: getFirstPhantomValue(row, ['Telefono', 'Telefono', 'telefono', 'Tel', 'tel', 'Telefono1', 'Telefono_1']),
+      fechaUltimaFactura: formatPhantomDateOnly(getFirstPhantomValue(row, ['Fecha_Ultima_Factura'])),
+      fechaUltimoCambio: formatPhantomDateOnly(getFirstPhantomValue(row, ['Fecha_Ultimo_Cambio', 'fechaUltimoCambio', 'fecha_ultimo_cambio'])),
+      fechaInstalacion: formatPhantomDateOnly(getFirstPhantomValue(row, ['Fecha_Instalacion', 'fechaInstalacion', 'fecha_instalacion'])),
+      comprobantesAdeudados: getFirstPhantomValue(row, ['C_Comprobantes_Adeudados', 'Fecha_Ultimo_Mov', 'CompAdeudados', 'ComprobantesAdeudados', 'Comprobantes_Adeudados', 'compAdeudados', 'comp_adeudados', 'Adeudados']),
+      raw: row
+    };
+  });
+
+  return options.filterDebt === false ? formattedRows : formattedRows.filter(hasDebtOrOverdueReceipts);
+}
+
+function getFirstPhoneCandidate(value) {
+  return String(value || '').split(/[;,|/\n\r\t]+/).map(item => item.trim()).find(Boolean) || '';
+}
+
+function normalizeArgentineMobilePhone(value, options = {}) {
+  let phone = normalizeChatPhone(value).replace(/^00+/, '');
+  const defaultAreaCode = String(options.defaultAreaCode || '11').replace(/\D/g, '') || '11';
+
+  if (!phone) {
+    return '';
+  }
+  if (phone.startsWith('549')) {
+    phone = phone.slice(3);
+  } else if (phone.startsWith('54')) {
+    phone = phone.slice(2);
+    if (phone.startsWith('9')) {
+      phone = phone.slice(1);
+    }
+  }
+  phone = phone.replace(/^0+/, '');
+  if (phone.startsWith('15') && phone.length < 11) {
+    phone = defaultAreaCode + phone.slice(2);
+  }
+  if (phone.length > 10) {
+    for (let areaLength = 2; areaLength <= 4; areaLength += 1) {
+      const prefix = phone.slice(0, areaLength);
+      const rest = phone.slice(areaLength);
+      if (rest.startsWith('15') && (prefix + rest.slice(2)).length === 10) {
+        phone = prefix + rest.slice(2);
+        break;
+      }
+    }
+  }
+  return phone.length === 10 ? `549${phone}` : '';
+}
+
+function normalizeSecondQueuePhone(value) {
+  if (isDirectChatId(value)) {
+    return String(value || '').trim();
+  }
+  return normalizeArgentineMobilePhone(getFirstPhoneCandidate(value));
+}
+
+function isValidSecondQueueTarget(value) {
+  const target = String(value || '').trim();
+  return isDirectChatId(target) || /^549\d{8,12}$/.test(target);
+}
+
+function normalizePhantomEstado(value, fallback = 'Suspendido') {
+  return String(value || '').trim() || fallback;
+}
+
+function createMessageVariablesFromRow(row = {}) {
+  const id = getFirstPhantomValue(row, ['id', 'ID', 'Id', 'IDA', 'ida', 'ClienteID', 'Cliente_Id', 'Codigo', 'CodigoCliente']);
+  const razonSocial = getFirstPhantomValue(row, ['razonSocial', 'razon_social', 'RS', 'RazonSocial', 'Razon_Social', 'Razon Social', 'Razon']);
+  const movil = getFirstPhantomValue(row, ['movil', 'Movil', 'Celular', 'celular', 'Mobile', 'TelefonoMovil', 'TelMovil']);
+  const telefono = getFirstPhantomValue(row, ['telefono', 'Telefono', 'Tel', 'tel', 'Telefono1', 'Telefono_1']);
+
+  return {
+    id,
+    razon_social: razonSocial,
+    razonSocial,
+    cliente: razonSocial,
+    deuda: getFirstPhantomValue(row, ['deuda', 'balance', 'Balance_CC', 'Balance', 'Saldo']),
+    estado: getFirstPhantomValue(row, ['estado', 'Estado']),
+    movil: normalizeSecondQueuePhone(movil) || movil,
+    movil_raw: movil,
+    telefono: normalizeSecondQueuePhone(telefono) || telefono,
+    telefono_raw: telefono,
+    fecha_ultima_factura: formatPhantomDateOnly(getFirstPhantomValue(row, ['fechaUltimaFactura', 'fecha_ultima_factura', 'Fecha_Ultima_Factura'])),
+    comprobantes_adeudados: getFirstPhantomValue(row, ['comprobantesAdeudados', 'C_Comprobantes_Adeudados', 'Fecha_Ultimo_Mov', 'ComprobantesAdeudados', 'Comprobantes_Adeudados'])
+  };
+}
+
+function getQueueTargetFromVariables(variables = {}) {
+  return String(variables.movil || variables.telefono || variables.phone || variables.target || '').trim();
+}
+
+function createQueueItemFromRow(row = {}) {
+  const variables = createMessageVariablesFromRow(row);
+  const target = normalizeSecondQueuePhone(getQueueTargetFromVariables(variables));
+  const id = String(variables.id || '').trim();
+  return {
+    queueKey: id ? `phantom:${id}` : `phantom:${normalizeChatPhone(target) || target}`,
+    target,
+    phone: normalizeChatPhone(target),
+    source: 'second-phantom',
+    variables
+  };
+}
+
+function getPhantomCredentials() {
+  const baseUrl = String(process.env.PHANTOM_API_URL || '').trim();
+  const apiUser = normalizePhantomQueryValue(process.env.PHANTOM_API_USER);
+  const apiPass = normalizePhantomQueryValue(process.env.PHANTOM_API_PASS);
+
+  if (!baseUrl || !apiUser || !apiPass) {
+    throw new Error('Faltan PHANTOM_API_URL, PHANTOM_API_USER o PHANTOM_API_PASS');
+  }
+
+  return { baseUrl, apiUser, apiPass };
+}
+
+async function createPhantomToken() {
+  const { baseUrl, apiUser, apiPass } = getPhantomCredentials();
+  const authResponse = await fetch(buildPhantomUrl(baseUrl, {
+    action: 'autentificar',
+    api_user: apiUser,
+    api_pass: apiPass
+  }), {
+    method: 'POST',
+    headers: getPhantomHeaders()
+  });
+  const authText = await authResponse.text();
+
+  if (!authResponse.ok) {
+    throw new Error(`Error autenticando Phantom: ${formatPhantomError(authResponse.status, authText)}`);
+  }
+
+  const token = extractPhantomToken(authText) || extractPhantomTokenFromHeaders(authResponse.headers);
+  if (!token) {
+    throw new Error(`Phantom no devolvio token. Auth HTTP ${authResponse.status}`);
+  }
+
+  return { baseUrl, token };
+}
+
+async function fetchPhantomConsultaMasivaRows(options = {}) {
+  const { baseUrl, token } = await createPhantomToken();
+  const defaultLimit = parsePositiveInteger(process.env.PHANTOM_CONSULTA_LIMIT, 10);
+  const limit = Math.min(parsePositiveInteger(options.limit, defaultLimit), 500);
+  const page = parsePositiveInteger(options.page, 0);
+  const offset = options.offset !== undefined
+    ? parseNonNegativeInteger(options.offset, 0)
+    : page ? (page - 1) * limit : parseNonNegativeInteger(process.env.PHANTOM_CONSULTA_OFFSET, 0);
+  const allEstados = options.allEstados === true || options.allStates === true;
+  const estado = allEstados ? '' : normalizePhantomEstado(options.estado, process.env.PHANTOM_CONSULTA_ESTADO || 'Suspendido');
+  const consultaParams = {
+    action: 'Consulta_Masiva_Datos',
+    JSON: 1,
+    Desc: parsePositiveInteger(process.env.PHANTOM_CONSULTA_DESC, 1),
+    Limit: limit,
+    Offset: offset,
+    BalanceCC: parsePositiveInteger(process.env.PHANTOM_CONSULTA_BALANCE_CC, 1),
+    CompAdeudados: parsePositiveInteger(process.env.PHANTOM_CONSULTA_COMP_ADEUDADOS, 1)
+  };
+
+  if (!allEstados) {
+    consultaParams.Estado = estado;
+  }
+
+  const response = await fetch(buildPhantomUrl(baseUrl, consultaParams), {
+    method: 'POST',
+    headers: getPhantomHeaders({
+      Accept: 'application/json',
+      'Content-Type': 'application/json'
+    }),
+    body: JSON.stringify({
+      token,
+      ID_Desde: parsePositiveInteger(process.env.PHANTOM_CONSULTA_ID_DESDE, 1),
+      ID_Hasta: parsePositiveInteger(process.env.PHANTOM_CONSULTA_ID_HASTA, 999999999)
+    })
+  });
+  const text = await response.text();
+
+  if (!response.ok) {
+    throw new Error(`Error consultando Phantom: ${formatPhantomError(response.status, text)}`);
+  }
+
+  const payload = parsePhantomPayload(text);
+  const phantomCode = payload && typeof payload === 'object' ? Number(payload.code) : NaN;
+  if (Number.isFinite(phantomCode) && phantomCode >= 400) {
+    throw new Error(`Error consultando Phantom: ${payload.message || payload.error || payload.msg || `code ${payload.code}`}`);
+  }
+
+  const rawRows = extractPhantomRows(payload);
+  const rows = formatPhantomClientRows(rawRows, {
+    filterDebt: !allEstados && estado.toLowerCase() !== 'baja'
+  });
+
+  return {
+    rows,
+    rawRows,
+    estado,
+    pagination: {
+      limit,
+      offset,
+      page: Math.floor(offset / limit) + 1,
+      returned: rows.length,
+      rawReturned: rawRows.length,
+      hasNextPage: rawRows.length === limit
+    }
+  };
+}
+
+function assertRequiredPhantomValue(value, label) {
+  const text = String(value === undefined || value === null ? '' : value).trim();
+  if (!text) {
+    throw new Error(`Falta ${label}`);
+  }
+  return text;
+}
+
+function assertPhantomNumberValue(value, label) {
+  const text = assertRequiredPhantomValue(value, label);
+  if (!Number.isFinite(Number(String(text).replace(',', '.')))) {
+    throw new Error(`${label} invalido`);
+  }
+  return text;
+}
+
+async function fetchPhantomAction(action, options = {}) {
+  const { baseUrl, token } = await createPhantomToken();
+  const response = await fetch(buildPhantomUrl(baseUrl, {
+    action,
+    token,
+    ...(options.query || {})
+  }), {
+    method: options.method || 'POST',
+    headers: getPhantomHeaders({
+      Accept: 'application/json',
+      'Content-Type': 'application/json',
+      ...(options.headers || {})
+    }),
+    ...(options.method === 'GET' ? {} : { body: JSON.stringify(options.body || {}) })
+  });
+  const text = await response.text();
+
+  if (!response.ok) {
+    throw new Error(`Error consultando Phantom: ${formatPhantomError(response.status, text)}`);
+  }
+
+  const payload = parsePhantomPayload(text);
+  const phantomCode = payload && typeof payload === 'object' ? Number(payload.code) : NaN;
+  if (Number.isFinite(phantomCode) && phantomCode >= 400) {
+    throw new Error(`Error consultando Phantom: ${payload.message || payload.error || payload.msg || `code ${payload.code}`}`);
+  }
+
+  return payload;
+}
+
+function extractPhantomTicketNumber(payload) {
+  const stack = [payload];
+  while (stack.length) {
+    const current = stack.shift();
+    if (current === undefined || current === null || current === '') {
+      continue;
+    }
+    if (typeof current === 'number' && Number.isFinite(current)) {
+      return String(Math.trunc(current));
+    }
+    if (typeof current === 'string') {
+      const clean = stripPhantomBom(current).replace(/^"|"$/g, '').trim();
+      const exact = clean.match(/^\d+$/);
+      const labeled = clean.match(/(?:tt|ticket|id|numero|nro|#)\D{0,12}(\d{1,20})/i);
+      if (exact || labeled) {
+        return exact ? exact[0] : labeled[1];
+      }
+      const parsed = parsePhantomPayload(clean);
+      if (parsed !== clean) {
+        stack.push(parsed);
+      }
+      continue;
+    }
+    if (Array.isArray(current)) {
+      stack.push(...current);
+      continue;
+    }
+    if (typeof current === 'object') {
+      for (const key of ['ticket', 'Ticket', 'id', 'ID', 'IDTT', 'idtt', 'numero', 'Numero', 'nro', 'Nro', 'data', 'result', 'resultado']) {
+        if (current[key] !== undefined && current[key] !== null && current[key] !== '') {
+          stack.push(current[key]);
+        }
+      }
+    }
+  }
+  return '';
+}
+
+async function fetchPhantomNapAvailability(options = {}) {
+  return fetchPhantomAction('Consultar_Disponibilidad_NAP', {
+    method: 'POST',
+    body: {
+      Latitud: assertPhantomNumberValue(options.latitud ?? options.Latitud, 'Latitud'),
+      Longitud: assertPhantomNumberValue(options.longitud ?? options.Longitud, 'Longitud'),
+      DistanciaDrop: assertPhantomNumberValue(options.distanciaDrop ?? options.DistanciaDrop, 'DistanciaDrop')
+    }
+  });
+}
+
+async function fetchPhantomAdvancedClient(options = {}) {
+  return fetchPhantomAction('Consulta_Cliente_Avanzada', {
+    method: 'POST',
+    query: {
+      JSON: 1,
+      IDA: assertRequiredPhantomValue(options.ida ?? options.IDA ?? options.id ?? options.cliente, 'IDA'),
+      InfoFTTH: 1,
+      ImporteProductos: 1
+    }
+  });
+}
+
+async function createPhantomSupportTicket(options = {}) {
+  const payload = await fetchPhantomAction('Phantom_Generar_TT', {
+    method: 'POST',
+    query: {
+      IDA: assertRequiredPhantomValue(options.ida ?? options.IDA ?? options.id ?? options.cliente, 'IDA'),
+      Plataforma: String(options.plataforma ?? options.Plataforma ?? 'Bot Automatic').trim() || 'Bot Automatic',
+      Soporte: options.Soporte ?? options.soporte ?? ''
+    },
+    body: {
+      Categoria: 'Comunicacion',
+      Prioridad: '3',
+      Asunto: String(options.asunto ?? options.Asunto ?? 'Comunicacion por WhatsApp').trim() || 'Comunicacion por WhatsApp',
+      Detalle: String(options.note ?? options.detalle ?? options.Detalle ?? 'Comunicacion registrada desde WhatsApp').trim() || 'Comunicacion registrada desde WhatsApp',
+      Delegacion: 'Creado como Resuelto',
+      Estado: 'Resuelto'
+    }
+  });
+  const ticketNumber = extractPhantomTicketNumber(payload);
+  if (!ticketNumber) {
+    throw new Error('Phantom no devolvio numero de ticket valido');
+  }
+  return { ticketNumber, raw: payload };
+}
+
+async function getSecondDatabaseStatus() {
+  const mysqlSettings = secondDb.getMysqlSettings();
+
+  try {
+    await secondDb.pingDatabase();
+    return {
+      ready: true,
+      host: mysqlSettings.host,
+      port: mysqlSettings.port,
+      database: mysqlSettings.database,
+      table: mysqlSettings.messagesTable,
+      queueTable: mysqlSettings.queueTable,
+      lastError: null
+    };
+  } catch (error) {
+    return {
+      ready: false,
+      host: mysqlSettings.host,
+      port: mysqlSettings.port,
+      database: mysqlSettings.database,
+      table: mysqlSettings.messagesTable,
+      queueTable: mysqlSettings.queueTable,
+      lastError: error.message
+    };
+  }
+}
+
+function getNextSecondMessageQueueRunIso() {
+  return new Date(Date.now() + secondMessageQueueIntervalMinutes * 60 * 1000).toISOString();
+}
+
+async function processSecondMessageQueue() {
+  if (secondMessageQueueRunning) {
+    return { skipped: true, reason: 'queue-running' };
+  }
+
+  secondMessageQueueRunning = true;
+  secondMessageQueueState.runCount += 1;
+  secondMessageQueueState.lastRunStartedAt = nowIso();
+  const unresolvedItemIds = new Set();
+
+  try {
+    const staleErrors = await secondDb.markStaleMessageQueueErrors();
+    const whatsapp = await getWhatsAppStatus('bot-2');
+
+    if (!whatsapp.ready) {
+      const result = {
+        skipped: true,
+        waiting: true,
+        reason: `${whatsapp.label || 'Numero 2'} no conectado (${whatsapp.state})`,
+        staleErrors,
+        stats: await secondDb.getMessageQueueStats().catch(() => null)
+      };
+      secondMessageQueueState.lastResult = result;
+      secondMessageQueueState.lastError = null;
+      return result;
+    }
+
+    const items = await secondDb.claimPendingMessageQueue(secondMessageQueueBatchSize);
+    let sent = 0;
+    let errors = 0;
+    items.forEach(item => unresolvedItemIds.add(Number(item.id)));
+
+    for (let index = 0; index < items.length; index += 1) {
+      const item = items[index];
+      const template = getNextSecondMessageTemplate();
+      const body = renderStringTemplate(template.template, item.variables || {}).trim();
+
+      if (!body) {
+        await secondDb.markMessageQueueError(item.id, 'El template genero un mensaje vacio');
+        unresolvedItemIds.delete(Number(item.id));
+        errors += 1;
+        continue;
+      }
+
+      try {
+        const target = normalizeSecondQueuePhone(item.target) || item.target;
+        await sendWhatsApp(target, body, item.source || 'second-queue', {
+          accountId: 'bot-2',
+          sentByUsername: item.owner_username || 'queue',
+          sentByName: item.owner_username || 'Cola'
+        });
+        await secondDb.markMessageQueueSent(item.id, body, template.index);
+        unresolvedItemIds.delete(Number(item.id));
+        sent += 1;
+      } catch (error) {
+        if (isTransientWhatsAppError(error)) {
+          await secondDb.releaseMessageQueueItem(item.id, error.message);
+          unresolvedItemIds.delete(Number(item.id));
+          for (const remaining of items.slice(index + 1)) {
+            await secondDb.releaseMessageQueueItem(remaining.id, error.message);
+            unresolvedItemIds.delete(Number(remaining.id));
+          }
+          break;
+        }
+
+        await secondDb.markMessageQueueError(item.id, error.message);
+        unresolvedItemIds.delete(Number(item.id));
+        errors += 1;
+      }
+    }
+
+    const result = {
+      skipped: false,
+      staleErrors,
+      claimed: items.length,
+      sent,
+      errors,
+      stats: await secondDb.getMessageQueueStats().catch(() => null)
+    };
+    secondMessageQueueState.lastResult = result;
+    secondMessageQueueState.lastError = null;
+    return result;
+  } catch (error) {
+    secondMessageQueueState.lastError = {
+      message: error.message,
+      at: nowIso()
+    };
+
+    for (const id of unresolvedItemIds) {
+      await secondDb.markMessageQueueError(id, `Error inesperado en cola: ${error.message}`).catch(() => {});
+    }
+
+    throw error;
+  } finally {
+    secondMessageQueueState.lastRunFinishedAt = nowIso();
+    secondMessageQueueState.nextRunAt = getNextSecondMessageQueueRunIso();
+    secondMessageQueueRunning = false;
+  }
+}
+
+function startSecondMessageQueueScheduler() {
+  secondMessageQueueState.active = true;
+  secondMessageQueueState.startedAt = nowIso();
+  secondMessageQueueState.nextRunAt = getNextSecondMessageQueueRunIso();
+  setInterval(() => {
+    secondMessageQueueState.nextRunAt = getNextSecondMessageQueueRunIso();
+    processSecondMessageQueue().catch(error => {
+      console.error('Error en cola de mensajes secundaria:', error);
+    });
+  }, secondMessageQueueIntervalMinutes * 60 * 1000);
+  console.log(`Cola de mensajes secundaria activa cada ${secondMessageQueueIntervalMinutes} minutos.`);
+}
+
+function getNextPhantomBajaSyncDate(fromDate = new Date()) {
+  const next = new Date(fromDate);
+  next.setHours(phantomBajaSyncHour, phantomBajaSyncMinute, 0, 0);
+  if (next <= fromDate) {
+    next.setDate(next.getDate() + 1);
+  }
+  return next;
+}
+
+async function syncPhantomBajaClients(reason = 'scheduled') {
+  if (phantomBajaSyncRunning) {
+    return { skipped: true, reason: 'sync-running' };
+  }
+
+  phantomBajaSyncRunning = true;
+  phantomBajaSyncState.running = true;
+  phantomBajaSyncState.lastRunStartedAt = nowIso();
+  phantomBajaSyncState.lastError = null;
+  const startedAt = new Date();
+  const allRows = [];
+  let offset = 0;
+  let page = 1;
+
+  try {
+    while (true) {
+      const result = await fetchPhantomConsultaMasivaRows({
+        allEstados: true,
+        limit: phantomBajaSyncLimit,
+        offset
+      });
+      allRows.push(...result.rows);
+      if (!result.pagination.hasNextPage) {
+        break;
+      }
+      offset += result.pagination.limit;
+      page += 1;
+      if (page > 10000) {
+        throw new Error('Corte de seguridad: demasiadas paginas sincronizando clientes Phantom');
+      }
+    }
+
+    const saved = await secondDb.replacePhantomBajaClients(allRows, startedAt);
+    const result = {
+      skipped: false,
+      reason,
+      saved,
+      pages: page,
+      finishedAt: nowIso()
+    };
+    phantomBajaSyncState.lastResult = result;
+    phantomBajaSyncState.lastError = null;
+    return result;
+  } catch (error) {
+    phantomBajaSyncState.lastError = {
+      message: error.message,
+      at: nowIso()
+    };
+    throw error;
+  } finally {
+    phantomBajaSyncState.lastRunFinishedAt = nowIso();
+    phantomBajaSyncState.running = false;
+    phantomBajaSyncRunning = false;
+  }
+}
+
+function scheduleNextPhantomBajaSync() {
+  const nextRun = getNextPhantomBajaSyncDate();
+  const delayMs = Math.max(nextRun.getTime() - Date.now(), 1000);
+  phantomBajaSyncState.nextRunAt = nextRun.toISOString();
+
+  if (phantomBajaSyncTimer) {
+    clearTimeout(phantomBajaSyncTimer);
+  }
+
+  phantomBajaSyncTimer = setTimeout(() => {
+    syncPhantomBajaClients('scheduled')
+      .catch(error => console.error('[PHANTOM] Error sincronizando:', error))
+      .finally(scheduleNextPhantomBajaSync);
+  }, delayMs);
+}
+
+function startPhantomBajaSyncScheduler() {
+  phantomBajaSyncState.active = true;
+  scheduleNextPhantomBajaSync();
+  console.log(`Sync clientes Phantom activo todos los dias a las ${String(phantomBajaSyncHour).padStart(2, '0')}:${String(phantomBajaSyncMinute).padStart(2, '0')}.`);
 }
 
 app.post('/send', requirePrivileged, async (req, res) => {
   try {
     const { phone, message } = req.body;
+    const accountId = isValidWhatsAppAccount(req.body && req.body.accountId) ? req.body.accountId : 'bot-1';
     await sendWhatsApp(phone, message, 'manual', {
       sentByUsername: req.user && req.user.username,
-      sentByName: req.user && req.user.name
+      sentByName: req.user && req.user.name,
+      accountId
     });
     res.json({ success: true });
   } catch (error) {
@@ -1810,6 +3202,9 @@ app.get('/messages/conversations', requireLoggedIn, async (req, res) => {
 app.post('/messages/conversations/bucket', requirePrivileged, (req, res) => {
   try {
     const chatId = String(req.body && req.body.chatId || '').trim();
+    const accountId = isValidWhatsAppAccount(req.body && req.body.accountId)
+      ? String(req.body.accountId).trim()
+      : getDefaultWhatsAppAccountId(req.user);
     const bucket = String(req.body && req.body.bucket || '').trim().toLowerCase();
 
     if (!chatId || !['main', 'other'].includes(bucket)) {
@@ -1819,17 +3214,20 @@ app.post('/messages/conversations/bucket', requirePrivileged, (req, res) => {
       });
     }
 
-    if (!canReadChat(req.user, chatId)) {
+    if (!canReadChat(req.user, chatId, accountId)) {
       return res.status(403).json({
         success: false,
-        error: 'Chat fuera de los grupos asignados'
+        error: canAccessWhatsAppAccount(req.user, accountId)
+          ? 'Chat fuera de los grupos asignados'
+          : 'Sesion WhatsApp no asignada al usuario'
       });
     }
 
     const override = setWhatsAppConversationBucketOverride(
       chatId,
       bucket,
-      req.user && req.user.username || ''
+      req.user && req.user.username || '',
+      accountId
     );
     const buckets = listConversationBucketsForUser(req.user, req.query.limit);
 
@@ -1850,6 +3248,9 @@ app.post('/messages/conversations/bucket', requirePrivileged, (req, res) => {
 app.get('/messages', requireLoggedIn, async (req, res) => {
   try {
     const chatId = String(req.query.chatId || '').trim();
+    const accountId = isValidWhatsAppAccount(req.query.accountId)
+      ? String(req.query.accountId).trim()
+      : getDefaultWhatsAppAccountId(req.user);
 
     if (!chatId) {
       return res.status(400).json({
@@ -1858,18 +3259,20 @@ app.get('/messages', requireLoggedIn, async (req, res) => {
       });
     }
 
-    if (!canReadChat(req.user, chatId)) {
+    if (!canReadChat(req.user, chatId, accountId)) {
       return res.status(403).json({
         success: false,
         error: 'Chat fuera de los grupos asignados'
       });
     }
 
-    await backfillChatMedia(chatId);
+    await backfillChatMedia(chatId, accountId);
 
     res.json({
       success: true,
-      messages: listWhatsAppMessages(chatId, req.query.limit)
+      messages: listWhatsAppMessages(chatId, req.query.limit, {
+        accountId
+      })
     });
   } catch (error) {
     res.status(500).json({
@@ -1881,7 +3284,14 @@ app.get('/messages', requireLoggedIn, async (req, res) => {
 
 app.post('/messages/validate-phone', requirePrivileged, async (req, res) => {
   try {
-    const result = await validateWhatsAppTarget(req.body && req.body.phone);
+    const accountId = isValidWhatsAppAccount(req.body && req.body.accountId) ? req.body.accountId : getDefaultWhatsAppAccountId(req.user);
+    if (!canAccessWhatsAppAccount(req.user, accountId)) {
+      return res.status(403).json({
+        success: false,
+        error: 'Sesion WhatsApp no asignada al usuario'
+      });
+    }
+    const result = await validateWhatsAppTarget(req.body && req.body.phone, accountId);
 
     res.json({
       success: true,
@@ -1902,6 +3312,9 @@ app.post('/messages/send', requirePrivileged, async (req, res) => {
     const targetChatId = String(req.body && req.body.chatId || '').trim();
     const targetPhone = String(req.body && req.body.phone || '').trim();
     const ticketExternalId = String(req.body && req.body.ticketExternalId || '').trim();
+    const accountId = isValidWhatsAppAccount(req.body && req.body.accountId)
+      ? String(req.body.accountId).trim()
+      : getDefaultWhatsAppAccountId(req.user);
     const target = targetChatId || targetPhone;
     const cleanPhone = normalizeChatPhone(targetPhone || target);
     const cleanMessage = String(req.body && req.body.message || '').trim();
@@ -1920,16 +3333,19 @@ app.post('/messages/send', requirePrivileged, async (req, res) => {
       });
     }
 
-    if (!canSendToTarget(req.user, targetChatId, targetPhone || target)) {
+    if (!canSendToTarget(req.user, targetChatId, targetPhone || target, accountId)) {
       return res.status(403).json({
         success: false,
-        error: 'Chat fuera de los grupos asignados'
+        error: canAccessWhatsAppAccount(req.user, accountId)
+          ? 'Chat fuera de los grupos asignados'
+          : 'Sesion WhatsApp no asignada al usuario'
       });
     }
 
     const sentMessage = await sendWhatsApp(target, cleanMessage, 'inbox', {
       sentByUsername: req.user && req.user.username,
-      sentByName: req.user && req.user.name
+      sentByName: req.user && req.user.name,
+      accountId
     });
     const fallbackChatId = isDirectChatId(target) ? target : `${cleanPhone}@c.us`;
     const chatId = getMessageChatId(sentMessage, fallbackChatId);
@@ -1946,7 +3362,8 @@ app.post('/messages/send', requirePrivileged, async (req, res) => {
       ack: Number.isFinite(Number(sentMessage && sentMessage.ack)) ? Number(sentMessage.ack) : null,
       source: 'inbox',
       sent_by_username: req.user && req.user.username || null,
-      sent_by_name: req.user && req.user.name || null
+      sent_by_name: req.user && req.user.name || null,
+      whatsapp_account: accountId
     };
 
     let ticket = null;
@@ -1963,6 +3380,400 @@ app.post('/messages/send', requirePrivileged, async (req, res) => {
   } catch (error) {
     const status = error.message.includes('todavia no esta conectado') ? 503 : 500;
     res.status(status).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+app.get('/api/status', requireLoggedIn, async (req, res) => {
+  const staleErrors = await secondDb.markStaleMessageQueueErrors().catch(() => 0);
+  const ownerUsername = getScopedOwnerUsername(req.user);
+  const [whatsapp, mysqlStatus, queueStats] = await Promise.all([
+    getWhatsAppStatus('bot-2'),
+    getSecondDatabaseStatus(),
+    secondDb.getMessageQueueStats({ ownerUsername }).catch(() => null)
+  ]);
+
+  res.json({
+    success: true,
+    whatsapp,
+    mysql: mysqlStatus,
+    messageQueue: {
+      ...secondMessageQueueState,
+      running: secondMessageQueueRunning,
+      staleErrors,
+      stats: queueStats
+    },
+    mediaLimitBytes: secondMaxStoredMediaBytes
+  });
+});
+
+app.get('/api/message-templates', requireLoggedIn, (req, res) => {
+  res.json(getMessageTemplatesPayload());
+});
+
+app.get('/api/message-templates/:id', requireLoggedIn, (req, res) => {
+  const template = getSecondMessageTemplateRecords().find(record => record.id === String(req.params.id || '').trim());
+
+  if (!template) {
+    return res.status(404).json({
+      success: false,
+      error: 'Template no encontrado'
+    });
+  }
+
+  return res.json({
+    success: true,
+    template,
+    placeholders: secondMessageTemplatePlaceholders
+  });
+});
+
+app.post('/api/message-templates', requirePrivileged, (req, res) => {
+  try {
+    const body = req.body || {};
+    const isLegacyReplace = Object.prototype.hasOwnProperty.call(body, 'template') ||
+      Object.prototype.hasOwnProperty.call(body, 'templates');
+    const isCreate = Object.prototype.hasOwnProperty.call(body, 'body') ||
+      Object.prototype.hasOwnProperty.call(body, 'text') ||
+      Object.prototype.hasOwnProperty.call(body, 'name') ||
+      Object.prototype.hasOwnProperty.call(body, 'title');
+
+    if (isCreate && !isLegacyReplace) {
+      return res.status(201).json(getMessageTemplatesPayload(createSecondMessageTemplate(body)));
+    }
+
+    persistSecondMessageTemplateRecords(body.template || body.templates);
+    return res.json(getMessageTemplatesPayload());
+  } catch (error) {
+    return res.status(400).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+app.put('/api/message-templates/:id', requirePrivileged, (req, res) => {
+  try {
+    res.json(getMessageTemplatesPayload(updateSecondMessageTemplate(req.params.id, req.body || {})));
+  } catch (error) {
+    res.status(error.message === 'Template no encontrado' ? 404 : 400).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+app.delete('/api/message-templates/:id', requirePrivileged, (req, res) => {
+  try {
+    res.json(getMessageTemplatesPayload(deleteSecondMessageTemplate(req.params.id)));
+  } catch (error) {
+    res.status(error.message === 'Template no encontrado' ? 404 : 400).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+app.get('/api/message-queue/status', requireLoggedIn, async (req, res) => {
+  try {
+    const staleErrors = await secondDb.markStaleMessageQueueErrors();
+    const ownerUsername = getScopedOwnerUsername(req.user);
+    res.json({
+      success: true,
+      scheduler: {
+        ...secondMessageQueueState,
+        running: secondMessageQueueRunning,
+        staleErrors
+      },
+      stats: await secondDb.getMessageQueueStats({ ownerUsername })
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+app.get('/api/message-queue', requireLoggedIn, async (req, res) => {
+  try {
+    const staleErrors = await secondDb.markStaleMessageQueueErrors();
+    const ownerUsername = getScopedOwnerUsername(req.user);
+    res.json({
+      success: true,
+      staleErrors,
+      stats: await secondDb.getMessageQueueStats({ ownerUsername }),
+      items: await secondDb.listMessageQueueItems({
+        limit: req.query.limit,
+        status: req.query.status,
+        ownerUsername
+      })
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+app.post('/api/message-queue/:id/cancel', requireLoggedIn, async (req, res) => {
+  try {
+    const ownerUsername = getScopedOwnerUsername(req.user);
+    const item = await secondDb.cancelMessageQueueItem(req.params.id, { ownerUsername });
+    res.json({
+      success: true,
+      item,
+      stats: await secondDb.getMessageQueueStats({ ownerUsername })
+    });
+  } catch (error) {
+    res.status(400).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+app.post('/api/message-queue/run', requirePrivileged, async (req, res) => {
+  try {
+    res.json({
+      success: true,
+      result: await processSecondMessageQueue()
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+app.post('/api/message-queue', requirePrivileged, async (req, res) => {
+  try {
+    const body = req.body || {};
+    const rows = Array.isArray(body.rows) ? body.rows : [];
+    const messages = Array.isArray(body.messages) ? body.messages : [];
+    const ownerUsername = getUserOwnerUsername(req.user);
+    const items = [];
+
+    rows.forEach(row => items.push(createQueueItemFromRow(row)));
+
+    for (const message of messages) {
+      const variables = message.variables && typeof message.variables === 'object' ? message.variables : {};
+      const rawTarget = String(message.target || message.chatId || message.phone || getQueueTargetFromVariables(variables)).trim();
+      const target = normalizeSecondQueuePhone(rawTarget) || rawTarget;
+      items.push({
+        queueKey: String(message.queueKey || '').trim() || null,
+        target,
+        phone: normalizeChatPhone(message.phone || target),
+        source: String(message.source || 'second-queue').trim() || 'second-queue',
+        variables
+      });
+    }
+
+    if (!items.length && (body.target || body.phone || body.chatId)) {
+      const variables = body.variables && typeof body.variables === 'object' ? body.variables : {};
+      const rawTarget = String(body.target || body.chatId || body.phone || getQueueTargetFromVariables(variables)).trim();
+      const target = normalizeSecondQueuePhone(rawTarget) || rawTarget;
+      items.push({
+        queueKey: String(body.queueKey || '').trim() || null,
+        target,
+        phone: normalizeChatPhone(body.phone || target),
+        source: String(body.source || 'second-queue').trim() || 'second-queue',
+        variables
+      });
+    }
+
+    const validItems = items
+      .filter(item => item.target && isValidSecondQueueTarget(item.target))
+      .map(item => ({ ...item, ownerUsername }));
+
+    if (!validItems.length) {
+      throw new Error('No hay mensajes validos para encolar');
+    }
+
+    const queued = await secondDb.enqueueMessageQueueItems(validItems);
+    res.json({
+      success: true,
+      queued: queued.length,
+      skipped: items.length - validItems.length,
+      items: queued,
+      stats: await secondDb.getMessageQueueStats({ ownerUsername: getScopedOwnerUsername(req.user) })
+    });
+  } catch (error) {
+    res.status(400).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+async function handlePhantomConsultaMasiva(req, res) {
+  try {
+    const requestBody = req.body && typeof req.body === 'object' ? req.body : {};
+    const rawEstado = req.query.estado ?? requestBody.estado;
+    const estado = rawEstado === undefined || rawEstado === null ? '' : normalizePhantomEstado(rawEstado, '');
+    const excludeEstados = String(req.query.excludeEstados ?? requestBody.excludeEstados ?? '')
+      .split(',')
+      .map(item => item.trim())
+      .filter(Boolean);
+
+    if (estado || excludeEstados.length) {
+      const defaultLimit = parsePositiveInteger(process.env.PHANTOM_CONSULTA_LIMIT, 10);
+      const limit = Math.min(parsePositiveInteger(req.query.limit ?? requestBody.limit, defaultLimit), 500);
+      const page = parsePositiveInteger(req.query.page ?? requestBody.page, 0);
+      const offset = req.query.offset !== undefined || requestBody.offset !== undefined
+        ? parseNonNegativeInteger(req.query.offset ?? requestBody.offset, 0)
+        : page ? (page - 1) * limit : 0;
+      const result = await secondDb.listPhantomBajaClients({
+        estado,
+        excludeEstados,
+        search: req.query.search ?? requestBody.search,
+        limit,
+        offset,
+        sortKey: req.query.sortKey ?? requestBody.sortKey,
+        sortDirection: req.query.sortDirection ?? requestBody.sortDirection
+      });
+      const syncStatus = await secondDb.getPhantomBajaSyncStatus().catch(() => null);
+
+      return res.json({
+        success: true,
+        rows: result.rows,
+        pagination: {
+          limit: result.limit,
+          offset: result.offset,
+          page: Math.floor(result.offset / result.limit) + 1,
+          returned: result.rows.length,
+          total: result.total,
+          hasNextPage: result.hasNextPage
+        },
+        estado,
+        excludeEstados,
+        source: 'db',
+        sync: {
+          ...phantomBajaSyncState,
+          database: syncStatus
+        },
+        receivedAt: new Date().toISOString()
+      });
+    }
+
+    const result = await fetchPhantomConsultaMasivaRows({
+      estado,
+      limit: req.query.limit ?? requestBody.limit,
+      offset: req.query.offset ?? requestBody.offset,
+      page: req.query.page ?? requestBody.page
+    });
+
+    return res.json({
+      success: true,
+      rows: result.rows,
+      pagination: result.pagination,
+      estado: result.estado,
+      source: 'phantom',
+      receivedAt: new Date().toISOString()
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+}
+
+app.get('/api/phantom/consulta-masiva', requireLoggedIn, handlePhantomConsultaMasiva);
+app.post('/api/phantom/consulta-masiva', requireLoggedIn, handlePhantomConsultaMasiva);
+
+app.post('/api/phantom/disponibilidad-nap', requireLoggedIn, async (req, res) => {
+  try {
+    res.json({
+      success: true,
+      data: await fetchPhantomNapAvailability(req.body || {}),
+      receivedAt: new Date().toISOString()
+    });
+  } catch (error) {
+    res.status(400).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+app.get('/api/phantom/cliente-avanzada', requireLoggedIn, async (req, res) => {
+  try {
+    res.json({
+      success: true,
+      data: await fetchPhantomAdvancedClient(req.query || {}),
+      receivedAt: new Date().toISOString()
+    });
+  } catch (error) {
+    res.status(400).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+app.post('/api/phantom/cliente-avanzada', requireLoggedIn, async (req, res) => {
+  try {
+    res.json({
+      success: true,
+      data: await fetchPhantomAdvancedClient(req.body || {}),
+      receivedAt: new Date().toISOString()
+    });
+  } catch (error) {
+    res.status(400).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+app.post('/api/phantom/tickets/comunicacion', requireLoggedIn, async (req, res) => {
+  try {
+    const ticket = await createPhantomSupportTicket({
+      ...(req.body || {}),
+      plataforma: getPhantomPlatformUserName(req.user)
+    });
+    res.json({
+      success: true,
+      ticket,
+      message: null,
+      receivedAt: new Date().toISOString()
+    });
+  } catch (error) {
+    res.status(400).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+app.get('/api/phantom/baja/sync-status', requireLoggedIn, async (req, res) => {
+  try {
+    res.json({
+      success: true,
+      scheduler: phantomBajaSyncState,
+      database: await secondDb.getPhantomBajaSyncStatus()
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+app.post('/api/phantom/baja/sync', requirePrivileged, async (req, res) => {
+  try {
+    res.json({
+      success: true,
+      result: await syncPhantomBajaClients('manual')
+    });
+  } catch (error) {
+    res.status(500).json({
       success: false,
       error: error.message
     });
@@ -2053,12 +3864,17 @@ app.get('/tickets', requireLoggedIn, (req, res) => {
 });
 
 app.get('/tickets/job-status', requireLoggedIn, async (req, res) => {
-  const whatsapp = await getWhatsAppStatus();
+  const defaultAccountId = getDefaultWhatsAppAccountId(req.user);
+  const whatsapp = await getWhatsAppStatus(defaultAccountId);
+  const allowedAccountIds = new Set(getAllowedWhatsAppAccountIds(req.user));
+  const whatsappAccountsStatus = (await getWhatsAppAccountsStatus())
+    .filter(account => allowedAccountIds.has(account.id));
 
   res.json({
     success: true,
     whatsappReady: whatsapp.ready,
     whatsapp,
+    whatsappAccounts: whatsappAccountsStatus,
     job: getTicketJobStatus()
   });
 });
@@ -2086,9 +3902,10 @@ app.get('/tickets/:externalId', requireLoggedIn, (req, res) => {
   }
 });
 
-app.post('/whatsapp/reconnect', requirePrivileged, async (req, res) => {
+app.post('/whatsapp/reconnect', requireAdmin, async (req, res) => {
   try {
-    const whatsapp = await restartWhatsAppClient('manual');
+    const accountId = isValidWhatsAppAccount(req.body && req.body.accountId) ? req.body.accountId : 'bot-1';
+    const whatsapp = await restartWhatsAppClient('manual', { accountId });
     res.json({
       success: true,
       whatsapp
@@ -2101,9 +3918,26 @@ app.post('/whatsapp/reconnect', requirePrivileged, async (req, res) => {
   }
 });
 
-app.post('/whatsapp/reset-auth', requirePrivileged, async (req, res) => {
+app.put('/whatsapp/accounts/:id', requireAdmin, async (req, res) => {
   try {
+    const account = updateWhatsAppAccountLabel(req.params.id, req.body && req.body.label);
+    res.json({
+      success: true,
+      account: await getWhatsAppStatus(account.id)
+    });
+  } catch (error) {
+    res.status(400).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+app.post('/whatsapp/reset-auth', requireAdmin, async (req, res) => {
+  try {
+    const accountId = isValidWhatsAppAccount(req.body && req.body.accountId) ? req.body.accountId : 'bot-1';
     const whatsapp = await restartWhatsAppClient('reset-auth', {
+      accountId,
       resetAuth: true
     });
     res.json({
@@ -2324,6 +4158,19 @@ app.post('/tickets/retry-notifications', requirePrivileged, async (req, res) => 
     });
   }
 });
+
+secondDb.pingDatabase().catch(error => {
+  console.warn('MySQL de clientes no esta listo:', error.message);
+});
+
+startSecondMessageQueueScheduler();
+startPhantomBajaSyncScheduler();
+syncPhantomBajaClients('startup')
+  .then(result => console.log('[PHANTOM] Corrida inicial:', result))
+  .catch(error => console.error('[PHANTOM] Error corrida inicial:', error));
+processSecondMessageQueue()
+  .then(result => console.log('[QUEUE] Corrida inicial:', result))
+  .catch(error => console.error('[QUEUE] Error corrida inicial:', error));
 
 startTicketScheduler({
   isWhatsAppReady,

@@ -7,18 +7,18 @@
   <title>Cola de mensajes</title>
   <style>
     :root {
-      --bg: #e7f0ed;
+      --bg: #f6f7f9;
       --panel: #ffffff;
-      --panel-soft: #f7fbf9;
-      --line: #d8e5df;
-      --text: #172722;
-      --muted: #61736d;
-      --accent: #00a884;
-      --accent-dark: #008069;
-      --accent-soft: #d9fdd3;
-      --accent-pale: #eef8f4;
-      --good: #008069;
-      --good-soft: #dff8ea;
+      --panel-soft: #f8fbff;
+      --line: #d9dee7;
+      --text: #17202a;
+      --muted: #657386;
+      --accent: #2563eb;
+      --accent-dark: #2563eb;
+      --accent-soft: #eaf1ff;
+      --accent-pale: #eaf1ff;
+      --good: #11845b;
+      --good-soft: #e7f7ef;
       --warn: #a16207;
       --warn-soft: #fff4d6;
       --bad: #bd2c2c;
@@ -51,7 +51,7 @@
 
     .app-header {
       grid-column: 1 / -1;
-      border-bottom: 1px solid #006c58;
+      border-bottom: 1px solid #1d4ed8;
       background: var(--accent-dark);
       color: #ffffff;
     }
@@ -84,7 +84,7 @@
 
     .subtitle {
       margin-top: 4px;
-      color: #d2f4e8;
+      color: #dbeafe;
       font-size: 13px;
     }
 
@@ -119,19 +119,26 @@
     }
 
     .nav-group {
-      border-top: 1px solid var(--line);
-      margin-top: 6px;
-      padding-top: 10px;
       display: grid;
       gap: 4px;
     }
 
-    .nav-group-label {
-      color: var(--muted);
-      font-size: 12px;
-      font-weight: 700;
-      padding: 0 12px 2px;
-      text-transform: uppercase;
+    .nav-group summary {
+      list-style: none;
+    }
+
+    .nav-group summary::-webkit-details-marker {
+      display: none;
+    }
+
+    .nav-group .nav-link {
+      width: 100%;
+    }
+
+    .nav-submenu {
+      display: grid;
+      gap: 4px;
+      padding-left: 16px;
     }
 
     button,
@@ -163,12 +170,13 @@
       display: inline-flex;
       align-items: center;
       justify-content: flex-start;
+      gap: 8px;
       white-space: nowrap;
     }
 
-    .nav-group .nav-link {
+    .nav-submenu .nav-link {
       min-height: 34px;
-      padding-left: 22px;
+      font-size: 14px;
     }
 
     .nav-link:hover,
@@ -179,7 +187,7 @@
     }
 
     .session-chip {
-      color: #e8fff6;
+      color: #eff6ff;
       cursor: default;
       background: rgba(255, 255, 255, 0.14);
       border-color: rgba(255, 255, 255, 0.24);
@@ -398,15 +406,20 @@
     </header>
     <aside class="sidebar">
       <nav class="primary-nav" aria-label="Navegacion principal">
-        <a class="nav-link" href="/mensajes">Mensajes</a>
-        <a class="nav-link active" href="/cola">Cola</a>
-        <div class="nav-group" aria-label="Clientes">
-          <div class="nav-group-label">Clientes</div>
-          <a class="nav-link" href="/phantom/suspendidos">Suspendidos</a>
-          <a class="nav-link" href="/phantom/baja">Baja</a>
-          <a class="nav-link" href="/phantom/activos">Activos</a>
-        </div>
-        <a id="usersLink" class="nav-link" href="/usuarios" hidden>Usuarios</a>
+        <a class="nav-link" href="/dashboard"><span aria-hidden="true">&#9638;</span><span>Tickets</span></a>
+        <a class="nav-link" href="/mensajes"><span aria-hidden="true">&#9993;</span><span>Mensajes</span></a>
+        <a class="nav-link active" href="/cola"><span aria-hidden="true">&#9776;</span><span>Cola</span></a>
+        <details class="nav-group">
+          <summary class="nav-link"><span aria-hidden="true">&#128101;</span><span>Clientes</span></summary>
+          <div class="nav-submenu">
+            <a class="nav-link" href="/phantom/suspendidos">Suspendidos</a>
+            <a class="nav-link" href="/phantom/activos">Activos</a>
+            <a class="nav-link" href="/phantom/baja">Bajas</a>
+          </div>
+        </details>
+        <a class="nav-link" href="/errores"><span aria-hidden="true">&#9888;</span><span>Errores de envio</span></a>
+        <a id="whatsappLink" class="nav-link" href="/whatsapp" hidden><span aria-hidden="true">&#9742;</span><span>WhatsApp</span></a>
+        <a id="usersLink" class="nav-link" href="/usuarios" hidden><span aria-hidden="true">&#128100;</span><span>Usuarios</span></a>
       </nav>
       <div class="sidebar-actions">
         <button id="refreshBtn" class="primary" type="button">Actualizar</button>
@@ -485,7 +498,8 @@
       sessionBadge: document.getElementById('sessionBadge'),
       statusFilter: document.getElementById('statusFilter'),
       tableWrap: document.getElementById('tableWrap'),
-      usersLink: document.getElementById('usersLink')
+      usersLink: document.getElementById('usersLink'),
+      whatsappLink: document.getElementById('whatsappLink')
     };
 
     function escapeHtml(value) {
@@ -646,6 +660,7 @@
       state.user = data.user;
       els.sessionBadge.textContent = data.user.name + ' | ' + String(data.user.role || '').toUpperCase();
       els.usersLink.hidden = data.user.role !== 'admin';
+      els.whatsappLink.hidden = data.user.role !== 'admin';
     }
 
     async function loadQueue() {

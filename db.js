@@ -72,6 +72,7 @@ function initializeDatabase(database = getDb()) {
       source TEXT,
       sent_by_username TEXT,
       sent_by_name TEXT,
+      whatsapp_account TEXT NOT NULL DEFAULT 'bot-1',
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
 
@@ -154,11 +155,13 @@ function initializeDatabase(database = getDb()) {
       ON whatsapp_chat_aliases (phone);
 
     CREATE TABLE IF NOT EXISTS whatsapp_conversation_bucket_overrides (
-      chat_id TEXT PRIMARY KEY,
+      whatsapp_account TEXT NOT NULL DEFAULT 'bot-1',
+      chat_id TEXT NOT NULL,
       bucket TEXT NOT NULL CHECK (bucket IN ('main', 'other')),
       updated_by TEXT,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (whatsapp_account, chat_id)
     );
 
     CREATE INDEX IF NOT EXISTS idx_whatsapp_conversation_bucket_overrides_bucket
@@ -179,7 +182,15 @@ function initializeDatabase(database = getDb()) {
   ensureWhatsAppMessageColumn(database, 'media_filename', 'TEXT');
   ensureWhatsAppMessageColumn(database, 'sent_by_username', 'TEXT');
   ensureWhatsAppMessageColumn(database, 'sent_by_name', 'TEXT');
+  ensureWhatsAppMessageColumn(database, 'whatsapp_account', "TEXT NOT NULL DEFAULT 'bot-1'");
+  database.exec(`
+    CREATE INDEX IF NOT EXISTS idx_whatsapp_messages_account_chat_time
+      ON whatsapp_messages (whatsapp_account, chat_id, timestamp_ts);
+  `);
+  ensureWhatsAppConversationBucketOverrideSchema(database);
   ensureUserColumn(database, 'groups_json', "TEXT NOT NULL DEFAULT '[]'");
+  ensureUserColumn(database, 'whatsapp_account', "TEXT NOT NULL DEFAULT 'bot-1'");
+  ensureUserColumn(database, 'whatsapp_accounts_json', "TEXT NOT NULL DEFAULT '[\"bot-1\"]'");
   ensureAutomaticMessageTemplateColumn(database, 'active', 'INTEGER NOT NULL DEFAULT 1');
   ensureAutomaticMessageTemplateColumn(database, 'sort_order', 'INTEGER NOT NULL DEFAULT 0');
 }
@@ -223,6 +234,63 @@ function ensureAutomaticMessageTemplateColumn(database, columnName, definition) 
 function getAppState(key, fallback = null) {
   const row = getDb().prepare('SELECT value FROM app_state WHERE key = ?').get(String(key || ''));
   return row ? row.value : fallback;
+}
+
+function ensureWhatsAppConversationBucketOverrideSchema(database) {
+  const columns = database.prepare('PRAGMA table_info(whatsapp_conversation_bucket_overrides)').all();
+  const hasAccount = columns.some(column => column.name === 'whatsapp_account');
+  const pkColumns = columns
+    .filter(column => column.pk)
+    .sort((left, right) => left.pk - right.pk)
+    .map(column => column.name);
+
+  if (hasAccount && pkColumns.join(',') === 'whatsapp_account,chat_id') {
+    return;
+  }
+
+  const legacyTable = 'whatsapp_conversation_bucket_overrides_legacy_migration';
+  database.exec(`
+    DROP TABLE IF EXISTS ${legacyTable};
+    ALTER TABLE whatsapp_conversation_bucket_overrides RENAME TO ${legacyTable};
+    CREATE TABLE whatsapp_conversation_bucket_overrides (
+      whatsapp_account TEXT NOT NULL DEFAULT 'bot-1',
+      chat_id TEXT NOT NULL,
+      bucket TEXT NOT NULL CHECK (bucket IN ('main', 'other')),
+      updated_by TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (whatsapp_account, chat_id)
+    );
+  `);
+
+  const accountExpression = hasAccount
+    ? "COALESCE(NULLIF(whatsapp_account, ''), 'bot-1')"
+    : "'bot-1'";
+
+  database.exec(`
+    INSERT OR REPLACE INTO whatsapp_conversation_bucket_overrides (
+      whatsapp_account,
+      chat_id,
+      bucket,
+      updated_by,
+      created_at,
+      updated_at
+    )
+    SELECT
+      ${accountExpression},
+      chat_id,
+      bucket,
+      updated_by,
+      created_at,
+      updated_at
+    FROM ${legacyTable}
+    WHERE chat_id IS NOT NULL AND TRIM(chat_id) <> '';
+
+    DROP TABLE ${legacyTable};
+
+    CREATE INDEX IF NOT EXISTS idx_whatsapp_conversation_bucket_overrides_bucket
+      ON whatsapp_conversation_bucket_overrides (bucket);
+  `);
 }
 
 function normalizePhoneList(phones) {
@@ -1028,29 +1096,31 @@ function refreshWhatsAppChatAliases(database = getDb()) {
 
 function listWhatsAppConversationBucketOverrides() {
   return getDb().prepare(`
-    SELECT chat_id, bucket, updated_by, updated_at
+    SELECT whatsapp_account, chat_id, bucket, updated_by, updated_at
     FROM whatsapp_conversation_bucket_overrides
   `).all();
 }
 
-function getWhatsAppConversationBucketOverride(chatId) {
+function getWhatsAppConversationBucketOverride(chatId, accountId = 'bot-1') {
   const cleanChatId = String(chatId || '').trim();
+  const whatsappAccount = normalizeWhatsAppAccount(accountId);
 
   if (!cleanChatId) {
     return null;
   }
 
   return getDb().prepare(`
-    SELECT chat_id, bucket, updated_by, updated_at
+    SELECT whatsapp_account, chat_id, bucket, updated_by, updated_at
     FROM whatsapp_conversation_bucket_overrides
-    WHERE chat_id = ?
-  `).get(cleanChatId) || null;
+    WHERE whatsapp_account = ? AND chat_id = ?
+  `).get(whatsappAccount, cleanChatId) || null;
 }
 
-function setWhatsAppConversationBucketOverride(chatId, bucket, updatedBy = '') {
+function setWhatsAppConversationBucketOverride(chatId, bucket, updatedBy = '', accountId = 'bot-1') {
   const cleanChatId = String(chatId || '').trim();
   const cleanBucket = String(bucket || '').trim().toLowerCase();
   const cleanUpdatedBy = String(updatedBy || '').trim() || null;
+  const whatsappAccount = normalizeWhatsAppAccount(accountId);
 
   if (!cleanChatId || !['main', 'other'].includes(cleanBucket)) {
     throw new Error('Faltan datos del cambio de bandeja');
@@ -1058,19 +1128,20 @@ function setWhatsAppConversationBucketOverride(chatId, bucket, updatedBy = '') {
 
   getDb().prepare(`
     INSERT INTO whatsapp_conversation_bucket_overrides (
+      whatsapp_account,
       chat_id,
       bucket,
       updated_by,
       updated_at
     )
-    VALUES (?, ?, ?, CURRENT_TIMESTAMP)
-    ON CONFLICT(chat_id) DO UPDATE SET
+    VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+    ON CONFLICT(whatsapp_account, chat_id) DO UPDATE SET
       bucket = excluded.bucket,
       updated_by = excluded.updated_by,
       updated_at = CURRENT_TIMESTAMP
-  `).run(cleanChatId, cleanBucket, cleanUpdatedBy);
+  `).run(whatsappAccount, cleanChatId, cleanBucket, cleanUpdatedBy);
 
-  return getWhatsAppConversationBucketOverride(cleanChatId);
+  return getWhatsAppConversationBucketOverride(cleanChatId, whatsappAccount);
 }
 
 function normalizeMessagePhone(phone, chatId) {
@@ -1109,6 +1180,10 @@ function updateWhatsAppMessageAck(id, ack) {
   return getWhatsAppMessage(cleanId);
 }
 
+function normalizeWhatsAppAccount(value) {
+  return String(value || 'bot-1').trim() || 'bot-1';
+}
+
 function saveWhatsAppMessage(message = {}) {
   const chatId = String(message.chatId || '').trim();
   const direction = message.direction === 'incoming' ? 'incoming' : 'outgoing';
@@ -1116,6 +1191,7 @@ function saveWhatsAppMessage(message = {}) {
   const timestamp = Number.isFinite(timestampTs) && timestampTs > 0 ? timestampTs : Date.now();
   const body = String(message.body || '').trim();
   const id = String(message.id || `${direction}-${chatId}-${timestamp}`).trim();
+  const whatsappAccount = normalizeWhatsAppAccount(message.whatsappAccount || message.accountId);
 
   if (!id || !chatId || !body) {
     throw new Error('Faltan datos del mensaje');
@@ -1138,9 +1214,10 @@ function saveWhatsAppMessage(message = {}) {
       ack,
       source,
       sent_by_username,
-      sent_by_name
+      sent_by_name,
+      whatsapp_account
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       chat_id = CASE
         WHEN excluded.source = 'whatsapp'
@@ -1166,6 +1243,7 @@ function saveWhatsAppMessage(message = {}) {
       ack = COALESCE(excluded.ack, whatsapp_messages.ack),
       sent_by_username = COALESCE(excluded.sent_by_username, whatsapp_messages.sent_by_username),
       sent_by_name = COALESCE(excluded.sent_by_name, whatsapp_messages.sent_by_name),
+      whatsapp_account = COALESCE(excluded.whatsapp_account, whatsapp_messages.whatsapp_account),
       source = CASE
         WHEN excluded.source = 'whatsapp'
           AND whatsapp_messages.source IN ('ticket', 'ticket-response', 'notification-channel', 'manual', 'inbox', 'bot')
@@ -1188,30 +1266,37 @@ function saveWhatsAppMessage(message = {}) {
     Number.isFinite(Number(message.ack)) ? Number(message.ack) : null,
     String(message.source || '').trim() || null,
     String(message.sentByUsername || '').trim() || null,
-    String(message.sentByName || '').trim() || null
+    String(message.sentByName || '').trim() || null,
+    whatsappAccount
   );
 
   return getWhatsAppMessage(id);
 }
 
-function listWhatsAppConversations(limit = 100) {
+function listWhatsAppConversations(limit = 100, options = {}) {
   const safeLimit = Math.min(Math.max(Number(limit) || 100, 1), 1000);
+  const accountFilter = String(options.whatsappAccount || options.accountId || '').trim();
   const database = getDb();
 
   refreshWhatsAppChatAliases(database);
+
+  const whereClause = accountFilter ? 'WHERE COALESCE(whatsapp_account, ?) = ?' : '';
+  const whereParams = accountFilter ? ['bot-1', accountFilter] : [];
 
   const rows = database.prepare(`
     WITH ranked AS (
       SELECT
         *,
         ROW_NUMBER() OVER (
-          PARTITION BY chat_id
+          PARTITION BY COALESCE(whatsapp_account, 'bot-1'), chat_id
           ORDER BY timestamp_ts DESC, created_at DESC, id DESC
         ) AS row_number
       FROM whatsapp_messages
+      ${whereClause}
     ),
     counts AS (
       SELECT
+        COALESCE(whatsapp_account, 'bot-1') AS whatsapp_account,
         chat_id,
         COUNT(*) AS total_messages,
         SUM(CASE WHEN direction = 'incoming' THEN 1 ELSE 0 END) AS incoming_messages,
@@ -1230,16 +1315,19 @@ function listWhatsAppConversations(limit = 100) {
           ELSE 0
         END) AS manual_started_messages
       FROM whatsapp_messages
-      GROUP BY chat_id
+      ${whereClause}
+      GROUP BY COALESCE(whatsapp_account, 'bot-1'), chat_id
     )
     SELECT
       ranked.id,
+      COALESCE(ranked.whatsapp_account, 'bot-1') AS whatsapp_account,
       ranked.chat_id,
       COALESCE(
         (
           SELECT latest_phone.phone
           FROM whatsapp_messages latest_phone
           WHERE latest_phone.chat_id = ranked.chat_id
+            AND COALESCE(latest_phone.whatsapp_account, 'bot-1') = COALESCE(ranked.whatsapp_account, 'bot-1')
             AND latest_phone.phone IS NOT NULL
             AND latest_phone.phone <> ''
             AND NOT (
@@ -1261,6 +1349,7 @@ function listWhatsAppConversations(limit = 100) {
           SELECT latest_contact.contact_name
           FROM whatsapp_messages latest_contact
           WHERE latest_contact.chat_id = ranked.chat_id
+            AND COALESCE(latest_contact.whatsapp_account, 'bot-1') = COALESCE(ranked.whatsapp_account, 'bot-1')
             AND latest_contact.direction = 'incoming'
             AND latest_contact.contact_name IS NOT NULL
             AND latest_contact.contact_name <> ''
@@ -1284,13 +1373,18 @@ function listWhatsAppConversations(limit = 100) {
       counts.app_started_messages,
       counts.manual_started_messages
     FROM ranked
-    JOIN counts ON counts.chat_id = ranked.chat_id
+    JOIN counts
+      ON counts.chat_id = ranked.chat_id
+      AND counts.whatsapp_account = COALESCE(ranked.whatsapp_account, 'bot-1')
     WHERE ranked.row_number = 1
     ORDER BY ranked.timestamp_ts DESC, ranked.created_at DESC
     LIMIT ?
-  `).all(safeLimit);
+  `).all(...whereParams, ...whereParams, safeLimit);
 
-  const chatIds = new Set(rows.map(row => String(row.chat_id || '').trim()).filter(Boolean));
+  const chatKeys = new Set(rows.map(row => {
+    const chatId = String(row.chat_id || '').trim();
+    return chatId ? `${normalizeWhatsAppAccount(row.whatsapp_account)}:${chatId}` : '';
+  }).filter(Boolean));
   const aliasRows = listPersistedWhatsAppChatAliases(database);
   const aliasToCanonical = new Map(
     aliasRows.map(row => [
@@ -1302,8 +1396,9 @@ function listWhatsAppConversations(limit = 100) {
   return rows.filter(row => {
     const chatId = String(row.chat_id || '').trim();
     const canonicalChatId = aliasToCanonical.get(chatId);
+    const account = normalizeWhatsAppAccount(row.whatsapp_account);
 
-    return !(canonicalChatId && chatIds.has(canonicalChatId));
+    return !(canonicalChatId && chatKeys.has(`${account}:${canonicalChatId}`));
   });
 }
 
@@ -1314,8 +1409,9 @@ function getMessageVisualDuplicateKeys(message) {
   const chatId = String(message.chat_id || '').trim().toLowerCase();
   const mediaMime = String(message.media_mime || '').trim();
   const mediaFilename = String(message.media_filename || '').trim();
+  const whatsappAccount = normalizeWhatsAppAccount(message.whatsapp_account || message.whatsappAccount);
   const contentKey = direction === 'outgoing'
-    ? JSON.stringify(['outgoing-content', body, mediaMime, mediaFilename])
+    ? JSON.stringify([whatsappAccount, 'outgoing-content', body, mediaMime, mediaFilename])
     : '';
 
   if (!direction || !body) {
@@ -1323,8 +1419,8 @@ function getMessageVisualDuplicateKeys(message) {
   }
 
   return [
-    phone ? JSON.stringify(['phone', direction, phone, body, mediaMime, mediaFilename]) : '',
-    chatId ? JSON.stringify(['chat', direction, chatId, body, mediaMime, mediaFilename]) : '',
+    phone ? JSON.stringify([whatsappAccount, 'phone', direction, phone, body, mediaMime, mediaFilename]) : '',
+    chatId ? JSON.stringify([whatsappAccount, 'chat', direction, chatId, body, mediaMime, mediaFilename]) : '',
     contentKey
   ].filter(Boolean);
 }
@@ -1473,10 +1569,11 @@ function findDirectChatAliases(database, directChatIds) {
   return aliases;
 }
 
-function listWhatsAppMessages(chatId, limit = 200) {
+function listWhatsAppMessages(chatId, limit = 200, options = {}) {
   const cleanChatId = String(chatId || '').trim();
   const safeLimit = Math.min(Math.max(Number(limit) || 200, 1), 500);
   const aliasPhone = isDirectPhoneChatId(cleanChatId) ? normalizeChatPhone(cleanChatId) : '';
+  const accountFilter = String(options.whatsappAccount || options.accountId || '').trim();
 
   if (!cleanChatId) {
     return [];
@@ -1551,6 +1648,7 @@ function listWhatsAppMessages(chatId, limit = 200) {
   const rows = database.prepare(`
     SELECT
       id,
+      COALESCE(whatsapp_account, 'bot-1') AS whatsapp_account,
       chat_id,
       CASE
         WHEN LOWER(chat_id) LIKE '%@lid'
@@ -1576,12 +1674,13 @@ function listWhatsAppMessages(chatId, limit = 200) {
       SELECT *
       FROM whatsapp_messages
       WHERE chat_id IN (${chatIds.map(() => '?').join(',')})
+        ${accountFilter ? "AND COALESCE(whatsapp_account, 'bot-1') = ?" : ''}
         AND chat_id <> 'status@broadcast'
       ORDER BY timestamp_ts DESC, created_at DESC, id DESC
       LIMIT ?
     )
     ORDER BY timestamp_ts ASC, created_at ASC, id ASC
-  `).all(...chatIds, safeLimit);
+  `).all(...chatIds, ...(accountFilter ? [accountFilter] : []), safeLimit);
 
   return dedupeVisualMessages(rows);
 }
@@ -1695,6 +1794,7 @@ module.exports = {
   disableTicketAutomaticMessage,
   ensureAutomaticMessageTemplate,
   getAutomaticMessageTemplate,
+  getAppState,
   getDb,
   getNextAutomaticMessageTemplate,
   getNextTicket,
@@ -1719,6 +1819,7 @@ module.exports = {
   normalizeChatPhone,
   pruneTicketsForDate,
   saveWhatsAppMessage,
+  setAppState,
   setWhatsAppConversationBucketOverride,
   updateAutomaticMessageTemplate,
   updateWhatsAppMessageAck,

@@ -84,11 +84,17 @@ function safeCompare(leftValue, rightValue) {
 }
 
 function publicUser(user) {
+  const whatsappAccounts = Array.isArray(user.whatsappAccounts)
+    ? user.whatsappAccounts
+    : (user.whatsappAccount ? [user.whatsappAccount] : []);
+
   return {
     username: user.username,
     role: user.role,
     name: user.name,
     groups: Array.isArray(user.groups) ? user.groups : [],
+    whatsappAccount: user.whatsappAccount || whatsappAccounts[0] || 'bot-1',
+    whatsappAccounts: whatsappAccounts.length ? whatsappAccounts : ['bot-1'],
     isAdmin: adminRoles.has(user.role),
     isPrivileged: privilegedRoles.has(user.role)
   };
