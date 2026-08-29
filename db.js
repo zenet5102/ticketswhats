@@ -662,6 +662,55 @@ function getTicket(externalId) {
   `).get(externalId);
 }
 
+function listTicketsForAudit(options = {}) {
+  const cleanTicket = String(options.ticket || options.externalId || '').trim();
+  const cleanPhone = normalizeChatPhone(options.phone || '');
+  const cleanClient = String(options.client || options.razonSocial || '').trim();
+  const safeLimit = Math.min(Math.max(Number(options.limit) || 25, 1), 100);
+  const whereParts = [];
+  const params = [];
+
+  if (cleanTicket) {
+    whereParts.push('external_id = ?');
+    params.push(cleanTicket);
+  }
+
+  if (cleanPhone) {
+    whereParts.push(`(
+      phone = ?
+      OR phones_json LIKE ?
+      OR payload_json LIKE ?
+    )`);
+    params.push(cleanPhone, `%${cleanPhone}%`, `%${cleanPhone}%`);
+  }
+
+  if (cleanClient) {
+    const terms = cleanClient.split(/\s+/).map(term => term.trim()).filter(Boolean).slice(0, 6);
+
+    for (const term of terms) {
+      const like = `%${term}%`;
+      whereParts.push(`(
+        razon_social LIKE ?
+        OR delegacion LIKE ?
+        OR payload_json LIKE ?
+      )`);
+      params.push(like, like, like);
+    }
+  }
+
+  if (!whereParts.length) {
+    return [];
+  }
+
+  return getDb().prepare(`
+    SELECT *
+    FROM tickets
+    WHERE ${whereParts.join(' AND ')}
+    ORDER BY start_ts DESC, external_id DESC
+    LIMIT ?
+  `).all(...params, safeLimit);
+}
+
 function getNextTicket(ticket, minimumStartTs = Date.now()) {
   if (!ticket) {
     return null;
@@ -1685,6 +1734,110 @@ function listWhatsAppMessages(chatId, limit = 200, options = {}) {
   return dedupeVisualMessages(rows);
 }
 
+function getAuditPhoneCandidates(value) {
+  const clean = normalizeChatPhone(value);
+  const candidates = new Set();
+
+  if (clean) {
+    candidates.add(clean);
+  }
+
+  if (clean.startsWith('549') && clean.length > 3) {
+    candidates.add(clean.slice(3));
+  }
+
+  if (clean.startsWith('54') && clean.length > 2) {
+    candidates.add(clean.slice(2));
+  }
+
+  if (clean.length > 10) {
+    candidates.add(clean.slice(-10));
+  }
+
+  if (clean.length > 8) {
+    candidates.add(clean.slice(-8));
+  }
+
+  return Array.from(candidates).filter(item => item.length >= 6);
+}
+
+function listWhatsAppMessagesByPhone(phone, limit = 200, options = {}) {
+  const phoneCandidates = getAuditPhoneCandidates(phone);
+  const safeLimit = Math.min(Math.max(Number(limit) || 200, 1), 1000);
+  const accountFilter = String(options.whatsappAccount || options.accountId || '').trim();
+  const fromTs = Number(options.fromTs || 0);
+  const toTs = Number(options.toTs || 0);
+
+  if (!phoneCandidates.length) {
+    return [];
+  }
+
+  const database = getDb();
+  const whereParts = [
+    `(
+      ${phoneCandidates.map(() => 'phone LIKE ?').join(' OR ')}
+      OR ${phoneCandidates.map(() => 'chat_id LIKE ?').join(' OR ')}
+    )`,
+    "chat_id <> 'status@broadcast'"
+  ];
+  const params = [
+    ...phoneCandidates.map(candidate => `%${candidate}%`),
+    ...phoneCandidates.map(candidate => `%${candidate}%`)
+  ];
+
+  if (accountFilter) {
+    whereParts.push("COALESCE(whatsapp_account, 'bot-1') = ?");
+    params.push(accountFilter);
+  }
+
+  if (Number.isFinite(fromTs) && fromTs > 0) {
+    whereParts.push('timestamp_ts >= ?');
+    params.push(fromTs);
+  }
+
+  if (Number.isFinite(toTs) && toTs > 0) {
+    whereParts.push('timestamp_ts <= ?');
+    params.push(toTs);
+  }
+
+  const rows = database.prepare(`
+    SELECT
+      id,
+      COALESCE(whatsapp_account, 'bot-1') AS whatsapp_account,
+      chat_id,
+      CASE
+        WHEN LOWER(chat_id) LIKE '%@lid'
+          AND phone = REPLACE(LOWER(chat_id), '@lid', '')
+        THEN NULL
+        ELSE phone
+      END AS phone,
+      contact_name,
+      direction,
+      body,
+      media_mime,
+      ${options.includeMedia ? 'media_data,' : "NULL AS media_data,"}
+      media_filename,
+      timestamp_ts,
+      timestamp_iso,
+      from_me,
+      ack,
+      source,
+      sent_by_username,
+      sent_by_name,
+      created_at
+    FROM (
+      SELECT *
+      FROM whatsapp_messages
+      WHERE ${whereParts.join(' AND ')}
+      ORDER BY timestamp_ts DESC, created_at DESC, id DESC
+      LIMIT ?
+    )
+    ORDER BY timestamp_ts ASC, created_at ASC, id ASC
+  `).all(...params, safeLimit);
+
+  return dedupeVisualMessages(rows);
+}
+
 function listWhatsAppChatPhones(chatId) {
   const cleanChatId = String(chatId || '').trim();
 
@@ -1805,6 +1958,7 @@ module.exports = {
   getPendingTicketResponseActionByChat,
   getTicket,
   getTicketGroupName,
+  getAuditPhoneCandidates,
   filterTicketsByGroups,
   getWhatsAppConversationBucketOverride,
   listTicketGroups,
@@ -1814,6 +1968,8 @@ module.exports = {
   listWhatsAppConversations,
   listWhatsAppMessages,
   listTickets,
+  listTicketsForAudit,
+  listWhatsAppMessagesByPhone,
   markMessageError,
   markMessageSent,
   normalizeChatPhone,

@@ -23,15 +23,18 @@ const {
   disableTicketAutomaticMessage,
   ensureAutomaticMessageTemplate,
   filterTicketsByGroups,
+  getAuditPhoneCandidates,
   getTicket,
   getLatestTicketResponseActionByChat,
   getWhatsAppConversationBucketOverride,
   listAutomaticMessageTemplates,
   listTickets,
+  listTicketsForAudit,
   listTicketGroups,
   listWhatsAppConversationBucketOverrides,
   listWhatsAppChatPhones,
   listWhatsAppConversations,
+  listWhatsAppMessagesByPhone,
   listWhatsAppMessages,
   getAppState,
   getRecentOutgoingMessage,
@@ -381,6 +384,48 @@ app.use(express.json({
 const requireLoggedIn = requireAuth();
 const requirePrivileged = requireLoggedIn;
 const requireAdmin = requireAuth(['admin']);
+const auditApiKeys = String(process.env.AUDIT_API_KEYS || process.env.AUDIT_API_KEY || '')
+  .split(',')
+  .map(key => key.trim())
+  .filter(Boolean);
+
+function getRequestBearerToken(req) {
+  const authorization = String(req.get('authorization') || '').trim();
+  const match = authorization.match(/^Bearer\s+(.+)$/i);
+  return match ? match[1].trim() : '';
+}
+
+function isValidAuditApiKey(value) {
+  const key = String(value || '').trim();
+
+  if (!key || !auditApiKeys.length) {
+    return false;
+  }
+
+  return auditApiKeys.some(candidate => {
+    const left = Buffer.from(candidate);
+    const right = Buffer.from(key);
+    return left.length === right.length && crypto.timingSafeEqual(left, right);
+  });
+}
+
+function requireAuditAccess(req, res, next) {
+  const apiKey = req.get('x-audit-api-key') || getRequestBearerToken(req);
+
+  if (isValidAuditApiKey(apiKey)) {
+    req.auditAuth = { type: 'api-key' };
+    return next();
+  }
+
+  if (!auditApiKeys.length) {
+    return requireAdmin(req, res, next);
+  }
+
+  return res.status(401).json({
+    success: false,
+    error: 'API key de auditoria invalida o ausente'
+  });
+}
 
 app.get('/favicon.ico', (req, res) => {
   res.status(204).end();
@@ -841,6 +886,255 @@ function getTicketInfo(ticket) {
     ticket_response_label: ticket.response_label || '',
     ticket_response_body: ticket.response_body || '',
     ticket_response_received_at: ticket.response_received_at || ''
+  };
+}
+
+function parseAuditTimestamp(value, endOfDay = false) {
+  const raw = String(value || '').trim();
+
+  if (!raw) {
+    return 0;
+  }
+
+  const normalized = /^\d{4}-\d{2}-\d{2}$/.test(raw)
+    ? `${raw}T${endOfDay ? '23:59:59.999' : '00:00:00.000'}`
+    : raw;
+  const parsed = Date.parse(normalized);
+
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function normalizeAuditLimit(value) {
+  return Math.min(Math.max(Number(value) || 200, 1), 1000);
+}
+
+function addAuditPhones(target, values) {
+  for (const value of values) {
+    for (const candidate of getAuditPhoneCandidates(value)) {
+      target.add(candidate);
+    }
+  }
+}
+
+function compactAuditTicket(ticket) {
+  if (!ticket) {
+    return null;
+  }
+
+  return {
+    id: ticket.external_id,
+    externalId: ticket.external_id,
+    razonSocial: ticket.razon_social || '',
+    delegacion: ticket.delegacion || '',
+    status: ticket.status || '',
+    start: ticket.start || '',
+    startDate: ticket.start_date || '',
+    startTime: ticket.start_time || '',
+    phones: Array.from(new Set([ticket.phone, ...getTicketPhones(ticket)]
+      .map(phone => normalizeChatPhone(phone))
+      .filter(Boolean))),
+    ida: getTicketIda(ticket),
+    category: getTicketCategory(ticket)
+  };
+}
+
+function compactAuditClient(client) {
+  if (!client) {
+    return null;
+  }
+
+  return {
+    id: String(client.id || ''),
+    razonSocial: client.razonSocial || client.razon_social || '',
+    estado: client.estado || '',
+    movil: client.movil || '',
+    telefono: client.telefono || '',
+    email: client.email || '',
+    direccion: client.direccion || '',
+    ciudad: client.ciudad || ''
+  };
+}
+
+function normalizeAuditMessage(row, store, context = {}) {
+  const phone = normalizeChatPhone(row.phone || row.chat_id || '');
+  const timestampTs = Number(row.timestamp_ts || 0);
+
+  return {
+    store,
+    id: String(row.id || ''),
+    accountId: row.whatsapp_account || context.accountId || (store === 'primary-sqlite' ? 'bot-1' : 'bot-2'),
+    chatId: row.chat_id || '',
+    phone,
+    contactName: row.contact_name || '',
+    direction: row.direction || '',
+    body: row.body || '',
+    timestampTs,
+    timestampIso: row.timestamp_iso || (timestampTs ? new Date(timestampTs).toISOString() : ''),
+    fromMe: Boolean(row.from_me),
+    ack: row.ack === null || row.ack === undefined ? null : Number(row.ack),
+    source: row.source || '',
+    ownerUsername: row.owner_username || row.sent_by_username || '',
+    sentByName: row.sent_by_name || '',
+    createdAt: row.created_at || '',
+    media: {
+      hasMedia: Boolean(row.media_mime || row.media_filename || row.media_data),
+      mime: row.media_mime || '',
+      filename: row.media_filename || '',
+      data: row.media_data || undefined
+    }
+  };
+}
+
+function dedupeAuditMessages(messages) {
+  const seen = new Set();
+  const output = [];
+
+  for (const message of messages) {
+    const key = `${message.store}:${message.id || message.chatId + ':' + message.timestampTs + ':' + message.body}`;
+
+    if (!seen.has(key)) {
+      seen.add(key);
+      output.push(message);
+    }
+  }
+
+  return output.sort((left, right) =>
+    (left.timestampTs || 0) - (right.timestampTs || 0) ||
+    String(left.id).localeCompare(String(right.id))
+  );
+}
+
+async function buildAuditMessagesResponse(query = {}) {
+  const limit = normalizeAuditLimit(query.limit);
+  const fromTs = parseAuditTimestamp(query.from || query.fromDate || query.since);
+  const toTs = parseAuditTimestamp(query.to || query.toDate || query.until, true);
+  const includeMedia = ['1', 'true', 'yes', 'si'].includes(String(query.includeMedia || '').toLowerCase());
+  const source = String(query.source || 'all').trim().toLowerCase();
+  const accountId = String(query.accountId || query.whatsappAccount || '').trim();
+  const phoneInput = String(query.phone || query.telefono || '').trim();
+  const ticketInput = String(query.ticket || query.ticketId || query.externalId || '').trim();
+  const clientIdInput = String(query.clientId || query.ida || query.IDA || '').trim();
+  const clientInput = String(query.client || query.cliente || query.razonSocial || '').trim();
+  const phones = new Set();
+  const ticketMap = new Map();
+  const clientMap = new Map();
+  const warnings = [];
+
+  if (phoneInput) {
+    addAuditPhones(phones, [phoneInput]);
+  }
+
+  if (ticketInput) {
+    const ticket = getTicket(ticketInput);
+
+    if (ticket) {
+      ticketMap.set(ticket.external_id, ticket);
+      addAuditPhones(phones, [ticket.phone, ...getTicketPhones(ticket)]);
+    }
+  }
+
+  for (const ticket of listTicketsForAudit({
+    phone: phoneInput,
+    client: clientInput,
+    limit: 50
+  })) {
+    ticketMap.set(ticket.external_id, ticket);
+    addAuditPhones(phones, [ticket.phone, ...getTicketPhones(ticket)]);
+  }
+
+  if (clientIdInput || clientInput || phoneInput) {
+    try {
+      const clientMatches = [];
+
+      if (clientIdInput) {
+        const client = await secondDb.findPhantomClientById(clientIdInput);
+        if (client) {
+          clientMatches.push(client);
+        }
+
+        for (const link of await secondDb.listClientChatLinks(clientIdInput, 100)) {
+          addAuditPhones(phones, [link.phone, link.chat_id]);
+        }
+      }
+
+      if (phoneInput) {
+        clientMatches.push(...await secondDb.findPhantomClientsByPhone(phoneInput, 10));
+      }
+
+      if (clientInput) {
+        const searchResult = await secondDb.listPhantomBajaClients({
+          search: clientInput,
+          limit: 10,
+          offset: 0
+        });
+        clientMatches.push(...searchResult.rows);
+      }
+
+      for (const client of clientMatches) {
+        const id = String(client.id || '');
+        if (id && !clientMap.has(id)) {
+          clientMap.set(id, client);
+          addAuditPhones(phones, [client.movil, client.telefono]);
+        }
+      }
+    } catch (error) {
+      warnings.push(`No se pudo consultar clientes MySQL: ${error.message}`);
+    }
+  }
+
+  if (!phones.size && !ticketInput && !clientIdInput && !clientInput) {
+    const error = new Error('Indica phone, ticket, clientId o client');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const messages = [];
+  const queryOptions = { accountId, fromTs, toTs, includeMedia };
+
+  if (source === 'all' || source === 'primary' || source === 'sqlite') {
+    for (const phone of phones) {
+      for (const row of listWhatsAppMessagesByPhone(phone, limit, queryOptions)) {
+        messages.push(normalizeAuditMessage(row, 'primary-sqlite'));
+      }
+    }
+  }
+
+  if (source === 'all' || source === 'second' || source === 'mysql') {
+    try {
+      for (const phone of phones) {
+        for (const row of await secondDb.listWhatsAppMessagesByPhone(phone, limit, queryOptions)) {
+          messages.push(normalizeAuditMessage(row, 'second-mysql', { accountId: 'bot-2' }));
+        }
+      }
+    } catch (error) {
+      warnings.push(`No se pudo consultar mensajes MySQL: ${error.message}`);
+    }
+  }
+
+  const normalizedMessages = dedupeAuditMessages(messages).slice(-limit);
+
+  return {
+    success: true,
+    query: {
+      phone: phoneInput,
+      ticket: ticketInput,
+      clientId: clientIdInput,
+      client: clientInput,
+      source,
+      accountId,
+      fromTs: fromTs || null,
+      toTs: toTs || null,
+      limit,
+      includeMedia
+    },
+    resolved: {
+      phones: Array.from(phones),
+      tickets: Array.from(ticketMap.values()).map(compactAuditTicket),
+      clients: Array.from(clientMap.values()).map(compactAuditClient)
+    },
+    count: normalizedMessages.length,
+    warnings,
+    messages: normalizedMessages
   };
 }
 
@@ -3380,6 +3674,28 @@ app.post('/messages/send', requirePrivileged, async (req, res) => {
   } catch (error) {
     const status = error.message.includes('todavia no esta conectado') ? 503 : 500;
     res.status(status).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+app.get('/api/audit/messages', requireAuditAccess, async (req, res) => {
+  try {
+    res.json(await buildAuditMessagesResponse(req.query || {}));
+  } catch (error) {
+    res.status(error.statusCode || 500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+app.post('/api/audit/messages', requireAuditAccess, async (req, res) => {
+  try {
+    res.json(await buildAuditMessagesResponse(req.body || {}));
+  } catch (error) {
+    res.status(error.statusCode || 500).json({
       success: false,
       error: error.message
     });

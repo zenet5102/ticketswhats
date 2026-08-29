@@ -1094,6 +1094,82 @@ async function listWhatsAppMessages(chatId, limit = 200, options = {}) {
   return dedupeVisualMessages(rows);
 }
 
+async function listWhatsAppMessagesByPhone(phone, limit = 200, options = {}) {
+  const phoneCandidates = getClientLookupPhones(phone);
+  const safeLimit = Math.min(Math.max(Number(limit) || 200, 1), 1000);
+  const ownerUsername = normalizeOwnerUsername(options.ownerUsername || options.owner_username);
+  const includeUnassigned = Boolean(options.includeUnassigned || options.include_unassigned);
+  const ownerWhereSql = getOwnerScopeWhereSql('owner_username', ownerUsername, includeUnassigned);
+  const fromTs = Number(options.fromTs || 0);
+  const toTs = Number(options.toTs || 0);
+
+  if (!phoneCandidates.length) {
+    return [];
+  }
+
+  const whereParts = [
+    `(
+      ${phoneCandidates.map(() => 'phone LIKE ?').join(' OR ')}
+      OR ${phoneCandidates.map(() => 'chat_id LIKE ?').join(' OR ')}
+    )`,
+    "chat_id <> 'status@broadcast'"
+  ];
+  const params = [
+    ...phoneCandidates.map(candidate => `%${candidate}%`),
+    ...phoneCandidates.map(candidate => `%${candidate}%`)
+  ];
+
+  if (Number.isFinite(fromTs) && fromTs > 0) {
+    whereParts.push('timestamp_ts >= ?');
+    params.push(fromTs);
+  }
+
+  if (Number.isFinite(toTs) && toTs > 0) {
+    whereParts.push('timestamp_ts <= ?');
+    params.push(toTs);
+  }
+
+  if (ownerUsername) {
+    params.push(ownerUsername);
+  }
+
+  const database = await getPool();
+  const [rows] = await database.execute(`
+    SELECT *
+    FROM (
+      SELECT
+        id,
+        chat_id,
+        CASE
+          WHEN LOWER(chat_id) LIKE '%@lid'
+            AND phone = REPLACE(LOWER(chat_id), '@lid', '')
+          THEN NULL
+          ELSE phone
+        END AS phone,
+        contact_name,
+        direction,
+        body,
+        media_mime,
+        ${options.includeMedia ? 'media_data,' : 'NULL AS media_data,'}
+        media_filename,
+        timestamp_ts,
+        timestamp_iso,
+        from_me,
+        ack,
+        source,
+        owner_username,
+        created_at
+      FROM ${messagesTableSql}
+      WHERE ${whereParts.join(' AND ')}
+        ${ownerWhereSql}
+      ORDER BY timestamp_ts DESC, created_at DESC, id DESC
+      LIMIT ${safeLimit}
+    ) recent_messages
+    ORDER BY timestamp_ts ASC, created_at ASC, id ASC
+  `, params);
+
+  return dedupeVisualMessages(rows);
+}
 async function listWhatsAppCommunicationTickets(options = {}) {
   const cleanChatId = String(options.chatId || options.chat_id || '').trim();
   const cleanPhone = normalizeChatPhone(options.phone || cleanChatId);
@@ -1138,6 +1214,25 @@ async function listWhatsAppCommunicationTickets(options = {}) {
   return rows;
 }
 
+async function listClientChatLinks(clientId, limit = 100) {
+  const cleanClientId = String(clientId || '').trim();
+  const safeLimit = Math.min(Math.max(Number(limit) || 100, 1), 500);
+
+  if (!/^\d+$/.test(cleanClientId)) {
+    return [];
+  }
+
+  const database = await getPool();
+  const [rows] = await database.execute(`
+    SELECT identity_key, chat_id, phone, client_id, updated_by, created_at, updated_at
+    FROM ${chatClientLinksTableSql}
+    WHERE client_id = ?
+    ORDER BY updated_at DESC, created_at DESC
+    LIMIT ${safeLimit}
+  `, [cleanClientId]);
+
+  return rows;
+}
 async function getIdentifiedClientId(chatId, phone) {
   const cleanChatId = String(chatId || '').trim();
   const cleanPhone = normalizeChatPhone(phone || cleanChatId);
@@ -2062,9 +2157,11 @@ module.exports = {
   listPhantomBajaClients,
   listMessageQueueItems,
   listWhatsAppChatPhones,
+  listWhatsAppMessagesByPhone,
   listWhatsAppCommunicationTickets,
   listWhatsAppConversations,
   listWhatsAppMessages,
+  listClientChatLinks,
   transferWhatsAppChatOwner,
   markMessageQueueError,
   markMessageQueueSent,
