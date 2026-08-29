@@ -3,6 +3,7 @@ const { getDb } = require('./db');
 
 const allowedRoles = new Set(['admin', 'usuario']);
 const privilegedRoles = new Set(['admin']);
+const allowedWhatsAppAccounts = new Set(['bot-1', 'bot-2']);
 
 function normalizeUsername(username) {
   return String(username || '').trim().toLowerCase();
@@ -37,11 +38,49 @@ function normalizeGroups(groups) {
   return cleanGroups;
 }
 
+function normalizeWhatsAppAccount(value) {
+  const cleanValue = String(value || 'bot-1').trim();
+  return allowedWhatsAppAccounts.has(cleanValue) ? cleanValue : 'bot-1';
+}
+
+function normalizeWhatsAppAccounts(value) {
+  if (typeof value === 'string' && value.trim().startsWith('[')) {
+    try {
+      return normalizeWhatsAppAccounts(JSON.parse(value));
+    } catch (error) {
+      return ['bot-1'];
+    }
+  }
+
+  const source = Array.isArray(value)
+    ? value
+    : String(value || '').split(',');
+  const accounts = [];
+
+  for (const account of source) {
+    const cleanAccount = normalizeWhatsAppAccount(account);
+
+    if (!accounts.includes(cleanAccount)) {
+      accounts.push(cleanAccount);
+    }
+  }
+
+  return accounts.length ? accounts : ['bot-1'];
+}
+
 function parseGroupsJson(value) {
   try {
     return normalizeGroups(JSON.parse(value || '[]'));
   } catch (error) {
     return [];
+  }
+}
+
+function parseWhatsAppAccountsJson(value, fallbackAccount = 'bot-1') {
+  try {
+    return normalizeWhatsAppAccounts(JSON.parse(value || '[]'));
+  } catch (error) {
+    return normalizeWhatsAppAccounts([fallbackAccount]);
   }
 }
 
@@ -72,6 +111,8 @@ function publicUser(row) {
     name: row.name,
     role: row.role,
     groups: parseGroupsJson(row.groups_json),
+    whatsappAccount: normalizeWhatsAppAccount(row.whatsapp_account),
+    whatsappAccounts: parseWhatsAppAccountsJson(row.whatsapp_accounts_json, row.whatsapp_account),
     isAdmin: row.role === 'admin',
     isPrivileged: privilegedRoles.has(row.role),
     createdAt: row.created_at,
@@ -142,6 +183,10 @@ function normalizeUserInput(input = {}, passwordRequired = false) {
   const name = normalizeName(input.name, username);
   const role = normalizeRole(input.role);
   const groups = normalizeGroups(input.groups);
+  const whatsappAccounts = normalizeWhatsAppAccounts(
+    input.whatsappAccounts || input.whatsapp_accounts || input.whatsappAccount || input.whatsapp_account
+  );
+  const whatsappAccount = whatsappAccounts[0] || 'bot-1';
   const password = String(input.password || '');
 
   if (!username) {
@@ -169,6 +214,8 @@ function normalizeUserInput(input = {}, passwordRequired = false) {
     name,
     role,
     groups,
+    whatsappAccount,
+    whatsappAccounts,
     password
   };
 }
@@ -197,10 +244,12 @@ function ensureUsersSeeded() {
       name,
       role,
       groups_json,
+      whatsapp_account,
+      whatsapp_accounts_json,
       password_hash,
       password_salt
     )
-    VALUES (?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   database.exec('BEGIN');
@@ -214,6 +263,8 @@ function ensureUsersSeeded() {
         cleanUser.name,
         cleanUser.role,
         JSON.stringify(cleanUser.groups),
+        cleanUser.whatsappAccount,
+        JSON.stringify(cleanUser.whatsappAccounts),
         password.hash,
         password.salt
       );
@@ -280,6 +331,8 @@ function listUsers() {
       name,
       role,
       groups_json,
+      whatsapp_account,
+      whatsapp_accounts_json,
       created_at,
       updated_at
     FROM users
@@ -298,15 +351,19 @@ function createUser(input = {}) {
         name,
         role,
         groups_json,
+        whatsapp_account,
+        whatsapp_accounts_json,
         password_hash,
         password_salt
       )
-      VALUES (?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       user.username,
       user.name,
       user.role,
       JSON.stringify(user.groups),
+      user.whatsappAccount,
+      JSON.stringify(user.whatsappAccounts),
       password.hash,
       password.salt
     );
@@ -355,6 +412,7 @@ function updateUser(id, input = {}) {
     name: input.name ?? existingUser.name,
     role: input.role ?? existingUser.role,
     groups: input.groups ?? parseGroupsJson(existingUser.groups_json),
+    whatsappAccounts: input.whatsappAccounts ?? input.whatsapp_accounts ?? existingUser.whatsapp_accounts_json ?? existingUser.whatsapp_account,
     password: input.password || ''
   });
 
@@ -369,6 +427,8 @@ function updateUser(id, input = {}) {
             name = ?,
             role = ?,
             groups_json = ?,
+            whatsapp_account = ?,
+            whatsapp_accounts_json = ?,
             password_hash = ?,
             password_salt = ?,
             updated_at = CURRENT_TIMESTAMP
@@ -378,6 +438,8 @@ function updateUser(id, input = {}) {
         user.name,
         user.role,
         JSON.stringify(user.groups),
+        user.whatsappAccount,
+        JSON.stringify(user.whatsappAccounts),
         password.hash,
         password.salt,
         Number(id)
@@ -389,6 +451,8 @@ function updateUser(id, input = {}) {
             name = ?,
             role = ?,
             groups_json = ?,
+            whatsapp_account = ?,
+            whatsapp_accounts_json = ?,
             updated_at = CURRENT_TIMESTAMP
         WHERE id = ?
       `).run(
@@ -396,6 +460,8 @@ function updateUser(id, input = {}) {
         user.name,
         user.role,
         JSON.stringify(user.groups),
+        user.whatsappAccount,
+        JSON.stringify(user.whatsappAccounts),
         Number(id)
       );
     }
@@ -446,6 +512,7 @@ function listAssignedUserGroups() {
 
 module.exports = {
   allowedRoles: Array.from(allowedRoles),
+  allowedWhatsAppAccounts: Array.from(allowedWhatsAppAccounts),
   authenticateUser,
   createUser,
   deleteUser,
