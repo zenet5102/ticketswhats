@@ -2798,9 +2798,22 @@
 
       const chatId = state.selectedChatId;
       const accountId = state.selectedAccountId;
+      const conversation = findConversationByChatId(chatId, accountId);
+      const phone = getDisplayPhone(conversation && conversation.phone, chatId) || '';
       const requestId = state.messagesRequestId + 1;
       state.messagesRequestId = requestId;
-      const data = await fetchJson(`/messages?chatId=${encodeURIComponent(chatId)}&accountId=${encodeURIComponent(accountId)}&limit=120&includeMedia=0`);
+      const params = new URLSearchParams({
+        chatId,
+        accountId,
+        limit: '120',
+        includeMedia: '0'
+      });
+
+      if (phone) {
+        params.set('phone', phone);
+      }
+
+      const data = await fetchJson('/messages?' + params.toString());
 
       if (
         requestId !== state.messagesRequestId ||

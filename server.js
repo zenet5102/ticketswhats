@@ -1458,6 +1458,44 @@ function canReadChat(user, chatId, accountId = 'bot-1') {
     .some(message => normalizeConversationOwner(message && message.sent_by_username) === normalizeConversationOwner(user && user.username));
 }
 
+function getMessageIdentity(message) {
+  if (message && message.id) {
+    return `id:${message.id}`;
+  }
+
+  return [
+    message && message.whatsapp_account || 'bot-1',
+    message && message.chat_id || '',
+    message && message.timestamp_ts || '',
+    message && message.direction || '',
+    message && message.body || ''
+  ].join('|');
+}
+
+function mergeMessageLists(...messageLists) {
+  const byIdentity = new Map();
+
+  for (const list of messageLists) {
+    for (const message of Array.isArray(list) ? list : []) {
+      const identity = getMessageIdentity(message);
+
+      if (!byIdentity.has(identity)) {
+        byIdentity.set(identity, message);
+      }
+    }
+  }
+
+  return Array.from(byIdentity.values()).sort((left, right) => {
+    const timeDelta = Number(left && left.timestamp_ts || 0) - Number(right && right.timestamp_ts || 0);
+
+    if (timeDelta) {
+      return timeDelta;
+    }
+
+    return String(left && left.id || '').localeCompare(String(right && right.id || ''));
+  });
+}
+
 function canSendToAnyTarget(user) {
   return Boolean(user && (user.isAdmin || user.role === 'usuario'));
 }
@@ -3650,9 +3688,11 @@ app.get('/messages/client-details', requireLoggedIn, async (req, res) => {
 app.get('/messages', requireLoggedIn, async (req, res) => {
   try {
     const chatId = String(req.query.chatId || '').trim();
+    const phone = String(req.query.phone || '').trim();
     const accountId = isValidWhatsAppAccount(req.query.accountId)
       ? String(req.query.accountId).trim()
       : getDefaultWhatsAppAccountId(req.user);
+    const includeMedia = !['0', 'false', 'no'].includes(String(req.query.includeMedia || '').toLowerCase());
 
     if (!chatId) {
       return res.status(400).json({
@@ -3670,12 +3710,20 @@ app.get('/messages', requireLoggedIn, async (req, res) => {
 
     triggerChatMediaBackfill(chatId, accountId);
 
+    const messagesByChatId = listWhatsAppMessages(chatId, req.query.limit, {
+      accountId,
+      includeMedia
+    });
+    const messagesByPhone = phone
+      ? listWhatsAppMessagesByPhone(phone, req.query.limit, {
+        accountId,
+        includeMedia
+      })
+      : [];
+
     res.json({
       success: true,
-      messages: listWhatsAppMessages(chatId, req.query.limit, {
-        accountId,
-        includeMedia: !['0', 'false', 'no'].includes(String(req.query.includeMedia || '').toLowerCase())
-      })
+      messages: mergeMessageLists(messagesByChatId, messagesByPhone)
     });
   } catch (error) {
     res.status(500).json({
