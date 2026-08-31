@@ -1208,7 +1208,19 @@ function conversationWasStartedByUser(conversation, user) {
     )
   );
 
-  return Boolean(username && sender && username === sender);
+  if (!username) {
+    return false;
+  }
+
+  if (sender && username === sender) {
+    return true;
+  }
+
+  return listWhatsAppMessages(
+    conversation && conversation.chat_id,
+    80,
+    { accountId: conversation && conversation.whatsapp_account }
+  ).some(message => normalizeConversationOwner(message && message.sent_by_username) === username);
 }
 
 function listVisibleConversationsForUser(user, limit) {
