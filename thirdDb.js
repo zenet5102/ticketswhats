@@ -431,6 +431,12 @@ async function listUsers({ limit = 100, offset = 0 } = {}) {
   return rows;
 }
 
+async function countUsers() {
+  const database = await getPool();
+  const [[row]] = await database.query('SELECT COUNT(*) AS total FROM users');
+  return Number(row && row.total || 0);
+}
+
 function parseJsonArray(value) {
   try {
     const parsed = JSON.parse(value || '[]');
@@ -557,6 +563,17 @@ async function listTickets({ date, phone, ticket, externalId, client, limit = 10
   return rows;
 }
 
+async function getTicketByExternalId(externalId) {
+  const ticket = String(externalId || '').trim();
+
+  if (!ticket) {
+    return null;
+  }
+
+  const rows = await listTickets({ externalId: ticket, limit: 1 });
+  return rows[0] || null;
+}
+
 async function listMessages({ phone, chatId, ticket, client, limit = 200, offset = 0 } = {}) {
   const safeLimit = Math.min(Math.max(Number(limit) || 200, 1), 1000);
   const safeOffset = Math.max(Number(offset) || 0, 0);
@@ -602,6 +619,90 @@ async function listMessages({ phone, chatId, ticket, client, limit = 200, offset
   `, params);
 
   return rows.reverse();
+}
+
+async function listConversations({ limit = 100, offset = 0 } = {}) {
+  const safeLimit = Math.min(Math.max(Number(limit) || 100, 1), 500);
+  const safeOffset = Math.max(Number(offset) || 0, 0);
+  const database = await getPool();
+  const [rows] = await database.execute(`
+    SELECT
+      latest.chat_id,
+      latest.phone,
+      latest.contact_name,
+      latest.body AS last_message,
+      latest.timestamp_ts AS last_timestamp,
+      latest.timestamp_iso AS last_timestamp_iso,
+      latest.from_me AS last_from_me,
+      latest.direction AS last_direction,
+      latest.whatsapp_account,
+      COALESCE(overrides.bucket, 'main') AS bucket,
+      ticket.external_id AS ticket_external_id,
+      ticket.delegacion,
+      ticket.razon_social,
+      ticket.status AS ticket_status
+    FROM whatsapp_messages latest
+    INNER JOIN (
+      SELECT chat_id, MAX(timestamp_ts) AS max_timestamp
+      FROM whatsapp_messages
+      WHERE chat_id <> 'status@broadcast'
+      GROUP BY chat_id
+    ) grouped
+      ON grouped.chat_id = latest.chat_id
+      AND grouped.max_timestamp = latest.timestamp_ts
+    LEFT JOIN whatsapp_conversation_bucket_overrides overrides
+      ON overrides.chat_id = latest.chat_id
+      AND overrides.whatsapp_account = latest.whatsapp_account
+    LEFT JOIN tickets ticket
+      ON ticket.phone = latest.phone
+      OR ticket.phones_json LIKE CONCAT('%', latest.phone, '%')
+      OR latest.chat_id LIKE CONCAT('%', ticket.phone, '%')
+    WHERE latest.chat_id <> 'status@broadcast'
+    GROUP BY latest.chat_id
+    ORDER BY latest.timestamp_ts DESC, latest.created_at DESC
+    LIMIT ${safeLimit} OFFSET ${safeOffset}
+  `);
+
+  return rows;
+}
+
+async function listAutomaticMessageTemplates() {
+  const database = await getPool();
+  const [rows] = await database.query(`
+    SELECT id, name, body, active, sort_order, created_at, updated_at
+    FROM automatic_message_templates
+    ORDER BY active DESC, sort_order ASC, id ASC
+  `);
+  return rows;
+}
+
+async function getAppStateValue(key, fallback = '') {
+  const database = await getPool();
+  const [rows] = await database.execute('SELECT value FROM app_state WHERE `key` = ? LIMIT 1', [key]);
+  return rows[0] && rows[0].value !== null && rows[0].value !== undefined ? rows[0].value : fallback;
+}
+
+async function getTicketJobStatus() {
+  const database = await getPool();
+  const [[tickets]] = await database.query('SELECT COUNT(*) AS total FROM tickets');
+  const [[messages]] = await database.query('SELECT COUNT(*) AS total FROM whatsapp_messages');
+
+  return {
+    success: true,
+    thirdServer: true,
+    scheduler: {
+      enabled: false,
+      running: false
+    },
+    whatsapp: {
+      ready: false,
+      state: 'migration-only'
+    },
+    counts: {
+      tickets: Number(tickets && tickets.total || 0),
+      messages: Number(messages && messages.total || 0)
+    }
+  };
 }
 
 async function upsertRows(tableName, rows = []) {
@@ -698,12 +799,18 @@ async function closePool() {
 
 module.exports = {
   closePool,
+  countUsers,
   getCounts,
+  getAppStateValue,
   getMysqlSettings,
   getPhoneCandidates,
   getPool,
   authenticateUser,
+  getTicketByExternalId,
+  getTicketJobStatus,
   getUserByUsername,
+  listAutomaticMessageTemplates,
+  listConversations,
   listMessages,
   listTickets,
   listUsers,

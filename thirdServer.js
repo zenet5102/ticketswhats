@@ -279,6 +279,40 @@ function asyncHandler(handler) {
   };
 }
 
+function sendHtmlFile(res, filename) {
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+  res.sendFile(path.join(__dirname, filename));
+}
+
+function unavailableInThirdServer(feature) {
+  const error = new Error(`${feature} no esta disponible en el tercer server de migracion`);
+  error.statusCode = 503;
+  throw error;
+}
+
+function getQueueSnapshot() {
+  return {
+    success: true,
+    thirdServer: true,
+    scheduler: {
+      enabled: false,
+      running: false,
+      lastRunAt: null,
+      lastError: null
+    },
+    stats: {
+      pending: 0,
+      processing: 0,
+      sent: 0,
+      error: 0,
+      canceled: 0
+    },
+    items: []
+  };
+}
+
 app.get('/login', asyncHandler(async (req, res, next) => {
   const user = await getSessionUser(req);
 
@@ -288,7 +322,7 @@ app.get('/login', asyncHandler(async (req, res, next) => {
 
   next();
 }), (req, res) => {
-  res.sendFile(path.join(__dirname, 'login.html'));
+  sendHtmlFile(res, 'login.html');
 });
 
 app.post('/auth/login', asyncHandler(async (req, res) => {
@@ -321,16 +355,60 @@ app.get('/auth/me', requireSession(), (req, res) => {
   });
 });
 
-app.get('/', (req, res) => {
-  res.json({
-    success: true,
-    app: 'wwebjs-third-server',
-    statusUrl: '/api/third/status'
-  });
+app.get('/', requireSession(), (req, res) => {
+  res.redirect('/dashboard');
 });
 
 app.get('/dashboard', requireSession(), (req, res) => {
-  res.redirect('/api/third/status');
+  sendHtmlFile(res, 'dashboard.html');
+});
+
+app.get('/mensajes', requireSession(), (req, res) => {
+  sendHtmlFile(res, 'messages.html');
+});
+
+app.get('/cola', requireSession(), (req, res) => {
+  sendHtmlFile(res, 'queue.html');
+});
+
+app.get('/usuarios', requireSession(['admin']), (req, res) => {
+  sendHtmlFile(res, 'users.html');
+});
+
+app.get('/phantom', requireSession(), (req, res) => {
+  res.redirect('/phantom/suspendidos');
+});
+
+app.get('/clientes', requireSession(), (req, res) => {
+  res.redirect('/phantom/suspendidos');
+});
+
+app.get('/clientes/suspendidos', requireSession(), (req, res) => {
+  res.redirect('/phantom/suspendidos');
+});
+
+app.get('/clientes/activos', requireSession(), (req, res) => {
+  res.redirect('/phantom/activos');
+});
+
+app.get('/clientes/bajas', requireSession(), (req, res) => {
+  res.redirect('/phantom/baja');
+});
+
+app.get('/phantom/suspendidos', requireSession(), (req, res) => {
+  sendHtmlFile(res, 'phantom.html');
+});
+
+app.get('/phantom/activos', requireSession(), (req, res) => {
+  sendHtmlFile(res, 'phantom.html');
+});
+
+app.get('/phantom/clientes', requireSession(), (req, res) => {
+  sendHtmlFile(res, 'phantom.html');
+});
+
+app.get('/phantom/baja', requireSession(), (req, res) => {
+  sendHtmlFile(res, 'phantom.html');
 });
 
 app.get('/api/third/status', asyncHandler(async (req, res) => {
@@ -405,6 +483,307 @@ app.post('/api/third/audit/messages', requireSessionOrApiKey, asyncHandler(async
     count: messages.length,
     messages
   });
+}));
+
+app.get('/api/status', requireSession(), asyncHandler(async (req, res) => {
+  const mysql = thirdDb.getMysqlSettings();
+  const ready = await thirdDb.pingDatabase()
+    .then(() => true)
+    .catch(() => false);
+  const queue = getQueueSnapshot();
+
+  res.json({
+    success: true,
+    thirdServer: true,
+    whatsapp: {
+      ready: false,
+      state: 'migration-only'
+    },
+    mysql: {
+      ready,
+      host: mysql.host,
+      port: mysql.port,
+      database: mysql.database,
+      user: mysql.user
+    },
+    queue: queue.stats,
+    scheduler: queue.scheduler
+  });
+}));
+
+app.get('/tickets/job-status', requireSession(), asyncHandler(async (req, res) => {
+  res.json(await thirdDb.getTicketJobStatus());
+}));
+
+app.get('/tickets', requireSession(), asyncHandler(async (req, res) => {
+  res.json({
+    success: true,
+    tickets: await thirdDb.listTickets(req.query || {})
+  });
+}));
+
+app.get('/tickets/:externalId', requireSession(), asyncHandler(async (req, res) => {
+  const ticket = await thirdDb.getTicketByExternalId(req.params.externalId);
+
+  if (!ticket) {
+    return res.status(404).json({
+      success: false,
+      error: 'Ticket no encontrado'
+    });
+  }
+
+  res.json({ success: true, ticket });
+}));
+
+app.post('/tickets/:externalId/validate-phone', requireSession(), asyncHandler(async () => {
+  unavailableInThirdServer('Validacion de telefono por WhatsApp');
+}));
+
+app.post('/tickets/:externalId/phone', requireSession(), asyncHandler(async () => {
+  unavailableInThirdServer('Actualizacion de telefono de ticket');
+}));
+
+app.get('/messages/conversations', requireSession(), asyncHandler(async (req, res) => {
+  res.json({
+    success: true,
+    conversations: await thirdDb.listConversations(req.query || {})
+  });
+}));
+
+app.post('/messages/conversations/bucket', requireSession(), asyncHandler(async () => {
+  unavailableInThirdServer('Cambio de bandeja de conversacion');
+}));
+
+app.get('/messages', requireSession(), asyncHandler(async (req, res) => {
+  res.json({
+    success: true,
+    messages: await thirdDb.listMessages(req.query || {})
+  });
+}));
+
+app.post('/messages/send', requireSession(['admin', 'usuario']), asyncHandler(async () => {
+  unavailableInThirdServer('Envio de WhatsApp');
+}));
+
+app.post('/messages/validate-phone', requireSession(['admin', 'usuario']), asyncHandler(async () => {
+  unavailableInThirdServer('Validacion de telefono por WhatsApp');
+}));
+
+app.post('/whatsapp/reconnect', requireSession(['admin', 'usuario']), asyncHandler(async () => {
+  unavailableInThirdServer('Reconectar WhatsApp');
+}));
+
+app.post('/whatsapp/reset-auth', requireSession(['admin']), asyncHandler(async () => {
+  unavailableInThirdServer('Reset de autenticacion WhatsApp');
+}));
+
+app.get('/users', requireSession(['admin']), asyncHandler(async (req, res) => {
+  res.json({
+    success: true,
+    users: await thirdDb.listUsers(req.query || {})
+  });
+}));
+
+app.post('/users', requireSession(['admin']), asyncHandler(async () => {
+  unavailableInThirdServer('Alta de usuarios');
+}));
+
+app.put('/users/:id', requireSession(['admin']), asyncHandler(async () => {
+  unavailableInThirdServer('Edicion de usuarios');
+}));
+
+app.delete('/users/:id', requireSession(['admin']), asyncHandler(async () => {
+  unavailableInThirdServer('Baja de usuarios');
+}));
+
+app.get('/transfers', requireSession(), asyncHandler(async (req, res) => {
+  res.json({
+    success: true,
+    transfers: [],
+    users: await thirdDb.listUsers({ limit: 500 })
+  });
+}));
+
+app.post('/transfers', requireSession(['admin']), asyncHandler(async () => {
+  unavailableInThirdServer('Transferencias');
+}));
+
+app.delete('/transfers/:username', requireSession(['admin']), asyncHandler(async () => {
+  unavailableInThirdServer('Transferencias');
+}));
+
+app.get('/settings/message-template', requireSession(), asyncHandler(async (req, res) => {
+  res.json({
+    success: true,
+    template: await thirdDb.getAppStateValue('message_template', ''),
+    automaticReminderEnabled: false
+  });
+}));
+
+app.post('/settings/message-template', requireSession(['admin', 'usuario']), asyncHandler(async () => {
+  unavailableInThirdServer('Edicion de configuracion');
+}));
+
+app.get('/settings/notification-channel-reply', requireSession(), asyncHandler(async (req, res) => {
+  res.json({
+    success: true,
+    enabled: false,
+    template: ''
+  });
+}));
+
+app.post('/settings/notification-channel-reply', requireSession(['admin', 'usuario']), asyncHandler(async () => {
+  unavailableInThirdServer('Edicion de canal de respuesta');
+}));
+
+app.get('/settings/automatic-message-templates', requireSession(), asyncHandler(async (req, res) => {
+  const templates = await thirdDb.listAutomaticMessageTemplates();
+
+  res.json({
+    success: true,
+    templates,
+    defaultTemplate: templates[0] && templates[0].body || ''
+  });
+}));
+
+app.post('/settings/automatic-message-templates', requireSession(['admin', 'usuario']), asyncHandler(async () => {
+  unavailableInThirdServer('Edicion de templates');
+}));
+
+app.put('/settings/automatic-message-templates/:id', requireSession(['admin', 'usuario']), asyncHandler(async () => {
+  unavailableInThirdServer('Edicion de templates');
+}));
+
+app.delete('/settings/automatic-message-templates/:id', requireSession(['admin', 'usuario']), asyncHandler(async () => {
+  unavailableInThirdServer('Edicion de templates');
+}));
+
+app.post('/settings/automatic-reminder', requireSession(['admin']), asyncHandler(async () => {
+  unavailableInThirdServer('Recordatorios automaticos');
+}));
+
+app.get('/api/message-queue/status', requireSession(), (req, res) => {
+  res.json(getQueueSnapshot());
+});
+
+app.get('/api/message-queue', requireSession(), (req, res) => {
+  res.json(getQueueSnapshot());
+});
+
+app.post('/api/message-queue', requireSession(['admin', 'usuario']), asyncHandler(async () => {
+  unavailableInThirdServer('Cola de mensajes');
+}));
+
+app.post('/api/message-queue/:id/cancel', requireSession(['admin', 'usuario']), asyncHandler(async () => {
+  unavailableInThirdServer('Cola de mensajes');
+}));
+
+app.get('/api/message-templates', requireSession(), asyncHandler(async (req, res) => {
+  const templates = await thirdDb.listAutomaticMessageTemplates();
+
+  res.json({
+    success: true,
+    templates,
+    defaultTemplate: templates[0] && templates[0].body || ''
+  });
+}));
+
+app.get('/api/message-templates/:id', requireSession(), asyncHandler(async (req, res) => {
+  const templates = await thirdDb.listAutomaticMessageTemplates();
+  const template = templates.find(item => String(item.id) === String(req.params.id));
+
+  if (!template) {
+    return res.status(404).json({
+      success: false,
+      error: 'Template no encontrado'
+    });
+  }
+
+  res.json({ success: true, template });
+}));
+
+app.post('/api/message-templates', requireSession(['admin', 'usuario']), asyncHandler(async () => {
+  unavailableInThirdServer('Edicion de templates');
+}));
+
+app.put('/api/message-templates/:id', requireSession(['admin', 'usuario']), asyncHandler(async () => {
+  unavailableInThirdServer('Edicion de templates');
+}));
+
+app.delete('/api/message-templates/:id', requireSession(['admin', 'usuario']), asyncHandler(async () => {
+  unavailableInThirdServer('Edicion de templates');
+}));
+
+app.get('/api/phantom/consulta-masiva', requireSession(), asyncHandler(async (req, res) => {
+  const estado = String(req.query.estado || '').trim();
+  const search = String(req.query.search || '').trim();
+  const tickets = await thirdDb.listTickets({
+    client: search,
+    limit: req.query.limit || 100,
+    offset: req.query.offset || 0
+  });
+  const rows = tickets.map(ticket => ({
+    IDA: ticket.external_id,
+    CLIENTE: ticket.razon_social || ticket.delegacion || ticket.external_id,
+    ESTADO: estado || ticket.status || 'Migrado',
+    MOVIL: ticket.phone || '',
+    TELEFONO: ticket.phone || '',
+    DELEGACION: ticket.delegacion || '',
+    FECHA: ticket.start_date || '',
+    HORA: ticket.start_time || '',
+    ticket_external_id: ticket.external_id,
+    payload: ticket.payload_json
+  }));
+
+  res.json({
+    success: true,
+    thirdServer: true,
+    estado,
+    rows,
+    pagination: {
+      limit: Number(req.query.limit || 100),
+      offset: Number(req.query.offset || 0),
+      total: rows.length,
+      hasNextPage: rows.length >= Number(req.query.limit || 100)
+    },
+    receivedAt: new Date().toISOString()
+  });
+}));
+
+app.post('/api/phantom/consulta-masiva', requireSession(), asyncHandler(async () => {
+  unavailableInThirdServer('Consulta Phantom en vivo');
+}));
+
+app.get('/api/phantom/cliente-avanzada', requireSession(), asyncHandler(async (req, res) => {
+  const ticket = await thirdDb.getTicketByExternalId(req.query.IDA || req.query.id || req.query.ticket);
+
+  res.json({
+    success: true,
+    thirdServer: true,
+    data: ticket || null
+  });
+}));
+
+app.post('/api/phantom/cliente-avanzada', requireSession(), asyncHandler(async () => {
+  unavailableInThirdServer('Consulta Phantom en vivo');
+}));
+
+app.get('/api/phantom/baja/sync-status', requireSession(), (req, res) => {
+  res.json({
+    success: true,
+    thirdServer: true,
+    running: false,
+    lastRunAt: null,
+    lastError: null
+  });
+});
+
+app.post('/api/phantom/baja/sync', requireSession(['admin', 'usuario']), asyncHandler(async () => {
+  unavailableInThirdServer('Sincronizacion Phantom');
+}));
+
+app.get('/api/whatsapp/check-number', requireSession(), asyncHandler(async () => {
+  unavailableInThirdServer('Validacion de WhatsApp');
 }));
 
 app.use((req, res) => {
