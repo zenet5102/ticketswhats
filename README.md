@@ -29,7 +29,7 @@ GET /api/audit/messages
 POST /api/audit/messages
 ```
 
-La API consulta los mensajes del primer server en SQLite y, cuando corresponde, los mensajes/clientes migrados del segundo server en MySQL.
+La API consulta por defecto la base unificada del server principal. El historial viejo del segundo numero se importa desde MySQL con `npm run migrate:second-messages` y queda guardado en `whatsapp_messages` con `whatsapp_account=bot-2`.
 
 ### Autenticacion
 
@@ -63,7 +63,7 @@ Se puede buscar usando cualquiera de estos filtros:
 Parametros opcionales:
 
 - `limit`: cantidad maxima de mensajes, hasta 1000. Por defecto 200.
-- `source`: `all`, `primary`, `sqlite`, `second` o `mysql`. Por defecto `all`.
+- `source`: `primary`, `sqlite`, `all`, `second` o `mysql`. Por defecto `primary`. `second`/`mysql` queda como respaldo temporal para consultar la base vieja del segundo server.
 - `accountId` o `whatsappAccount`: filtra por cuenta WhatsApp, por ejemplo `bot-1` o `bot-2`.
 - `from`, `fromDate` o `since`: fecha/hora inicial.
 - `to`, `toDate` o `until`: fecha/hora final.
@@ -148,4 +148,23 @@ La respuesta tiene esta forma general:
 }
 ```
 
-`warnings` puede incluir avisos si MySQL/Phantom no esta disponible, pero la API intenta devolver igualmente lo que encuentre en SQLite.
+`warnings` puede incluir avisos si MySQL/Phantom no esta disponible. En uso normal, los mensajes deberian estar ya migrados en la base principal.
+
+## Migrar mensajes del segundo server
+
+Para que el server unificado trabaje con una sola tabla de mensajes, importar el historial del segundo server:
+
+```bash
+npm run migrate:second-messages
+```
+
+La migracion lee `SECOND_APP_MYSQL_DATABASE` / `SECOND_APP_MYSQL_MESSAGES_TABLE` y escribe en la tabla principal `whatsapp_messages` con `whatsapp_account=bot-2`. Se puede ejecutar mas de una vez: usa los IDs existentes y, si detecta una colision con mensajes del primer numero, guarda el mensaje con prefijo `bot-2:`.
+
+En la VM, despues de traer cambios:
+
+```bash
+git pull --ff-only origin codex/unificar-servers
+npm run migrate:second-messages
+pm2 restart wwebjs --update-env
+pm2 save
+```
