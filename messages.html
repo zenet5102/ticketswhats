@@ -1305,7 +1305,8 @@
       chatSearch: '',
       newChatValidationRequestId: 0,
       newChatValidation: null,
-      newChatValidationTimer: null
+      newChatValidationTimer: null,
+      localConversationUpserts: new Map()
     };
 
     const els = {
@@ -2326,6 +2327,102 @@
           getConversationAccountId(item) === cleanAccountId);
     }
 
+    function upsertLocalConversation(conversation) {
+      const chatId = String(conversation && conversation.chat_id || '').trim();
+      const accountId = getConversationAccountId(conversation);
+
+      if (!chatId) {
+        return null;
+      }
+
+      const key = `${accountId}:${chatId}`;
+      const existing = findConversationByChatId(chatId, accountId) || {};
+      const merged = {
+        ...existing,
+        ...conversation,
+        chat_id: chatId,
+        whatsapp_account: accountId,
+        app_started_messages: Math.max(Number(existing.app_started_messages || 0), Number(conversation.app_started_messages || 0), 1),
+        manual_started_messages: Math.max(Number(existing.manual_started_messages || 0), Number(conversation.manual_started_messages || 0), 1),
+        outgoing_messages: Math.max(Number(existing.outgoing_messages || 0), Number(conversation.outgoing_messages || 0), 1)
+      };
+
+      state.conversations = [merged, ...state.conversations.filter(item => getConversationKey(item) !== key)];
+      state.otherConversations = state.otherConversations.filter(item => getConversationKey(item) !== key);
+      state.localConversationUpserts.set(key, {
+        conversation: merged,
+        expiresAt: Date.now() + 120000
+      });
+
+      return merged;
+    }
+
+    function upsertSentConversation(message, fallback = {}) {
+      const chatId = String(message && message.chat_id || fallback.chatId || '').trim();
+
+      if (!chatId) {
+        return null;
+      }
+
+      const accountId = String(message && message.whatsapp_account || fallback.accountId || state.selectedAccountId || 'bot-1').trim() || 'bot-1';
+      const phone = String(message && message.phone || fallback.phone || getPhoneFromChatId(chatId) || '').trim();
+
+      return upsertLocalConversation({
+        chat_id: chatId,
+        whatsapp_account: accountId,
+        phone,
+        contact_name: fallback.contactName || phone || chatId,
+        direction: 'outgoing',
+        body: message && message.body || fallback.body || '',
+        timestamp_ts: Number(message && message.timestamp_ts || Date.now()),
+        timestamp_iso: message && message.timestamp_iso || new Date().toISOString(),
+        from_me: 1,
+        ack: Number.isFinite(Number(message && message.ack)) ? Number(message.ack) : null,
+        source: message && message.source || 'inbox',
+        sent_by_username: message && message.sent_by_username || state.auth && state.auth.username || '',
+        sent_by_name: message && message.sent_by_name || state.auth && state.auth.name || '',
+        total_messages: 1,
+        outgoing_messages: 1,
+        app_started_messages: 1,
+        manual_started_messages: 1,
+        ticket_external_id: state.ticketExternalId || fallback.ticketExternalId || ''
+      });
+    }
+
+    function mergeLocalConversationUpserts() {
+      const now = Date.now();
+
+      for (const [key, entry] of state.localConversationUpserts.entries()) {
+        const foundInMain = state.conversations.some(item => getConversationKey(item) === key);
+        const foundInOther = state.otherConversations.some(item => getConversationKey(item) === key);
+
+        if (foundInMain) {
+          state.localConversationUpserts.delete(key);
+          continue;
+        }
+
+        if (foundInOther) {
+          state.conversations = [
+            entry.conversation,
+            ...state.conversations.filter(item => getConversationKey(item) !== key)
+          ];
+          state.otherConversations = state.otherConversations.filter(item => getConversationKey(item) !== key);
+          state.localConversationUpserts.delete(key);
+          continue;
+        }
+
+        if (!entry || entry.expiresAt < now) {
+          state.localConversationUpserts.delete(key);
+          continue;
+        }
+
+        state.conversations = [
+          entry.conversation,
+          ...state.conversations.filter(item => getConversationKey(item) !== key)
+        ];
+      }
+    }
+
     function updateConversationBucketTabs() {
       els.mainChatsTab.classList.toggle('active', state.activeConversationBucket === 'main');
       els.otherChatsTab.classList.toggle('active', state.activeConversationBucket === 'other');
@@ -2642,6 +2739,7 @@
       const previousSelectionKey = `${state.selectedAccountId}:${state.selectedChatId}`;
       state.conversations = data.conversations || [];
       state.otherConversations = data.otherConversations || [];
+      mergeLocalConversationUpserts();
       detectNewTicketMessages([...state.conversations, ...state.otherConversations]);
 
       if (state.selectionLocked && state.selectedChatId) {
@@ -3002,11 +3100,25 @@
         els.sendError.textContent = 'Enviado';
 
         if (data.message && data.message.chat_id) {
+          upsertSentConversation(data.message, {
+            phone: validation.phone,
+            chatId: validation.chatId,
+            body: message,
+            accountId: state.selectedAccountId,
+            ticketExternalId: state.ticketExternalId
+          });
           state.selectedChatId = data.message.chat_id;
           state.selectedAccountId = data.message.whatsapp_account || state.selectedAccountId;
           state.selectionLocked = true;
           state.manualChatPending = true;
         } else {
+          upsertSentConversation(null, {
+            phone: validation.phone,
+            chatId: validation.chatId || `${validation.phone}@c.us`,
+            body: message,
+            accountId: state.selectedAccountId,
+            ticketExternalId: state.ticketExternalId
+          });
           state.selectedChatId = validation.chatId || `${validation.phone}@c.us`;
           state.selectionLocked = true;
           state.manualChatPending = true;
@@ -3017,7 +3129,10 @@
         }
 
         state.activeConversationBucket = 'main';
+        state.chatSearch = '';
+        els.chatSearchInput.value = '';
         updateConversationBucketTabs();
+        renderConversations();
         closeNewChatModal();
         showToast('Mensaje enviado');
         await loadConversations(true);
@@ -3101,10 +3216,20 @@
         els.sendError.textContent = 'Enviado';
 
         if (data.message && data.message.chat_id) {
+          upsertSentConversation(data.message, {
+            phone,
+            chatId: state.selectedChatId,
+            body: message,
+            accountId: state.selectedAccountId,
+            ticketExternalId
+          });
           state.selectedChatId = data.message.chat_id;
           state.selectedAccountId = data.message.whatsapp_account || state.selectedAccountId;
           state.selectionLocked = true;
           state.manualChatPending = true;
+          state.activeConversationBucket = 'main';
+          updateConversationBucketTabs();
+          renderConversations();
         }
 
         if (data.ticket) {
