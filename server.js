@@ -2195,11 +2195,21 @@ async function syncRecentWhatsAppMessages(options = {}) {
   };
 
   if (recentMessagesSyncRunning) {
-    return;
+    return {
+      ...syncSummary,
+      finishedAt: new Date().toISOString(),
+      skipped: true,
+      reason: 'sync-running'
+    };
   }
 
   if (!options.force && now - lastRecentMessagesSyncAt < recentMessagesSyncIntervalMs) {
-    return;
+    return {
+      ...syncSummary,
+      finishedAt: new Date().toISOString(),
+      skipped: true,
+      reason: 'interval-cooldown'
+    };
   }
 
   recentMessagesSyncRunning = true;
@@ -2301,6 +2311,8 @@ async function syncRecentWhatsAppMessages(options = {}) {
 
     recentMessagesSyncRunning = false;
   }
+
+  return syncSummary;
 }
 
 function triggerRecentMessagesSync(options = {}) {
@@ -3833,6 +3845,40 @@ app.post('/messages/validate-phone', requirePrivileged, async (req, res) => {
     const status = error.code === 'WHATSAPP_TRANSIENT' || error.message.includes('todavia no esta conectado') ? 503 : 400;
 
     res.status(status).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+app.post('/messages/recover', requireAdmin, async (req, res) => {
+  try {
+    const accountId = String(req.body && req.body.accountId || req.query && req.query.accountId || '').trim();
+    const accountIds = accountId
+      ? [accountId].filter(isValidWhatsAppAccount)
+      : [];
+
+    if (accountId && !accountIds.length) {
+      return res.status(400).json({
+        success: false,
+        error: 'Sesion WhatsApp invalida'
+      });
+    }
+
+    const result = await syncRecentWhatsAppMessages({
+      force: true,
+      reason: 'manual-recovery',
+      accountIds,
+      chatLimit: req.body && req.body.chatLimit || req.query && req.query.chatLimit || whatsappCatchupChatLimit,
+      messageLimit: req.body && req.body.messageLimit || req.query && req.query.messageLimit || whatsappCatchupMessageLimit
+    });
+
+    res.json({
+      success: true,
+      result
+    });
+  } catch (error) {
+    res.status(500).json({
       success: false,
       error: error.message
     });

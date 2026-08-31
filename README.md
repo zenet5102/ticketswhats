@@ -41,6 +41,16 @@ WHATSAPP_CATCHUP_MESSAGE_LIMIT=50
 
 El catch-up recorre los chats mas recientes de la cuenta reconectada y guarda los ultimos mensajes de cada chat en `whatsapp_messages`. La operacion es idempotente: si un mensaje ya existe, se actualiza sin duplicarlo. Para cortes mas largos, subir temporalmente `WHATSAPP_CATCHUP_CHAT_LIMIT` y `WHATSAPP_CATCHUP_MESSAGE_LIMIT`, reiniciar PM2 con `--update-env` y esperar a que la cuenta vuelva a conectar.
 
+Tambien se puede forzar manualmente con un usuario admin autenticado:
+
+```bash
+curl -X POST "http://localhost:3000/messages/recover" \
+  -H "Content-Type: application/json" \
+  -d "{\"accountId\":\"bot-1\",\"chatLimit\":120,\"messageLimit\":50}"
+```
+
+Sin `accountId`, intenta recuperar todas las sesiones conectadas.
+
 Endpoint:
 
 ```text
