@@ -2049,7 +2049,7 @@ function isSyncableWhatsAppChat(chat) {
 async function syncRecentWhatsAppMessages(options = {}) {
   const now = Date.now();
 
-  if (!client || !whatsappReady || recentMessagesSyncRunning) {
+  if (recentMessagesSyncRunning) {
     return;
   }
 
@@ -2061,51 +2061,64 @@ async function syncRecentWhatsAppMessages(options = {}) {
   lastRecentMessagesSyncAt = now;
 
   try {
-    const chats = await client.getChats();
-    const recentChats = chats
-      .filter(isSyncableWhatsAppChat)
-      .sort((left, right) => {
-        const unreadDelta = Number(right.unreadCount || 0) - Number(left.unreadCount || 0);
+    for (const account of whatsappAccountStates.values()) {
+      const accountClient = account.client;
 
-        if (unreadDelta) {
-          return unreadDelta;
-        }
-
-        return getChatSortTimestamp(right) - getChatSortTimestamp(left);
-      })
-      .slice(0, recentMessagesSyncChatLimit);
-
-    for (const chat of recentChats) {
-      const chatId = String(chat && chat.id && chat.id._serialized || '').trim();
-      const lastChatSync = lastRecentMessagesSyncByChat.get(chatId) || 0;
-
-      if (!options.force && now - lastChatSync < recentMessagesSyncChatCooldownMs) {
+      if (!accountClient || !account.ready) {
         continue;
       }
 
-      lastRecentMessagesSyncByChat.set(chatId, now);
-
       try {
-        const messages = await chat.fetchMessages({ limit: recentMessagesSyncMessageLimit });
+        const chats = await accountClient.getChats();
+        const recentChats = chats
+          .filter(isSyncableWhatsAppChat)
+          .sort((left, right) => {
+            const unreadDelta = Number(right.unreadCount || 0) - Number(left.unreadCount || 0);
 
-        for (const message of messages) {
-          await storeWhatsAppMessage(message, 'whatsapp');
+            if (unreadDelta) {
+              return unreadDelta;
+            }
+
+            return getChatSortTimestamp(right) - getChatSortTimestamp(left);
+          })
+          .slice(0, recentMessagesSyncChatLimit);
+
+        for (const chat of recentChats) {
+          const chatId = String(chat && chat.id && chat.id._serialized || '').trim();
+          const syncKey = `${account.id}:${chatId}`;
+          const lastChatSync = lastRecentMessagesSyncByChat.get(syncKey) || 0;
+
+          if (!options.force && now - lastChatSync < recentMessagesSyncChatCooldownMs) {
+            continue;
+          }
+
+          lastRecentMessagesSyncByChat.set(syncKey, now);
+
+          try {
+            const messages = await chat.fetchMessages({ limit: recentMessagesSyncMessageLimit });
+
+            for (const message of messages) {
+              await storeWhatsAppMessage(message, 'whatsapp', account.id);
+            }
+          } catch (error) {
+            if (handleTransientWhatsAppError(error, 'recent-messages-sync-error', account.id)) {
+              console.warn(`WhatsApp se recargo mientras se sincronizaban mensajes recientes (${account.label}).`);
+              break;
+            }
+
+            console.warn(`No se pudieron sincronizar mensajes recientes (${account.label}):`, error.message);
+          }
         }
       } catch (error) {
-        if (handleTransientWhatsAppError(error, 'recent-messages-sync-error')) {
-          console.warn(`WhatsApp se recargo mientras se sincronizaban mensajes recientes de ${chatId}.`);
-          return;
+        if (handleTransientWhatsAppError(error, 'recent-chats-sync-error', account.id)) {
+          console.warn(`WhatsApp se recargo mientras se listaban chats recientes (${account.label}).`);
+          continue;
         }
 
-        console.warn(`No se pudieron sincronizar mensajes recientes de ${chatId}:`, error.message);
+        console.warn(`No se pudieron sincronizar chats recientes de WhatsApp (${account.label}):`, error.message);
       }
     }
   } catch (error) {
-    if (handleTransientWhatsAppError(error, 'recent-chats-sync-error')) {
-      console.warn('WhatsApp se recargo mientras se listaban chats recientes.');
-      return;
-    }
-
     console.warn('No se pudieron sincronizar chats recientes de WhatsApp:', error.message);
   } finally {
     recentMessagesSyncRunning = false;
