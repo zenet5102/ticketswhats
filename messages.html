@@ -2326,11 +2326,15 @@
           getConversationAccountId(item) === cleanAccountId);
     }
 
+    function updateConversationBucketTabs() {
+      els.mainChatsTab.classList.toggle('active', state.activeConversationBucket === 'main');
+      els.otherChatsTab.classList.toggle('active', state.activeConversationBucket === 'other');
+    }
+
     function setConversationBucket(bucket) {
       state.activeConversationBucket = bucket === 'other' ? 'other' : 'main';
       state.selectionLocked = false;
-      els.mainChatsTab.classList.toggle('active', state.activeConversationBucket === 'main');
-      els.otherChatsTab.classList.toggle('active', state.activeConversationBucket === 'other');
+      updateConversationBucketTabs();
 
       const activeConversations = getActiveConversations();
 
@@ -2639,6 +2643,19 @@
       state.conversations = data.conversations || [];
       state.otherConversations = data.otherConversations || [];
       detectNewTicketMessages([...state.conversations, ...state.otherConversations]);
+
+      if (state.selectionLocked && state.selectedChatId) {
+        const selectedInMain = state.conversations.some(isSelectedConversation);
+        const selectedInOther = state.otherConversations.some(isSelectedConversation);
+
+        if (selectedInMain && state.activeConversationBucket !== 'main') {
+          state.activeConversationBucket = 'main';
+          updateConversationBucketTabs();
+        } else if (selectedInOther && state.activeConversationBucket !== 'other') {
+          state.activeConversationBucket = 'other';
+          updateConversationBucketTabs();
+        }
+      }
 
       const activeConversations = getActiveConversations();
       const selectedInActiveBucket = activeConversations.some(isSelectedConversation);
@@ -2999,6 +3016,8 @@
           state.ticket = data.ticket;
         }
 
+        state.activeConversationBucket = 'main';
+        updateConversationBucketTabs();
         closeNewChatModal();
         showToast('Mensaje enviado');
         await loadConversations(true);
