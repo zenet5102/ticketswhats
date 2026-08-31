@@ -1194,6 +1194,23 @@ function conversationMatchesPhones(conversation, phones) {
   return Boolean((directPhone && phones.has(directPhone)) || (chatPhone && phones.has(chatPhone)));
 }
 
+function normalizeConversationOwner(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function conversationWasStartedByUser(conversation, user) {
+  const username = normalizeConversationOwner(user && user.username);
+  const sender = normalizeConversationOwner(
+    conversation && (
+      conversation.last_sent_by_username ||
+      conversation.sent_by_username ||
+      conversation.owner_username
+    )
+  );
+
+  return Boolean(username && sender && username === sender);
+}
+
 function listVisibleConversationsForUser(user, limit) {
   return listConversationBucketsForUser(user, limit).conversations;
 }
@@ -1348,7 +1365,7 @@ function listConversationBucketsForUser(user, limit) {
     attachTicketInfoToConversations(
       user,
       allConversations
-        .filter(conversation => conversationMatchesPhones(conversation, phones))
+        .filter(conversation => conversationMatchesPhones(conversation, phones) || conversationWasStartedByUser(conversation, user))
     ),
     requestedLimit
   );
@@ -1369,7 +1386,12 @@ function canReadChat(user, chatId, accountId = 'bot-1') {
     ...listWhatsAppChatPhones(chatId)
   ].map(value => normalizeChatPhone(value));
 
-  return candidatePhones.some(candidatePhone => candidatePhone && phones.has(candidatePhone));
+  if (candidatePhones.some(candidatePhone => candidatePhone && phones.has(candidatePhone))) {
+    return true;
+  }
+
+  return listWhatsAppMessages(chatId, 80, { accountId })
+    .some(message => normalizeConversationOwner(message && message.sent_by_username) === normalizeConversationOwner(user && user.username));
 }
 
 function canSendToAnyTarget(user) {

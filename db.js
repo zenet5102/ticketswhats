@@ -1415,6 +1415,26 @@ function listWhatsAppConversations(limit = 100, options = {}) {
       ranked.ack,
       ranked.source,
       ranked.created_at,
+      (
+        SELECT latest_sender.sent_by_username
+        FROM whatsapp_messages latest_sender
+        WHERE latest_sender.chat_id = ranked.chat_id
+          AND COALESCE(latest_sender.whatsapp_account, 'bot-1') = COALESCE(ranked.whatsapp_account, 'bot-1')
+          AND latest_sender.sent_by_username IS NOT NULL
+          AND latest_sender.sent_by_username <> ''
+        ORDER BY latest_sender.timestamp_ts DESC, latest_sender.created_at DESC
+        LIMIT 1
+      ) AS last_sent_by_username,
+      (
+        SELECT latest_sender.sent_by_name
+        FROM whatsapp_messages latest_sender
+        WHERE latest_sender.chat_id = ranked.chat_id
+          AND COALESCE(latest_sender.whatsapp_account, 'bot-1') = COALESCE(ranked.whatsapp_account, 'bot-1')
+          AND latest_sender.sent_by_name IS NOT NULL
+          AND latest_sender.sent_by_name <> ''
+        ORDER BY latest_sender.timestamp_ts DESC, latest_sender.created_at DESC
+        LIMIT 1
+      ) AS last_sent_by_name,
       counts.total_messages,
       counts.incoming_messages,
       counts.outgoing_messages,
