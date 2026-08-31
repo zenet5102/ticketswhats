@@ -1381,7 +1381,7 @@ function sortConversationsByLatest(conversations) {
   });
 }
 
-function splitConversationBuckets(conversations, requestedLimit) {
+function splitConversationBuckets(conversations, requestedLimit, shouldUseMainBucket) {
   const overridesByChatId = new Map(
     listWhatsAppConversationBucketOverrides()
       .map(override => [
@@ -1390,53 +1390,58 @@ function splitConversationBuckets(conversations, requestedLimit) {
       ])
   );
   const withOverrides = conversations.map(conversation => attachBucketOverride(conversation, overridesByChatId));
-  const forcedMain = withOverrides.filter(conversation => conversation.conversation_bucket_override === 'main');
-  const forcedOther = withOverrides.filter(conversation => conversation.conversation_bucket_override === 'other');
-  const autoConversations = withOverrides.filter(conversation => !conversation.conversation_bucket_override);
-  const trackedConversations = [
-    ...sortConversationsByLatest(forcedMain),
-    ...sortConversationsByLatest(autoConversations.filter(isTrackedConversation))
-  ]
-    .slice(0, requestedLimit);
-  const representedChatIds = getRepresentedChatIds(trackedConversations);
+  const conversationsByBucket = withOverrides.reduce((buckets, conversation) => {
+    const override = conversation.conversation_bucket_override;
+    const bucket = override === 'main' || override === 'other'
+      ? override
+      : (shouldUseMainBucket(conversation) ? 'main' : 'other');
+
+    buckets[bucket].push(conversation);
+    return buckets;
+  }, {
+    main: [],
+    other: []
+  });
+  const mainConversations = sortConversationsByLatest(conversationsByBucket.main).slice(0, requestedLimit);
+  const representedChatIds = conversationsByBucket.other.length
+    ? getRepresentedChatIds(mainConversations)
+    : new Set();
 
   return {
-    conversations: trackedConversations,
-    otherConversations: [
-      ...sortConversationsByLatest(forcedOther),
-      ...sortConversationsByLatest(
-        autoConversations.filter(conversation => isOtherConversation(conversation) && !representedChatIds.has(getConversationIdentity(conversation)))
-      )
-    ]
-      .slice(0, requestedLimit)
+    conversations: mainConversations,
+    otherConversations: sortConversationsByLatest(
+      conversationsByBucket.other
+        .filter(conversation => !representedChatIds.has(getConversationIdentity(conversation)))
+    ).slice(0, requestedLimit)
   };
 }
 
 function listConversationBucketsForUser(user, limit) {
   const requestedLimit = Math.min(Math.max(Number(limit) || 100, 1), 300);
   const accountIds = getAllowedWhatsAppAccountIds(user);
-  const allConversations = accountIds.flatMap(accountId => listWhatsAppConversations(1000, { accountId }));
+  const conversations = attachTicketInfoToConversations(
+    user,
+    accountIds.flatMap(accountId => listWhatsAppConversations(1000, { accountId }))
+  );
 
   if (user && user.isAdmin) {
+    return splitConversationBuckets(conversations, requestedLimit, () => true);
+  }
+
+  if (userHasTicketGroupRestrictions(user)) {
+    const phones = getVisibleTicketPhones(user, getTodayDateString());
+
     return splitConversationBuckets(
-      attachTicketInfoToConversations(user, allConversations),
-      requestedLimit
+      conversations,
+      requestedLimit,
+      conversation => conversationMatchesPhones(conversation, phones)
     );
   }
 
-  const phones = getVisibleTicketPhones(user, getTodayDateString());
-
   return splitConversationBuckets(
-    attachTicketInfoToConversations(
-      user,
-      allConversations
-        .filter(conversation => (
-          canReadAllConversationsForAccount(user, getConversationAccountId(conversation)) ||
-          conversationMatchesPhones(conversation, phones) ||
-          conversationWasStartedByUser(conversation, user)
-        ))
-    ),
-    requestedLimit
+    conversations,
+    requestedLimit,
+    conversation => conversationWasStartedByUser(conversation, user)
   );
 }
 
@@ -1445,26 +1450,7 @@ function canReadChat(user, chatId, accountId = 'bot-1') {
     return false;
   }
 
-  if (user && user.isAdmin) {
-    return true;
-  }
-
-  if (canReadAllConversationsForAccount(user, accountId)) {
-    return true;
-  }
-
-  const phones = getVisibleTicketPhones(user);
-  const candidatePhones = [
-    chatId,
-    ...listWhatsAppChatPhones(chatId)
-  ].map(value => normalizeChatPhone(value));
-
-  if (candidatePhones.some(candidatePhone => candidatePhone && phones.has(candidatePhone))) {
-    return true;
-  }
-
-  return listWhatsAppMessages(chatId, 80, { accountId })
-    .some(message => normalizeConversationOwner(message && message.sent_by_username) === normalizeConversationOwner(user && user.username));
+  return true;
 }
 
 function getMessageIdentity(message) {

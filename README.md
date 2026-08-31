@@ -51,6 +51,17 @@ curl -X POST "http://localhost:3000/messages/recover" \
 
 Sin `accountId`, intenta recuperar todas las sesiones conectadas.
 
+## Reglas de conversaciones
+
+La pantalla de conversaciones usa estas reglas:
+
+- Primero se traen los chats de las sesiones WhatsApp asignadas al usuario. Si tiene `bot-1` y `bot-2`, se traen ambas. Si tiene una sola, solo esa.
+- Los chats se ordenan siempre por ultimo mensaje descendente dentro de cada solapa.
+- Admin ve todos los chats permitidos en Principal.
+- Un usuario con cuadrillas/grupos ve en Principal los chats cuyo telefono pertenece a tickets visibles de sus cuadrillas. El resto queda en Otros.
+- Un usuario sin cuadrillas/grupos ve en Principal solo los chats que inicio el mismo usuario. El resto queda en Otros.
+- Las conversaciones movidas manualmente a Principal u Otros respetan esa solapa, pero mantienen orden descendente con el resto.
+
 Endpoint:
 
 ```text
