@@ -179,6 +179,9 @@ function initializeDatabase(database = getDb()) {
   database.exec(`
     CREATE INDEX IF NOT EXISTS idx_whatsapp_messages_account_chat_time
       ON whatsapp_messages (whatsapp_account, chat_id, timestamp_ts);
+
+    CREATE INDEX IF NOT EXISTS idx_whatsapp_messages_account_time
+      ON whatsapp_messages (whatsapp_account, timestamp_ts, created_at);
   `);
   ensureWhatsAppConversationBucketOverrideSchema(database);
   ensureUserColumn(database, 'groups_json', 'LONGTEXT');
