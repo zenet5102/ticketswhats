@@ -1226,6 +1226,21 @@ function normalizeWhatsAppAccount(value) {
   return String(value || 'bot-1').trim() || 'bot-1';
 }
 
+function getDisplayableMessagePhone(phone, chatId) {
+  const cleanPhone = String(phone || '').trim();
+  const cleanChatId = String(chatId || '').trim().toLowerCase();
+
+  if (
+    cleanPhone &&
+    cleanChatId.includes('@lid') &&
+    cleanPhone === cleanChatId.replace('@lid', '')
+  ) {
+    return null;
+  }
+
+  return cleanPhone || null;
+}
+
 function saveWhatsAppMessage(message = {}) {
   const chatId = String(message.chatId || '').trim();
   const direction = message.direction === 'incoming' ? 'incoming' : 'outgoing';
@@ -1322,126 +1337,101 @@ function listWhatsAppConversations(limit = 100, options = {}) {
 
   refreshWhatsAppChatAliases(database);
 
-  const whereClause = accountFilter ? 'WHERE COALESCE(whatsapp_account, ?) = ?' : '';
-  const whereParams = accountFilter ? ['bot-1', accountFilter] : [];
-
-  const rows = database.prepare(`
-    WITH ranked AS (
-      SELECT
-        *,
-        ROW_NUMBER() OVER (
-          PARTITION BY COALESCE(whatsapp_account, 'bot-1'), chat_id
-          ORDER BY timestamp_ts DESC, created_at DESC, id DESC
-        ) AS row_number
-      FROM whatsapp_messages
-      ${whereClause}
-    ),
-    counts AS (
-      SELECT
-        COALESCE(whatsapp_account, 'bot-1') AS whatsapp_account,
-        chat_id,
-        COUNT(*) AS total_messages,
-        SUM(CASE WHEN direction = 'incoming' THEN 1 ELSE 0 END) AS incoming_messages,
-        SUM(CASE WHEN direction = 'outgoing' THEN 1 ELSE 0 END) AS outgoing_messages,
-        MAX(CASE WHEN direction = 'incoming' THEN timestamp_ts ELSE NULL END) AS last_incoming_ts,
-        SUM(CASE
-          WHEN direction = 'outgoing'
-            AND source IN ('ticket', 'ticket-response', 'notification-channel', 'manual', 'inbox', 'bot')
-          THEN 1
-          ELSE 0
-        END) AS app_started_messages,
-        SUM(CASE
-          WHEN direction = 'outgoing'
-            AND source IN ('manual', 'inbox', 'bot')
-          THEN 1
-          ELSE 0
-        END) AS manual_started_messages
-      FROM whatsapp_messages
-      ${whereClause}
-      GROUP BY COALESCE(whatsapp_account, 'bot-1'), chat_id
-    )
+  const whereClause = accountFilter ? "WHERE COALESCE(whatsapp_account, 'bot-1') = ?" : '';
+  const whereParams = accountFilter ? [accountFilter] : [];
+  const messageRows = database.prepare(`
     SELECT
-      ranked.id,
-      COALESCE(ranked.whatsapp_account, 'bot-1') AS whatsapp_account,
-      ranked.chat_id,
-      COALESCE(
-        (
-          SELECT latest_phone.phone
-          FROM whatsapp_messages latest_phone
-          WHERE latest_phone.chat_id = ranked.chat_id
-            AND COALESCE(latest_phone.whatsapp_account, 'bot-1') = COALESCE(ranked.whatsapp_account, 'bot-1')
-            AND latest_phone.phone IS NOT NULL
-            AND latest_phone.phone <> ''
-            AND NOT (
-              LOWER(ranked.chat_id) LIKE '%@lid'
-              AND latest_phone.phone = REPLACE(LOWER(ranked.chat_id), '@lid', '')
-            )
-          ORDER BY latest_phone.timestamp_ts DESC, latest_phone.created_at DESC
-          LIMIT 1
-        ),
-        CASE
-          WHEN LOWER(ranked.chat_id) LIKE '%@lid'
-            AND ranked.phone = REPLACE(LOWER(ranked.chat_id), '@lid', '')
-          THEN NULL
-          ELSE ranked.phone
-        END
-      ) AS phone,
-      COALESCE(
-        (
-          SELECT latest_contact.contact_name
-          FROM whatsapp_messages latest_contact
-          WHERE latest_contact.chat_id = ranked.chat_id
-            AND COALESCE(latest_contact.whatsapp_account, 'bot-1') = COALESCE(ranked.whatsapp_account, 'bot-1')
-            AND latest_contact.direction = 'incoming'
-            AND latest_contact.contact_name IS NOT NULL
-            AND latest_contact.contact_name <> ''
-          ORDER BY latest_contact.timestamp_ts DESC, latest_contact.created_at DESC
-          LIMIT 1
-        ),
-        ranked.contact_name
-      ) AS contact_name,
-      ranked.direction,
-      ranked.body,
-      ranked.timestamp_ts,
-      ranked.timestamp_iso,
-      ranked.from_me,
-      ranked.ack,
-      ranked.source,
-      ranked.created_at,
-      (
-        SELECT latest_sender.sent_by_username
-        FROM whatsapp_messages latest_sender
-        WHERE latest_sender.chat_id = ranked.chat_id
-          AND COALESCE(latest_sender.whatsapp_account, 'bot-1') = COALESCE(ranked.whatsapp_account, 'bot-1')
-          AND latest_sender.sent_by_username IS NOT NULL
-          AND latest_sender.sent_by_username <> ''
-        ORDER BY latest_sender.timestamp_ts DESC, latest_sender.created_at DESC
-        LIMIT 1
-      ) AS last_sent_by_username,
-      (
-        SELECT latest_sender.sent_by_name
-        FROM whatsapp_messages latest_sender
-        WHERE latest_sender.chat_id = ranked.chat_id
-          AND COALESCE(latest_sender.whatsapp_account, 'bot-1') = COALESCE(ranked.whatsapp_account, 'bot-1')
-          AND latest_sender.sent_by_name IS NOT NULL
-          AND latest_sender.sent_by_name <> ''
-        ORDER BY latest_sender.timestamp_ts DESC, latest_sender.created_at DESC
-        LIMIT 1
-      ) AS last_sent_by_name,
-      counts.total_messages,
-      counts.incoming_messages,
-      counts.outgoing_messages,
-      counts.last_incoming_ts,
-      counts.app_started_messages,
-      counts.manual_started_messages
-    FROM ranked
-    JOIN counts
-      ON counts.chat_id = ranked.chat_id
-      AND counts.whatsapp_account = COALESCE(ranked.whatsapp_account, 'bot-1')
-    WHERE ranked.row_number = 1
-    ORDER BY ranked.timestamp_ts DESC, ranked.created_at DESC
-    LIMIT ?
-  `).all(...whereParams, ...whereParams, safeLimit);
+      id,
+      COALESCE(whatsapp_account, 'bot-1') AS whatsapp_account,
+      chat_id,
+      phone,
+      contact_name,
+      direction,
+      body,
+      timestamp_ts,
+      timestamp_iso,
+      from_me,
+      ack,
+      source,
+      sent_by_username,
+      sent_by_name,
+      created_at
+    FROM whatsapp_messages
+    ${whereClause}
+    ${whereClause ? 'AND' : 'WHERE'} chat_id <> 'status@broadcast'
+    ORDER BY timestamp_ts DESC, created_at DESC, id DESC
+  `).all(...whereParams);
+  const conversationsByChat = new Map();
+
+  for (const row of messageRows) {
+    const whatsappAccount = normalizeWhatsAppAccount(row.whatsapp_account);
+    const chatId = String(row.chat_id || '').trim();
+
+    if (!chatId) {
+      continue;
+    }
+
+    const key = `${whatsappAccount}:${chatId}`;
+    const cleanPhone = getDisplayableMessagePhone(row.phone, chatId);
+    let conversation = conversationsByChat.get(key);
+
+    if (!conversation) {
+      conversation = {
+        ...row,
+        whatsapp_account: whatsappAccount,
+        phone: cleanPhone,
+        total_messages: 0,
+        incoming_messages: 0,
+        outgoing_messages: 0,
+        last_incoming_ts: null,
+        app_started_messages: 0,
+        manual_started_messages: 0,
+        last_sent_by_username: '',
+        last_sent_by_name: ''
+      };
+      conversationsByChat.set(key, conversation);
+    }
+
+    conversation.total_messages += 1;
+
+    if (row.direction === 'incoming') {
+      conversation.incoming_messages += 1;
+      conversation.last_incoming_ts = conversation.last_incoming_ts || row.timestamp_ts || null;
+
+      if (!conversation.contact_name && row.contact_name) {
+        conversation.contact_name = row.contact_name;
+      }
+    } else if (row.direction === 'outgoing') {
+      conversation.outgoing_messages += 1;
+
+      if (['ticket', 'ticket-response', 'notification-channel', 'manual', 'inbox', 'bot'].includes(row.source)) {
+        conversation.app_started_messages += 1;
+      }
+
+      if (['manual', 'inbox', 'bot'].includes(row.source)) {
+        conversation.manual_started_messages += 1;
+      }
+    }
+
+    if (!conversation.phone && cleanPhone) {
+      conversation.phone = cleanPhone;
+    }
+
+    if (!conversation.last_sent_by_username && row.sent_by_username) {
+      conversation.last_sent_by_username = row.sent_by_username;
+    }
+
+    if (!conversation.last_sent_by_name && row.sent_by_name) {
+      conversation.last_sent_by_name = row.sent_by_name;
+    }
+  }
+
+  const rows = Array.from(conversationsByChat.values())
+    .sort((left, right) => {
+      const timeDelta = Number(right.timestamp_ts || 0) - Number(left.timestamp_ts || 0);
+      return timeDelta || String(right.id || '').localeCompare(String(left.id || ''));
+    })
+    .slice(0, safeLimit);
 
   const chatKeys = new Set(rows.map(row => {
     const chatId = String(row.chat_id || '').trim();
