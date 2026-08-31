@@ -170,7 +170,7 @@ if (!isMainThread) {
       });
     }
 
-    const [rows] = await database.execute(cleanSql, params);
+    const [rows] = await database.query(cleanSql, params);
 
     if (Array.isArray(rows)) {
       return normalizeRows(rows);
