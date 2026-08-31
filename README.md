@@ -17,3 +17,64 @@ Para aplicar cambios:
 npm run pm2:restart
 pm2 save
 ```
+
+## Tercer server de migracion
+
+El tercer server permite migrar y probar datos en MySQL sin reemplazar el server principal ni el segundo server.
+
+Levantar en desarrollo:
+
+```bash
+npm run dev:third
+```
+
+Levantar directo con Node:
+
+```bash
+npm run start:third
+```
+
+Por defecto escucha en `THIRD_APP_PORT=3002`.
+
+Endpoints principales:
+
+```text
+GET /api/third/status
+GET /api/third/counts
+GET /api/third/users
+GET /api/third/tickets
+GET /api/third/messages
+GET /api/third/audit/messages
+POST /api/third/audit/messages
+```
+
+Si `THIRD_APP_API_KEYS` esta configurado, enviar la clave asi:
+
+```http
+Authorization: Bearer clave
+```
+
+o:
+
+```http
+X-Third-Api-Key: clave
+```
+
+Migrar datos actuales desde SQLite al MySQL del tercer server:
+
+```bash
+npm run migrate:third
+```
+
+Variables relevantes:
+
+```env
+THIRD_APP_PORT=3002
+THIRD_APP_API_KEYS=
+THIRD_APP_MYSQL_HOST=127.0.0.1
+THIRD_APP_MYSQL_PORT=3306
+THIRD_APP_MYSQL_USER=root
+THIRD_APP_MYSQL_PASSWORD=
+THIRD_APP_MYSQL_DATABASE=wwebjs_third
+THIRD_APP_SQLITE_SOURCE=./data/tickets.sqlite
+```
