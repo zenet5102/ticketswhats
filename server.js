@@ -1773,6 +1773,11 @@ function isTransientWhatsAppError(error) {
   const message = String(error && error.message || error || '').toLowerCase();
 
   return message.includes('attempted to use detached frame') ||
+    message.includes("reading 'getchat'") ||
+    message.includes('reading "getchat"') ||
+    message.includes("reading 'getchats'") ||
+    message.includes('reading "getchats"') ||
+    message.includes('window.wwebjs') ||
     message.includes('detached frame') ||
     message.includes('frame was detached') ||
     message.includes('execution context was destroyed') ||
@@ -1813,6 +1818,31 @@ function handleTransientWhatsAppError(error, reason, accountId = 'bot-1') {
     console.warn(`No se pudo reiniciar WhatsApp tras error transitorio (${account.label}):`, restartError.message);
   });
   return true;
+}
+
+async function ensureWhatsAppWebHelpers(account, helpers = []) {
+  const accountClient = account && account.client;
+
+  if (!accountClient || !accountClient.pupPage) {
+    throw new Error(`${account && account.label || 'WhatsApp'} todavia no esta conectado`);
+  }
+
+  const requiredHelpers = helpers.length ? helpers : ['getChat'];
+  const status = await accountClient.pupPage.evaluate(names => {
+    return {
+      hasWWebJS: Boolean(window.WWebJS),
+      missing: names.filter(name => !window.WWebJS || typeof window.WWebJS[name] !== 'function')
+    };
+  }, requiredHelpers);
+
+  if (status.hasWWebJS && !status.missing.length) {
+    return true;
+  }
+
+  const missing = status.missing.join(', ') || 'WWebJS';
+  const error = new Error(`WhatsApp Web todavia no cargo helpers internos (${missing})`);
+  error.code = 'WHATSAPP_TRANSIENT';
+  throw error;
 }
 
 function getWhatsAppTimestampMs(timestamp) {
@@ -2085,6 +2115,7 @@ async function syncRecentWhatsAppMessages(options = {}) {
       }
 
       try {
+        await ensureWhatsAppWebHelpers(account, ['getChats', 'getChat', 'getMessageModel']);
         const chats = await accountClient.getChats();
         const recentChats = chats
           .filter(isSyncableWhatsAppChat)
@@ -2459,7 +2490,10 @@ async function sendWhatsApp(phone, message, source = 'bot', options = {}) {
   let sentMessage = null;
 
   try {
+    await ensureWhatsAppWebHelpers(account, ['getChat', 'sendMessage']);
+
     if (!chatId) {
+      await ensureWhatsAppWebHelpers(account, ['getContact']);
       const numberId = await account.client.getNumberId(cleanPhone);
 
       if (!numberId) {
@@ -2539,7 +2573,18 @@ async function validateWhatsAppTarget(phone, accountId = 'bot-1') {
     throw new Error('Falta telefono');
   }
 
-  const numberId = await account.client.getNumberId(cleanPhone);
+  let numberId = null;
+
+  try {
+    await ensureWhatsAppWebHelpers(account, ['getChat']);
+    numberId = await account.client.getNumberId(cleanPhone);
+  } catch (error) {
+    if (handleTransientWhatsAppError(error, 'validate-number-error', account.id)) {
+      throw createTransientWhatsAppError(error);
+    }
+
+    throw error;
+  }
 
   return {
     exists: Boolean(numberId),
@@ -3656,7 +3701,7 @@ app.post('/messages/validate-phone', requirePrivileged, async (req, res) => {
       ...result
     });
   } catch (error) {
-    const status = error.message.includes('todavia no esta conectado') ? 503 : 400;
+    const status = error.code === 'WHATSAPP_TRANSIENT' || error.message.includes('todavia no esta conectado') ? 503 : 400;
 
     res.status(status).json({
       success: false,
@@ -3736,7 +3781,7 @@ app.post('/messages/send', requirePrivileged, async (req, res) => {
       ticket
     });
   } catch (error) {
-    const status = error.message.includes('todavia no esta conectado') ? 503 : 500;
+    const status = error.code === 'WHATSAPP_TRANSIENT' || error.message.includes('todavia no esta conectado') ? 503 : 500;
     res.status(status).json({
       success: false,
       error: error.message
