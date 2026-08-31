@@ -1276,7 +1276,7 @@ function saveWhatsAppMessage(message = {}) {
       direction,
       body,
       media_mime,
-      media_data,
+      ${options.includeMedia === false ? 'NULL AS media_data,' : 'media_data,'}
       media_filename,
       timestamp_ts,
       timestamp_iso,

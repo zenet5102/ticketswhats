@@ -2262,6 +2262,12 @@ async function backfillChatMedia(chatId, accountId = 'bot-1') {
   }
 }
 
+function triggerChatMediaBackfill(chatId, accountId = 'bot-1') {
+  backfillChatMedia(chatId, accountId).catch(error => {
+    console.warn(`No se pudo disparar recuperacion de media del chat ${chatId}:`, error.message);
+  });
+}
+
 initializeWhatsAppClients();
 
 async function getWhatsAppStatus(accountId = 'bot-1') {
@@ -3571,12 +3577,13 @@ app.get('/messages', requireLoggedIn, async (req, res) => {
       });
     }
 
-    await backfillChatMedia(chatId, accountId);
+    triggerChatMediaBackfill(chatId, accountId);
 
     res.json({
       success: true,
       messages: listWhatsAppMessages(chatId, req.query.limit, {
-        accountId
+        accountId,
+        includeMedia: !['0', 'false', 'no'].includes(String(req.query.includeMedia || '').toLowerCase())
       })
     });
   } catch (error) {

@@ -1299,6 +1299,7 @@
       newIncomingChatIds: new Set(),
       notificationAudioContext: null,
       renderedMessagesChatId: '',
+      messagesRequestId: 0,
       channelSettings: null,
       whatsappReady: false,
       chatSearch: '',
@@ -2593,6 +2594,14 @@
       }
     }
 
+    function renderMessagesLoading(chatId = state.selectedChatId, accountId = state.selectedAccountId) {
+      const renderedKey = `${accountId || 'bot-1'}:${chatId || ''}`;
+
+      state.renderedMessagesChatId = renderedKey;
+      els.messageList.innerHTML = '<div class="empty">Cargando mensajes...</div>';
+      setComposerEnabled(Boolean(chatId));
+    }
+
     function renderAck(message) {
       if (!message || message.direction !== 'outgoing') {
         return '';
@@ -2672,7 +2681,20 @@
         return;
       }
 
-      const data = await fetchJson(`/messages?chatId=${encodeURIComponent(state.selectedChatId)}&accountId=${encodeURIComponent(state.selectedAccountId)}`);
+      const chatId = state.selectedChatId;
+      const accountId = state.selectedAccountId;
+      const requestId = state.messagesRequestId + 1;
+      state.messagesRequestId = requestId;
+      const data = await fetchJson(`/messages?chatId=${encodeURIComponent(chatId)}&accountId=${encodeURIComponent(accountId)}&limit=120&includeMedia=0`);
+
+      if (
+        requestId !== state.messagesRequestId ||
+        chatId !== state.selectedChatId ||
+        accountId !== state.selectedAccountId
+      ) {
+        return;
+      }
+
       renderMessages(data.messages || []);
     }
 
@@ -2718,6 +2740,7 @@
       els.sendError.textContent = '';
       renderConversations();
       renderChatHeader(conversation);
+      renderMessagesLoading(state.selectedChatId, state.selectedAccountId);
       loadClientDetails(conversation).catch(error => {
         state.clientDetails = { error: error.message };
         state.clientDetailsLoading = false;
