@@ -1613,7 +1613,7 @@ function findDirectChatAliases(database, directChatIds) {
     WHERE LOWER(lid.chat_id) LIKE '%@lid'
       AND lid.chat_id <> 'status@broadcast'
       AND direct.chat_id <> 'status@broadcast'
-    GROUP BY lid.chat_id, direct.chat_id
+    GROUP BY lid.chat_id, direct.chat_id, direct.phone
     HAVING matching_messages >= 1
     ORDER BY matching_messages DESC, last_match_ts DESC
   `).all(...cleanDirectChatIds);
