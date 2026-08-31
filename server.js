@@ -1223,6 +1223,18 @@ function conversationWasStartedByUser(conversation, user) {
   ).some(message => normalizeConversationOwner(message && message.sent_by_username) === username);
 }
 
+function userHasTicketGroupRestrictions(user) {
+  return Array.isArray(user && user.groups) && user.groups.length > 0;
+}
+
+function canReadAllConversationsForAccount(user, accountId) {
+  if (!canAccessWhatsAppAccount(user, accountId)) {
+    return false;
+  }
+
+  return Boolean(user && user.isAdmin) || !userHasTicketGroupRestrictions(user);
+}
+
 function listVisibleConversationsForUser(user, limit) {
   return listConversationBucketsForUser(user, limit).conversations;
 }
@@ -1370,7 +1382,11 @@ function listConversationBucketsForUser(user, limit) {
     attachTicketInfoToConversations(
       user,
       allConversations
-        .filter(conversation => conversationMatchesPhones(conversation, phones) || conversationWasStartedByUser(conversation, user))
+        .filter(conversation => (
+          canReadAllConversationsForAccount(user, getConversationAccountId(conversation)) ||
+          conversationMatchesPhones(conversation, phones) ||
+          conversationWasStartedByUser(conversation, user)
+        ))
     ),
     requestedLimit
   );
@@ -1382,6 +1398,10 @@ function canReadChat(user, chatId, accountId = 'bot-1') {
   }
 
   if (user && user.isAdmin) {
+    return true;
+  }
+
+  if (canReadAllConversationsForAccount(user, accountId)) {
     return true;
   }
 
