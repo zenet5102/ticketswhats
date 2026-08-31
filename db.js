@@ -1338,100 +1338,81 @@ function listWhatsAppConversations(limit = 100, options = {}) {
   refreshWhatsAppChatAliases(database);
 
   const whereClause = accountFilter ? "WHERE COALESCE(whatsapp_account, 'bot-1') = ?" : '';
-  const whereParams = accountFilter ? [accountFilter] : [];
-  const messageRows = database.prepare(`
+  const queryParams = accountFilter ? [accountFilter, safeLimit, accountFilter] : [safeLimit];
+  const rows = database.prepare(`
     SELECT
-      id,
-      COALESCE(whatsapp_account, 'bot-1') AS whatsapp_account,
-      chat_id,
-      phone,
-      contact_name,
-      direction,
-      body,
-      timestamp_ts,
-      timestamp_iso,
-      from_me,
-      ack,
-      source,
-      sent_by_username,
-      sent_by_name,
-      created_at
-    FROM whatsapp_messages
-    ${whereClause}
-    ${whereClause ? 'AND' : 'WHERE'} chat_id <> 'status@broadcast'
-    ORDER BY timestamp_ts DESC, created_at DESC, id DESC
-  `).all(...whereParams);
-  const conversationsByChat = new Map();
-
-  for (const row of messageRows) {
-    const whatsappAccount = normalizeWhatsAppAccount(row.whatsapp_account);
-    const chatId = String(row.chat_id || '').trim();
-
-    if (!chatId) {
-      continue;
-    }
-
-    const key = `${whatsappAccount}:${chatId}`;
-    const cleanPhone = getDisplayableMessagePhone(row.phone, chatId);
-    let conversation = conversationsByChat.get(key);
-
-    if (!conversation) {
-      conversation = {
-        ...row,
-        whatsapp_account: whatsappAccount,
-        phone: cleanPhone,
-        total_messages: 0,
-        incoming_messages: 0,
-        outgoing_messages: 0,
-        last_incoming_ts: null,
-        app_started_messages: 0,
-        manual_started_messages: 0,
-        last_sent_by_username: '',
-        last_sent_by_name: ''
-      };
-      conversationsByChat.set(key, conversation);
-    }
-
-    conversation.total_messages += 1;
-
-    if (row.direction === 'incoming') {
-      conversation.incoming_messages += 1;
-      conversation.last_incoming_ts = conversation.last_incoming_ts || row.timestamp_ts || null;
-
-      if (!conversation.contact_name && row.contact_name) {
-        conversation.contact_name = row.contact_name;
-      }
-    } else if (row.direction === 'outgoing') {
-      conversation.outgoing_messages += 1;
-
-      if (['ticket', 'ticket-response', 'notification-channel', 'manual', 'inbox', 'bot'].includes(row.source)) {
-        conversation.app_started_messages += 1;
-      }
-
-      if (['manual', 'inbox', 'bot'].includes(row.source)) {
-        conversation.manual_started_messages += 1;
-      }
-    }
-
-    if (!conversation.phone && cleanPhone) {
-      conversation.phone = cleanPhone;
-    }
-
-    if (!conversation.last_sent_by_username && row.sent_by_username) {
-      conversation.last_sent_by_username = row.sent_by_username;
-    }
-
-    if (!conversation.last_sent_by_name && row.sent_by_name) {
-      conversation.last_sent_by_name = row.sent_by_name;
-    }
-  }
-
-  const rows = Array.from(conversationsByChat.values())
-    .sort((left, right) => {
-      const timeDelta = Number(right.timestamp_ts || 0) - Number(left.timestamp_ts || 0);
-      return timeDelta || String(right.id || '').localeCompare(String(left.id || ''));
-    })
-    .slice(0, safeLimit);
+      latest.id,
+      latest.whatsapp_account,
+      latest.chat_id,
+      CASE
+        WHEN latest.chat_id LIKE '%@lid' AND latest.phone = REPLACE(latest.chat_id, '@lid', '') THEN NULL
+        ELSE latest.phone
+      END AS phone,
+      latest.contact_name,
+      latest.direction,
+      latest.body,
+      latest.timestamp_ts,
+      latest.timestamp_iso,
+      latest.from_me,
+      latest.ack,
+      latest.source,
+      latest.sent_by_username,
+      latest.sent_by_name,
+      latest.created_at,
+      grouped.total_messages,
+      grouped.incoming_messages,
+      grouped.outgoing_messages,
+      grouped.last_incoming_ts,
+      grouped.app_started_messages,
+      grouped.manual_started_messages,
+      grouped.last_sent_by_username,
+      grouped.last_sent_by_name
+    FROM (
+      SELECT
+        COALESCE(whatsapp_account, 'bot-1') AS grouped_whatsapp_account,
+        chat_id AS grouped_chat_id,
+        SUBSTRING_INDEX(GROUP_CONCAT(id ORDER BY timestamp_ts DESC, created_at DESC, id DESC SEPARATOR '\u001f'), '\u001f', 1) AS latest_id,
+        COUNT(*) AS total_messages,
+        SUM(CASE WHEN direction = 'incoming' THEN 1 ELSE 0 END) AS incoming_messages,
+        SUM(CASE WHEN direction = 'outgoing' THEN 1 ELSE 0 END) AS outgoing_messages,
+        MAX(CASE WHEN direction = 'incoming' THEN timestamp_ts ELSE NULL END) AS last_incoming_ts,
+        SUM(CASE WHEN direction = 'outgoing' AND source IN ('ticket', 'ticket-response', 'notification-channel', 'manual', 'inbox', 'bot') THEN 1 ELSE 0 END) AS app_started_messages,
+        SUM(CASE WHEN direction = 'outgoing' AND source IN ('manual', 'inbox', 'bot') THEN 1 ELSE 0 END) AS manual_started_messages,
+        SUBSTRING_INDEX(GROUP_CONCAT(CASE WHEN sent_by_username IS NOT NULL AND sent_by_username <> '' THEN sent_by_username ELSE NULL END ORDER BY timestamp_ts DESC, created_at DESC, id DESC SEPARATOR '\u001f'), '\u001f', 1) AS last_sent_by_username,
+        SUBSTRING_INDEX(GROUP_CONCAT(CASE WHEN sent_by_name IS NOT NULL AND sent_by_name <> '' THEN sent_by_name ELSE NULL END ORDER BY timestamp_ts DESC, created_at DESC, id DESC SEPARATOR '\u001f'), '\u001f', 1) AS last_sent_by_name
+      FROM whatsapp_messages
+      ${whereClause}
+      ${whereClause ? 'AND' : 'WHERE'} chat_id <> 'status@broadcast'
+      GROUP BY COALESCE(whatsapp_account, 'bot-1'), chat_id
+      ORDER BY MAX(timestamp_ts) DESC, MAX(created_at) DESC, latest_id DESC
+      LIMIT ?
+    ) grouped
+    JOIN (
+      SELECT
+        id,
+        COALESCE(whatsapp_account, 'bot-1') AS whatsapp_account,
+        chat_id,
+        phone,
+        contact_name,
+        direction,
+        body,
+        timestamp_ts,
+        timestamp_iso,
+        from_me,
+        ack,
+        source,
+        sent_by_username,
+        sent_by_name,
+        created_at
+      FROM whatsapp_messages
+      ${whereClause}
+      ${whereClause ? 'AND' : 'WHERE'} chat_id <> 'status@broadcast'
+    ) latest
+      ON latest.id = grouped.latest_id
+      AND latest.chat_id = grouped.grouped_chat_id
+      AND latest.whatsapp_account = grouped.grouped_whatsapp_account
+    ORDER BY latest.timestamp_ts DESC, latest.created_at DESC, latest.id DESC
+  `).all(...queryParams);
 
   const chatKeys = new Set(rows.map(row => {
     const chatId = String(row.chat_id || '').trim();

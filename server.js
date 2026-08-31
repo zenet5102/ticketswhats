@@ -2112,6 +2112,12 @@ async function syncRecentWhatsAppMessages(options = {}) {
   }
 }
 
+function triggerRecentMessagesSync(options = {}) {
+  syncRecentWhatsAppMessages(options).catch(error => {
+    console.warn('No se pudo disparar la sincronizacion reciente:', error.message);
+  });
+}
+
 async function processIncomingTicketResponse(storedMessage) {
   if (!storedMessage || storedMessage.direction !== 'incoming') {
     return null;
@@ -3390,7 +3396,7 @@ app.post('/notifications/test-response', requirePrivileged, handleResponseNotifi
 
 app.get('/messages/conversations', requireLoggedIn, async (req, res) => {
   try {
-    await syncRecentWhatsAppMessages();
+    triggerRecentMessagesSync();
     const buckets = listConversationBucketsForUser(req.user, req.query.limit);
 
     res.json({

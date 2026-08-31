@@ -2685,8 +2685,10 @@
       els.channelSettingsBtn.disabled = true;
 
       try {
-        await loadStatus();
-        await loadConversations(true);
+        await Promise.all([
+          loadStatus(),
+          loadConversations(true)
+        ]);
         await loadMessages();
         els.lastRefresh.textContent = `Actualizado ${new Intl.DateTimeFormat('es-AR', {
           hour: '2-digit',
