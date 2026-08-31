@@ -956,6 +956,45 @@ function compactAuditClient(client) {
   };
 }
 
+function compactMessageClient(client) {
+  if (!client) {
+    return null;
+  }
+
+  return {
+    id: String(client.id || ''),
+    razonSocial: client.razonSocial || client.razon_social || '',
+    apellido: client.apellido || '',
+    nombre: client.nombre || '',
+    documento: client.documento || '',
+    cuit: client.cuit || '',
+    categoria: client.categoria || '',
+    condicion: client.condicion || '',
+    estado: client.estado || '',
+    deuda: client.deuda || '',
+    movil: client.movil || '',
+    telefono: client.telefono || '',
+    email: client.email || '',
+    direccion: client.direccion || '',
+    dirNumero: client.dirNumero || client.dir_numero || '',
+    barrio: client.barrio || '',
+    ciudad: client.ciudad || '',
+    perfil: client.perfil || '',
+    television: client.television || '',
+    telefonia: client.telefonia || '',
+    otros: client.otros || '',
+    mac: client.mac || '',
+    usuario: client.usuario || '',
+    router: client.router || '',
+    olt: client.olt || '',
+    fechaAlta: client.fechaAlta || client.fecha_alta || '',
+    fechaInstalacion: client.fechaInstalacion || client.fecha_instalacion || '',
+    fechaUltimoCambio: client.fechaUltimoCambio || client.fecha_ultimo_cambio || '',
+    fechaUltimaFactura: client.fechaUltimaFactura || client.fecha_ultima_factura || '',
+    syncedAt: client.syncedAt || client.synced_at || ''
+  };
+}
+
 function normalizeAuditMessage(row, store, context = {}) {
   const phone = normalizeChatPhone(row.phone || row.chat_id || '');
   const timestampTs = Number(row.timestamp_ts || 0);
@@ -3404,6 +3443,98 @@ app.post('/messages/conversations/bucket', requirePrivileged, (req, res) => {
       override,
       conversations: buckets.conversations,
       otherConversations: buckets.otherConversations
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+app.get('/messages/client-details', requireLoggedIn, async (req, res) => {
+  try {
+    const chatId = String(req.query.chatId || '').trim();
+    const accountId = isValidWhatsAppAccount(req.query.accountId)
+      ? String(req.query.accountId).trim()
+      : getDefaultWhatsAppAccountId(req.user);
+    const ticketExternalId = String(req.query.ticketExternalId || req.query.ticket || '').trim();
+    const requestedClientId = String(req.query.clientId || req.query.ida || req.query.IDA || '').trim();
+    const requestedPhone = normalizeChatPhone(req.query.phone || '');
+    const phones = new Set();
+    let ticket = null;
+    let clientId = requestedClientId;
+
+    if (chatId && !canReadChat(req.user, chatId, accountId)) {
+      return res.status(403).json({
+        success: false,
+        error: canAccessWhatsAppAccount(req.user, accountId)
+          ? 'Chat fuera de los grupos asignados'
+          : 'Sesion WhatsApp no asignada al usuario'
+      });
+    }
+
+    if (ticketExternalId) {
+      if (!canAccessTicket(req.user, ticketExternalId)) {
+        return res.status(403).json({
+          success: false,
+          error: 'Ticket fuera de los grupos asignados'
+        });
+      }
+
+      ticket = getTicket(ticketExternalId);
+      clientId = clientId || getTicketIda(ticket);
+      for (const phone of [ticket && ticket.phone, ...getTicketPhones(ticket)]) {
+        const cleanPhone = normalizeChatPhone(phone);
+        if (cleanPhone) {
+          phones.add(cleanPhone);
+        }
+      }
+    }
+
+    if (requestedPhone) {
+      phones.add(requestedPhone);
+    }
+
+    if (chatId) {
+      const chatPhone = normalizeChatPhone(chatId);
+      if (chatPhone) {
+        phones.add(chatPhone);
+      }
+
+      for (const phone of listWhatsAppChatPhones(chatId)) {
+        const cleanPhone = normalizeChatPhone(phone);
+        if (cleanPhone) {
+          phones.add(cleanPhone);
+        }
+      }
+    }
+
+    if (!clientId && chatId) {
+      clientId = await secondDb.getIdentifiedClientId(chatId, requestedPhone || chatId);
+    }
+
+    let client = clientId ? await secondDb.findPhantomClientById(clientId) : null;
+
+    if (!client) {
+      for (const phone of phones) {
+        client = await secondDb.findPhantomClientByPhone(phone);
+        if (client) {
+          clientId = String(client.id || '');
+          break;
+        }
+      }
+    }
+
+    const links = clientId ? await secondDb.listClientChatLinks(clientId, 20) : [];
+
+    res.json({
+      success: true,
+      client: compactMessageClient(client),
+      ticket: ticket ? compactAuditTicket(ticket) : null,
+      phones: Array.from(phones),
+      links,
+      source: client ? 'mysql' : 'none'
     });
   } catch (error) {
     res.status(500).json({
