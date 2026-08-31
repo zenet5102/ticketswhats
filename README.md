@@ -39,6 +39,10 @@ Por defecto escucha en `THIRD_APP_PORT=3002`.
 Endpoints principales:
 
 ```text
+GET /login
+POST /auth/login
+POST /auth/logout
+GET /auth/me
 GET /api/third/status
 GET /api/third/counts
 GET /api/third/users
@@ -48,7 +52,7 @@ GET /api/third/audit/messages
 POST /api/third/audit/messages
 ```
 
-Si `THIRD_APP_API_KEYS` esta configurado, enviar la clave asi:
+El login del tercer server usa la tabla `users` migrada a MySQL. Las APIs aceptan sesion web o API key. Si `THIRD_APP_API_KEYS` esta configurado, enviar la clave asi:
 
 ```http
 Authorization: Bearer clave
@@ -71,6 +75,9 @@ Variables relevantes:
 ```env
 THIRD_APP_PORT=3002
 THIRD_APP_API_KEYS=
+THIRD_APP_AUTH_COOKIE_NAME=wwebjs_third_session
+THIRD_APP_AUTH_SESSION_HOURS=12
+THIRD_APP_AUTH_SESSION_SECRET=
 THIRD_APP_MYSQL_HOST=127.0.0.1
 THIRD_APP_MYSQL_PORT=3306
 THIRD_APP_MYSQL_USER=root

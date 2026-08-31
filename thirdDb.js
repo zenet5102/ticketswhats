@@ -431,6 +431,84 @@ async function listUsers({ limit = 100, offset = 0 } = {}) {
   return rows;
 }
 
+function parseJsonArray(value) {
+  try {
+    const parsed = JSON.parse(value || '[]');
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (error) {
+    return [];
+  }
+}
+
+function publicUser(row) {
+  if (!row) {
+    return null;
+  }
+
+  return {
+    id: row.id,
+    username: row.username,
+    name: row.name,
+    role: row.role,
+    groups: parseJsonArray(row.groups_json),
+    whatsappAccount: row.whatsapp_account || 'bot-1',
+    whatsappAccounts: parseJsonArray(row.whatsapp_accounts_json || '["bot-1"]'),
+    isAdmin: row.role === 'admin',
+    isPrivileged: ['admin', 'usuario'].includes(row.role),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  };
+}
+
+async function getUserByUsername(username) {
+  const cleanUsername = String(username || '').trim().toLowerCase();
+
+  if (!cleanUsername) {
+    return null;
+  }
+
+  const database = await getPool();
+  const [rows] = await database.execute(`
+    SELECT *
+    FROM users
+    WHERE LOWER(username) = ?
+    LIMIT 1
+  `, [cleanUsername]);
+
+  return rows[0] || null;
+}
+
+function safeCompare(leftValue, rightValue) {
+  const left = Buffer.from(String(leftValue || ''), 'utf8');
+  const right = Buffer.from(String(rightValue || ''), 'utf8');
+
+  if (left.length !== right.length) {
+    return false;
+  }
+
+  return require('crypto').timingSafeEqual(left, right);
+}
+
+function hashPassword(password, salt) {
+  return require('crypto').scryptSync(String(password || ''), salt, 64).toString('base64');
+}
+
+async function authenticateUser(username, password) {
+  const user = await getUserByUsername(username);
+
+  if (!user) {
+    return null;
+  }
+
+  const passwordHash = hashPassword(password, user.password_salt);
+
+  if (!safeCompare(passwordHash, user.password_hash)) {
+    return null;
+  }
+
+  return publicUser(user);
+}
+
 async function listTickets({ date, phone, ticket, externalId, client, limit = 100, offset = 0 } = {}) {
   const safeLimit = Math.min(Math.max(Number(limit) || 100, 1), 1000);
   const safeOffset = Math.max(Number(offset) || 0, 0);
@@ -624,11 +702,14 @@ module.exports = {
   getMysqlSettings,
   getPhoneCandidates,
   getPool,
+  authenticateUser,
+  getUserByUsername,
   listMessages,
   listTickets,
   listUsers,
   normalizeChatPhone,
   pingDatabase,
+  publicUser,
   tableColumns,
   upsertRows
 };
