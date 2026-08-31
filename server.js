@@ -1354,13 +1354,6 @@ function listConversationBucketsForUser(user, limit) {
 
   const phones = getVisibleTicketPhones(user, getTodayDateString());
 
-  if (!phones.size) {
-    return {
-      conversations: [],
-      otherConversations: []
-    };
-  }
-
   return splitConversationBuckets(
     attachTicketInfoToConversations(
       user,
