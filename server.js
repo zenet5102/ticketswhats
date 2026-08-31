@@ -118,6 +118,7 @@ const whatsappAccountStates = new Map(whatsappAccounts.map(account => [account.i
   catchupLastStartedAt: null,
   catchupLastFinishedAt: null,
   catchupLastError: null,
+  lastTransientRestartAt: 0,
   qr: null,
   qrText: null,
   qrSvg: null,
@@ -140,6 +141,7 @@ const whatsappCatchupOnReconnect = String(process.env.WHATSAPP_CATCHUP_ON_RECONN
 const whatsappCatchupDelayMs = parseNonNegativeInteger(process.env.WHATSAPP_CATCHUP_DELAY_MS, 3000);
 const whatsappCatchupChatLimit = parsePositiveInteger(process.env.WHATSAPP_CATCHUP_CHAT_LIMIT, 120);
 const whatsappCatchupMessageLimit = parsePositiveInteger(process.env.WHATSAPP_CATCHUP_MESSAGE_LIMIT, 50);
+const whatsappTransientRestartCooldownMs = parsePositiveInteger(process.env.WHATSAPP_TRANSIENT_RESTART_COOLDOWN_MS, 120000);
 const whatsappAuthRoot = path.resolve(__dirname, '.wwebjs_auth');
 const whatsappAuthSessionDir = path.resolve(whatsappAuthRoot, 'session-bot-1');
 const secondMaxStoredMediaBytes = parsePositiveInteger(process.env.SECOND_APP_MAX_STORED_MEDIA_MB, 15) * 1024 * 1024;
@@ -1845,23 +1847,39 @@ function createTransientWhatsAppError(error) {
   return nextError;
 }
 
-function handleTransientWhatsAppError(error, reason, accountId = 'bot-1') {
+function handleTransientWhatsAppError(error, reason, accountId = 'bot-1', options = {}) {
   if (!isTransientWhatsAppError(error)) {
     return false;
   }
 
   const account = getWhatsAppAccountState(accountId);
   const transientError = createTransientWhatsAppError(error);
+  const now = Date.now();
+  const shouldMarkRefreshing = options.markRefreshing !== false;
+  const shouldRestart = options.restart !== false &&
+    !account.restarting &&
+    !account.initializing &&
+    now - Number(account.lastTransientRestartAt || 0) >= whatsappTransientRestartCooldownMs;
+
   account.lastError = transientError.message;
 
   if (account.id === 'bot-1') {
     whatsappLastError = transientError.message;
   }
 
-  markWhatsAppState('SESSION_REFRESHING', false, account.id);
-  restartWhatsAppClient(reason, { accountId: account.id }).catch(restartError => {
-    console.warn(`No se pudo reiniciar WhatsApp tras error transitorio (${account.label}):`, restartError.message);
-  });
+  if (shouldMarkRefreshing) {
+    markWhatsAppState('SESSION_REFRESHING', false, account.id);
+  }
+
+  if (shouldRestart) {
+    account.lastTransientRestartAt = now;
+    restartWhatsAppClient(reason, { accountId: account.id }).catch(restartError => {
+      console.warn(`No se pudo reiniciar WhatsApp tras error transitorio (${account.label}):`, restartError.message);
+    });
+  } else if (options.restart !== false) {
+    console.warn(`Reinicio WhatsApp omitido por cooldown (${account.label}, ${reason}).`);
+  }
+
   return true;
 }
 
@@ -2264,7 +2282,10 @@ async function syncRecentWhatsAppMessages(options = {}) {
               }
             }
           } catch (error) {
-            if (handleTransientWhatsAppError(error, 'recent-messages-sync-error', account.id)) {
+            if (handleTransientWhatsAppError(error, 'recent-messages-sync-error', account.id, {
+              restart: false,
+              markRefreshing: false
+            })) {
               accountSummary.error = 'WhatsApp recargado durante sync de mensajes';
               console.warn(`WhatsApp se recargo mientras se sincronizaban mensajes recientes (${account.label}).`);
               break;
@@ -2275,7 +2296,10 @@ async function syncRecentWhatsAppMessages(options = {}) {
           }
         }
       } catch (error) {
-        if (handleTransientWhatsAppError(error, 'recent-chats-sync-error', account.id)) {
+        if (handleTransientWhatsAppError(error, 'recent-chats-sync-error', account.id, {
+          restart: false,
+          markRefreshing: false
+        })) {
           accountSummary.error = 'WhatsApp recargado listando chats';
           console.warn(`WhatsApp se recargo mientras se listaban chats recientes (${account.label}).`);
           continue;
@@ -2442,7 +2466,10 @@ async function backfillChatMedia(chatId, accountId = 'bot-1') {
       }
     }
   } catch (error) {
-    if (handleTransientWhatsAppError(error, 'media-backfill-error', account.id)) {
+    if (handleTransientWhatsAppError(error, 'media-backfill-error', account.id, {
+      restart: false,
+      markRefreshing: false
+    })) {
       console.warn(`WhatsApp se recargo mientras se recuperaba media del chat ${chatId}. Se reintentara luego.`);
       return;
     }
