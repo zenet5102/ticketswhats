@@ -1,7 +1,5 @@
-const fs = require('fs');
-const path = require('path');
-const { DatabaseSync } = require('node:sqlite');
 const { config } = require('./config');
+const { MysqlSyncDatabase } = require('./mysqlSyncDatabase');
 
 let db;
 let fallbackAutomaticMessageTemplateCursor = null;
@@ -11,12 +9,7 @@ function getDb() {
     return db;
   }
 
-  const dbDirectory = path.dirname(config.dbPath);
-  fs.mkdirSync(dbDirectory, { recursive: true });
-
-  db = new DatabaseSync(config.dbPath);
-  db.exec('PRAGMA journal_mode = WAL');
-  db.exec('PRAGMA foreign_keys = ON');
+  db = new MysqlSyncDatabase();
   initializeDatabase(db);
 
   return db;
@@ -25,29 +18,29 @@ function getDb() {
 function initializeDatabase(database = getDb()) {
   database.exec(`
     CREATE TABLE IF NOT EXISTS tickets (
-      external_id TEXT PRIMARY KEY,
-      delegacion TEXT NOT NULL,
-      start TEXT NOT NULL,
-      start_ts INTEGER NOT NULL,
-      start_date TEXT NOT NULL,
-      start_time TEXT NOT NULL,
-      status TEXT,
-      phone TEXT,
-      phones_json TEXT NOT NULL DEFAULT '[]',
-      razon_social TEXT,
-      response_action TEXT,
-      response_label TEXT,
-      response_body TEXT,
-      response_received_at TEXT,
-      automatic_message_disabled_at TEXT,
-      automatic_message_disabled_reason TEXT,
-      payload_json TEXT NOT NULL DEFAULT '{}',
-      message_sent_at TEXT,
-      message_error TEXT,
-      last_status_check_at TEXT,
-      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-    );
+      external_id VARCHAR(191) NOT NULL PRIMARY KEY,
+      delegacion VARCHAR(255) NOT NULL,
+      start VARCHAR(64) NOT NULL,
+      start_ts BIGINT NOT NULL,
+      start_date VARCHAR(32) NOT NULL,
+      start_time VARCHAR(32) NOT NULL,
+      status VARCHAR(191) NULL,
+      phone VARCHAR(64) NULL,
+      phones_json LONGTEXT NOT NULL,
+      razon_social VARCHAR(255) NULL,
+      response_action VARCHAR(191) NULL,
+      response_label VARCHAR(255) NULL,
+      response_body TEXT NULL,
+      response_received_at VARCHAR(32) NULL,
+      automatic_message_disabled_at VARCHAR(32) NULL,
+      automatic_message_disabled_reason TEXT NULL,
+      payload_json LONGTEXT NOT NULL,
+      message_sent_at VARCHAR(32) NULL,
+      message_error TEXT NULL,
+      last_status_check_at VARCHAR(32) NULL,
+      created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+    ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
     CREATE INDEX IF NOT EXISTS idx_tickets_start_order
       ON tickets (start_date, start_ts, external_id);
@@ -56,25 +49,25 @@ function initializeDatabase(database = getDb()) {
       ON tickets (status);
 
     CREATE TABLE IF NOT EXISTS whatsapp_messages (
-      id TEXT PRIMARY KEY,
-      chat_id TEXT NOT NULL,
-      phone TEXT,
-      contact_name TEXT,
-      direction TEXT NOT NULL,
+      id VARCHAR(191) NOT NULL PRIMARY KEY,
+      chat_id VARCHAR(191) NOT NULL,
+      phone VARCHAR(64) NULL,
+      contact_name VARCHAR(255) NULL,
+      direction VARCHAR(16) NOT NULL,
       body TEXT NOT NULL,
-      media_mime TEXT,
-      media_data TEXT,
-      media_filename TEXT,
-      timestamp_ts INTEGER NOT NULL,
-      timestamp_iso TEXT NOT NULL,
-      from_me INTEGER NOT NULL DEFAULT 0,
-      ack INTEGER,
-      source TEXT,
-      sent_by_username TEXT,
-      sent_by_name TEXT,
-      whatsapp_account TEXT NOT NULL DEFAULT 'bot-1',
-      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-    );
+      media_mime VARCHAR(191) NULL,
+      media_data LONGTEXT NULL,
+      media_filename VARCHAR(255) NULL,
+      timestamp_ts BIGINT NOT NULL,
+      timestamp_iso VARCHAR(32) NOT NULL,
+      from_me TINYINT(1) NOT NULL DEFAULT 0,
+      ack INT NULL,
+      source VARCHAR(64) NULL,
+      sent_by_username VARCHAR(191) NULL,
+      sent_by_name VARCHAR(191) NULL,
+      whatsapp_account VARCHAR(32) NOT NULL DEFAULT 'bot-1',
+      created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+    ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
     CREATE INDEX IF NOT EXISTS idx_whatsapp_messages_chat_time
       ON whatsapp_messages (chat_id, timestamp_ts);
@@ -83,70 +76,70 @@ function initializeDatabase(database = getDb()) {
       ON whatsapp_messages (timestamp_ts);
 
     CREATE TABLE IF NOT EXISTS users (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      username TEXT NOT NULL UNIQUE COLLATE NOCASE,
-      name TEXT NOT NULL,
-      role TEXT NOT NULL,
-      groups_json TEXT NOT NULL DEFAULT '[]',
+      id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+      username VARCHAR(191) NOT NULL UNIQUE,
+      name VARCHAR(255) NOT NULL,
+      role VARCHAR(32) NOT NULL,
+      groups_json LONGTEXT NOT NULL,
       password_hash TEXT NOT NULL,
-      password_salt TEXT NOT NULL,
-      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-    );
+      password_salt VARCHAR(191) NOT NULL,
+      created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+    ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
     CREATE INDEX IF NOT EXISTS idx_users_role
       ON users (role);
 
     CREATE TABLE IF NOT EXISTS ticket_response_actions (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      ticket_external_id TEXT NOT NULL,
-      chat_id TEXT NOT NULL,
-      phone TEXT,
+      id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+      ticket_external_id VARCHAR(191) NOT NULL,
+      chat_id VARCHAR(191) NOT NULL,
+      phone VARCHAR(64) NULL,
       question TEXT NOT NULL,
-      options_json TEXT NOT NULL,
-      delivery_mode TEXT NOT NULL DEFAULT 'text',
-      sent_message_id TEXT,
-      status TEXT NOT NULL DEFAULT 'pending',
-      selected_key TEXT,
-      selected_label TEXT,
-      selected_action TEXT,
-      response_message_id TEXT,
+      options_json LONGTEXT NOT NULL,
+      delivery_mode VARCHAR(32) NOT NULL DEFAULT 'text',
+      sent_message_id VARCHAR(191) NULL,
+      status VARCHAR(32) NOT NULL DEFAULT 'pending',
+      selected_key VARCHAR(191) NULL,
+      selected_label VARCHAR(255) NULL,
+      selected_action VARCHAR(191) NULL,
+      response_message_id VARCHAR(191) NULL,
       response_body TEXT,
       action_result TEXT,
-      completed_at TEXT,
-      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-    );
+      completed_at VARCHAR(32) NULL,
+      created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+    ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
     CREATE INDEX IF NOT EXISTS idx_ticket_response_actions_chat
       ON ticket_response_actions (chat_id, status, created_at);
 
     CREATE TABLE IF NOT EXISTS app_state (
-      key TEXT PRIMARY KEY,
-      value TEXT,
-      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-    );
+      \`key\` VARCHAR(191) NOT NULL PRIMARY KEY,
+      value LONGTEXT,
+      updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+    ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
     CREATE TABLE IF NOT EXISTS automatic_message_templates (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      name TEXT NOT NULL,
+      id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+      name VARCHAR(120) NOT NULL,
       body TEXT NOT NULL,
-      active INTEGER NOT NULL DEFAULT 1,
-      sort_order INTEGER NOT NULL DEFAULT 0,
-      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-    );
+      active TINYINT(1) NOT NULL DEFAULT 1,
+      sort_order INT NOT NULL DEFAULT 0,
+      created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+    ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
     CREATE INDEX IF NOT EXISTS idx_automatic_message_templates_order
       ON automatic_message_templates (active, sort_order, id);
 
     CREATE TABLE IF NOT EXISTS whatsapp_chat_aliases (
-      alias_chat_id TEXT PRIMARY KEY,
-      canonical_chat_id TEXT NOT NULL,
-      phone TEXT,
-      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-    );
+      alias_chat_id VARCHAR(191) NOT NULL PRIMARY KEY,
+      canonical_chat_id VARCHAR(191) NOT NULL,
+      phone VARCHAR(64) NULL,
+      created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+    ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
     CREATE INDEX IF NOT EXISTS idx_whatsapp_chat_aliases_canonical
       ON whatsapp_chat_aliases (canonical_chat_id);
@@ -155,14 +148,14 @@ function initializeDatabase(database = getDb()) {
       ON whatsapp_chat_aliases (phone);
 
     CREATE TABLE IF NOT EXISTS whatsapp_conversation_bucket_overrides (
-      whatsapp_account TEXT NOT NULL DEFAULT 'bot-1',
-      chat_id TEXT NOT NULL,
-      bucket TEXT NOT NULL CHECK (bucket IN ('main', 'other')),
-      updated_by TEXT,
-      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      whatsapp_account VARCHAR(32) NOT NULL DEFAULT 'bot-1',
+      chat_id VARCHAR(191) NOT NULL,
+      bucket VARCHAR(16) NOT NULL,
+      updated_by VARCHAR(191) NULL,
+      created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
       PRIMARY KEY (whatsapp_account, chat_id)
-    );
+    ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
     CREATE INDEX IF NOT EXISTS idx_whatsapp_conversation_bucket_overrides_bucket
       ON whatsapp_conversation_bucket_overrides (bucket);
@@ -170,7 +163,7 @@ function initializeDatabase(database = getDb()) {
   `);
 
   ensureColumn(database, 'razon_social', 'TEXT');
-  ensureColumn(database, 'phones_json', "TEXT NOT NULL DEFAULT '[]'");
+  ensureColumn(database, 'phones_json', 'LONGTEXT');
   ensureColumn(database, 'response_action', 'TEXT');
   ensureColumn(database, 'response_label', 'TEXT');
   ensureColumn(database, 'response_body', 'TEXT');
@@ -182,17 +175,17 @@ function initializeDatabase(database = getDb()) {
   ensureWhatsAppMessageColumn(database, 'media_filename', 'TEXT');
   ensureWhatsAppMessageColumn(database, 'sent_by_username', 'TEXT');
   ensureWhatsAppMessageColumn(database, 'sent_by_name', 'TEXT');
-  ensureWhatsAppMessageColumn(database, 'whatsapp_account', "TEXT NOT NULL DEFAULT 'bot-1'");
+  ensureWhatsAppMessageColumn(database, 'whatsapp_account', "VARCHAR(32) NOT NULL DEFAULT 'bot-1'");
   database.exec(`
     CREATE INDEX IF NOT EXISTS idx_whatsapp_messages_account_chat_time
       ON whatsapp_messages (whatsapp_account, chat_id, timestamp_ts);
   `);
   ensureWhatsAppConversationBucketOverrideSchema(database);
-  ensureUserColumn(database, 'groups_json', "TEXT NOT NULL DEFAULT '[]'");
-  ensureUserColumn(database, 'whatsapp_account', "TEXT NOT NULL DEFAULT 'bot-1'");
-  ensureUserColumn(database, 'whatsapp_accounts_json', "TEXT NOT NULL DEFAULT '[\"bot-1\"]'");
-  ensureAutomaticMessageTemplateColumn(database, 'active', 'INTEGER NOT NULL DEFAULT 1');
-  ensureAutomaticMessageTemplateColumn(database, 'sort_order', 'INTEGER NOT NULL DEFAULT 0');
+  ensureUserColumn(database, 'groups_json', 'LONGTEXT');
+  ensureUserColumn(database, 'whatsapp_account', "VARCHAR(32) NOT NULL DEFAULT 'bot-1'");
+  ensureUserColumn(database, 'whatsapp_accounts_json', 'LONGTEXT');
+  ensureAutomaticMessageTemplateColumn(database, 'active', 'TINYINT(1) NOT NULL DEFAULT 1');
+  ensureAutomaticMessageTemplateColumn(database, 'sort_order', 'INT NOT NULL DEFAULT 0');
 }
 
 function ensureColumn(database, columnName, definition) {
@@ -232,7 +225,7 @@ function ensureAutomaticMessageTemplateColumn(database, columnName, definition) 
 }
 
 function getAppState(key, fallback = null) {
-  const row = getDb().prepare('SELECT value FROM app_state WHERE key = ?').get(String(key || ''));
+  const row = getDb().prepare('SELECT value FROM app_state WHERE `key` = ?').get(String(key || ''));
   return row ? row.value : fallback;
 }
 
@@ -253,14 +246,14 @@ function ensureWhatsAppConversationBucketOverrideSchema(database) {
     DROP TABLE IF EXISTS ${legacyTable};
     ALTER TABLE whatsapp_conversation_bucket_overrides RENAME TO ${legacyTable};
     CREATE TABLE whatsapp_conversation_bucket_overrides (
-      whatsapp_account TEXT NOT NULL DEFAULT 'bot-1',
-      chat_id TEXT NOT NULL,
-      bucket TEXT NOT NULL CHECK (bucket IN ('main', 'other')),
-      updated_by TEXT,
-      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      whatsapp_account VARCHAR(32) NOT NULL DEFAULT 'bot-1',
+      chat_id VARCHAR(191) NOT NULL,
+      bucket VARCHAR(16) NOT NULL,
+      updated_by VARCHAR(191) NULL,
+      created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
       PRIMARY KEY (whatsapp_account, chat_id)
-    );
+    ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
   `);
 
   const accountExpression = hasAccount
@@ -268,7 +261,7 @@ function ensureWhatsAppConversationBucketOverrideSchema(database) {
     : "'bot-1'";
 
   database.exec(`
-    INSERT OR REPLACE INTO whatsapp_conversation_bucket_overrides (
+    REPLACE INTO whatsapp_conversation_bucket_overrides (
       whatsapp_account,
       chat_id,
       bucket,
@@ -322,10 +315,10 @@ function parseTicketPhones(ticket) {
 
 function setAppState(key, value) {
   getDb().prepare(`
-    INSERT INTO app_state (key, value, updated_at)
+    INSERT INTO app_state (\`key\`, value, updated_at)
     VALUES (?, ?, CURRENT_TIMESTAMP)
-    ON CONFLICT(key) DO UPDATE SET
-      value = excluded.value,
+    ON DUPLICATE KEY UPDATE
+      value = VALUES(value),
       updated_at = CURRENT_TIMESTAMP
   `).run(String(key || ''), String(value ?? ''));
 }
@@ -493,20 +486,20 @@ function upsertTickets(tickets) {
       updated_at
     )
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-    ON CONFLICT(external_id) DO UPDATE SET
-      delegacion = excluded.delegacion,
-      start = excluded.start,
-      start_ts = excluded.start_ts,
-      start_date = excluded.start_date,
-      start_time = excluded.start_time,
-      status = COALESCE(excluded.status, tickets.status),
-      phone = COALESCE(tickets.phone, excluded.phone),
+    ON DUPLICATE KEY UPDATE
+      delegacion = VALUES(delegacion),
+      start = VALUES(start),
+      start_ts = VALUES(start_ts),
+      start_date = VALUES(start_date),
+      start_time = VALUES(start_time),
+      status = COALESCE(VALUES(status), tickets.status),
+      phone = COALESCE(tickets.phone, VALUES(phone)),
       phones_json = CASE
-        WHEN excluded.phones_json <> '[]' THEN excluded.phones_json
+        WHEN VALUES(phones_json) <> '[]' THEN VALUES(phones_json)
         ELSE tickets.phones_json
       END,
-      razon_social = COALESCE(excluded.razon_social, tickets.razon_social),
-      payload_json = excluded.payload_json,
+      razon_social = COALESCE(VALUES(razon_social), tickets.razon_social),
+      payload_json = VALUES(payload_json),
       updated_at = CURRENT_TIMESTAMP
   `);
 
@@ -1062,9 +1055,9 @@ function upsertWhatsAppChatAlias(aliasChatId, canonicalChatId, phone = '') {
       updated_at
     )
     VALUES (?, ?, ?, CURRENT_TIMESTAMP)
-    ON CONFLICT(alias_chat_id) DO UPDATE SET
-      canonical_chat_id = excluded.canonical_chat_id,
-      phone = COALESCE(excluded.phone, whatsapp_chat_aliases.phone),
+    ON DUPLICATE KEY UPDATE
+      canonical_chat_id = VALUES(canonical_chat_id),
+      phone = COALESCE(VALUES(phone), whatsapp_chat_aliases.phone),
       updated_at = CURRENT_TIMESTAMP
   `).run(cleanAliasChatId, cleanCanonicalChatId, cleanPhone);
 
@@ -1184,9 +1177,9 @@ function setWhatsAppConversationBucketOverride(chatId, bucket, updatedBy = '', a
       updated_at
     )
     VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
-    ON CONFLICT(whatsapp_account, chat_id) DO UPDATE SET
-      bucket = excluded.bucket,
-      updated_by = excluded.updated_by,
+    ON DUPLICATE KEY UPDATE
+      bucket = VALUES(bucket),
+      updated_by = VALUES(updated_by),
       updated_at = CURRENT_TIMESTAMP
   `).run(whatsappAccount, cleanChatId, cleanBucket, cleanUpdatedBy);
 
@@ -1267,37 +1260,37 @@ function saveWhatsAppMessage(message = {}) {
       whatsapp_account
     )
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ON CONFLICT(id) DO UPDATE SET
+    ON DUPLICATE KEY UPDATE
       chat_id = CASE
-        WHEN excluded.source = 'whatsapp'
+        WHEN VALUES(source) = 'whatsapp'
           AND whatsapp_messages.source IN ('ticket', 'ticket-response', 'notification-channel', 'manual', 'inbox', 'bot')
         THEN whatsapp_messages.chat_id
-        ELSE excluded.chat_id
+        ELSE VALUES(chat_id)
       END,
       phone = CASE
-        WHEN excluded.source = 'whatsapp'
+        WHEN VALUES(source) = 'whatsapp'
           AND whatsapp_messages.source IN ('ticket', 'ticket-response', 'notification-channel', 'manual', 'inbox', 'bot')
         THEN whatsapp_messages.phone
-        ELSE COALESCE(excluded.phone, whatsapp_messages.phone)
+        ELSE COALESCE(VALUES(phone), whatsapp_messages.phone)
       END,
-      contact_name = COALESCE(excluded.contact_name, whatsapp_messages.contact_name),
+      contact_name = COALESCE(VALUES(contact_name), whatsapp_messages.contact_name),
       body = CASE
-        WHEN whatsapp_messages.body LIKE '[% sin texto]' AND excluded.body NOT LIKE '[% sin texto]'
-        THEN excluded.body
+        WHEN whatsapp_messages.body LIKE '[% sin texto]' AND VALUES(body) NOT LIKE '[% sin texto]'
+        THEN VALUES(body)
         ELSE whatsapp_messages.body
       END,
-      media_mime = COALESCE(excluded.media_mime, whatsapp_messages.media_mime),
-      media_data = COALESCE(excluded.media_data, whatsapp_messages.media_data),
-      media_filename = COALESCE(excluded.media_filename, whatsapp_messages.media_filename),
-      ack = COALESCE(excluded.ack, whatsapp_messages.ack),
-      sent_by_username = COALESCE(excluded.sent_by_username, whatsapp_messages.sent_by_username),
-      sent_by_name = COALESCE(excluded.sent_by_name, whatsapp_messages.sent_by_name),
-      whatsapp_account = COALESCE(excluded.whatsapp_account, whatsapp_messages.whatsapp_account),
+      media_mime = COALESCE(VALUES(media_mime), whatsapp_messages.media_mime),
+      media_data = COALESCE(VALUES(media_data), whatsapp_messages.media_data),
+      media_filename = COALESCE(VALUES(media_filename), whatsapp_messages.media_filename),
+      ack = COALESCE(VALUES(ack), whatsapp_messages.ack),
+      sent_by_username = COALESCE(VALUES(sent_by_username), whatsapp_messages.sent_by_username),
+      sent_by_name = COALESCE(VALUES(sent_by_name), whatsapp_messages.sent_by_name),
+      whatsapp_account = COALESCE(VALUES(whatsapp_account), whatsapp_messages.whatsapp_account),
       source = CASE
-        WHEN excluded.source = 'whatsapp'
+        WHEN VALUES(source) = 'whatsapp'
           AND whatsapp_messages.source IN ('ticket', 'ticket-response', 'notification-channel', 'manual', 'inbox', 'bot')
         THEN whatsapp_messages.source
-        ELSE COALESCE(excluded.source, whatsapp_messages.source)
+        ELSE COALESCE(VALUES(source), whatsapp_messages.source)
       END
   `).run(
     id,

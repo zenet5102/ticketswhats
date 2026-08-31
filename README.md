@@ -160,10 +160,17 @@ npm run migrate:second-messages
 
 La migracion lee `SECOND_APP_MYSQL_DATABASE` / `SECOND_APP_MYSQL_MESSAGES_TABLE` y escribe en la tabla principal `whatsapp_messages` con `whatsapp_account=bot-2`. Se puede ejecutar mas de una vez: usa los IDs existentes y, si detecta una colision con mensajes del primer numero, guarda el mensaje con prefijo `bot-2:`.
 
-En la VM, despues de traer cambios:
+Si la rama esta migrada a MySQL, primero copiar la base SQLite legacy a MySQL:
+
+```bash
+npm run migrate:sqlite-to-mysql
+```
+
+Despues importar el historial viejo del segundo numero:
 
 ```bash
 git pull --ff-only origin codex/unificar-servers
+npm run migrate:sqlite-to-mysql
 npm run migrate:second-messages
 pm2 restart wwebjs --update-env
 pm2 save

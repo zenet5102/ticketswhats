@@ -370,7 +370,7 @@ function createUser(input = {}) {
 
     return publicUser(getUserRowById(result.lastInsertRowid));
   } catch (error) {
-    if (String(error.message || '').includes('UNIQUE')) {
+    if (String(error.message || '').includes('UNIQUE') || String(error.message || '').includes('Duplicate')) {
       throw new Error('Ya existe un usuario con ese nombre');
     }
 
@@ -466,7 +466,7 @@ function updateUser(id, input = {}) {
       );
     }
   } catch (error) {
-    if (String(error.message || '').includes('UNIQUE')) {
+    if (String(error.message || '').includes('UNIQUE') || String(error.message || '').includes('Duplicate')) {
       throw new Error('Ya existe un usuario con ese nombre');
     }
 
