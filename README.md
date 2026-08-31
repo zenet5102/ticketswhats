@@ -22,6 +22,25 @@ pm2 save
 
 El server principal expone una API para que otra aplicacion consulte mensajes de WhatsApp por telefono, cliente o ticket.
 
+## Recuperacion de mensajes al reconectar WhatsApp
+
+El server principal mantiene un sync liviano de mensajes recientes mientras las sesiones estan conectadas. Si una sesion de WhatsApp se desconecta por un rato, al volver a `CONNECTED` dispara automaticamente una recuperacion mas amplia para esa cuenta.
+
+Variables relevantes:
+
+```env
+WHATSAPP_RECENT_MESSAGES_SYNC_INTERVAL_MS=5000
+WHATSAPP_RECENT_MESSAGES_SYNC_CHAT_COOLDOWN_MS=12000
+WHATSAPP_RECENT_MESSAGES_SYNC_CHAT_LIMIT=35
+WHATSAPP_RECENT_MESSAGES_SYNC_MESSAGE_LIMIT=12
+WHATSAPP_CATCHUP_ON_RECONNECT=true
+WHATSAPP_CATCHUP_DELAY_MS=3000
+WHATSAPP_CATCHUP_CHAT_LIMIT=120
+WHATSAPP_CATCHUP_MESSAGE_LIMIT=50
+```
+
+El catch-up recorre los chats mas recientes de la cuenta reconectada y guarda los ultimos mensajes de cada chat en `whatsapp_messages`. La operacion es idempotente: si un mensaje ya existe, se actualiza sin duplicarlo. Para cortes mas largos, subir temporalmente `WHATSAPP_CATCHUP_CHAT_LIMIT` y `WHATSAPP_CATCHUP_MESSAGE_LIMIT`, reiniciar PM2 con `--update-env` y esperar a que la cuenta vuelva a conectar.
+
 Endpoint:
 
 ```text

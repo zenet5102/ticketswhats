@@ -113,6 +113,11 @@ const whatsappAccountStates = new Map(whatsappAccounts.map(account => [account.i
   state: 'starting',
   lastEventAt: null,
   lastError: null,
+  disconnectedAt: null,
+  catchupScheduledAt: null,
+  catchupLastStartedAt: null,
+  catchupLastFinishedAt: null,
+  catchupLastError: null,
   qr: null,
   qrText: null,
   qrSvg: null,
@@ -131,6 +136,10 @@ const recentMessagesSyncIntervalMs = parsePositiveInteger(process.env.WHATSAPP_R
 const recentMessagesSyncChatCooldownMs = parsePositiveInteger(process.env.WHATSAPP_RECENT_MESSAGES_SYNC_CHAT_COOLDOWN_MS, 12000);
 const recentMessagesSyncChatLimit = parsePositiveInteger(process.env.WHATSAPP_RECENT_MESSAGES_SYNC_CHAT_LIMIT, 35);
 const recentMessagesSyncMessageLimit = parsePositiveInteger(process.env.WHATSAPP_RECENT_MESSAGES_SYNC_MESSAGE_LIMIT, 12);
+const whatsappCatchupOnReconnect = String(process.env.WHATSAPP_CATCHUP_ON_RECONNECT || 'true').toLowerCase() !== 'false';
+const whatsappCatchupDelayMs = parseNonNegativeInteger(process.env.WHATSAPP_CATCHUP_DELAY_MS, 3000);
+const whatsappCatchupChatLimit = parsePositiveInteger(process.env.WHATSAPP_CATCHUP_CHAT_LIMIT, 120);
+const whatsappCatchupMessageLimit = parsePositiveInteger(process.env.WHATSAPP_CATCHUP_MESSAGE_LIMIT, 50);
 const whatsappAuthRoot = path.resolve(__dirname, '.wwebjs_auth');
 const whatsappAuthSessionDir = path.resolve(whatsappAuthRoot, 'session-bot-1');
 const secondMaxStoredMediaBytes = parsePositiveInteger(process.env.SECOND_APP_MAX_STORED_MEDIA_MB, 15) * 1024 * 1024;
@@ -1649,22 +1658,34 @@ function attachWhatsAppEvents(instance, accountId = 'bot-1') {
   instance.on('ready', () => {
     markWhatsAppState('CONNECTED', true, account.id);
     account.lastError = null;
+    account.disconnectedAt = null;
 
     if (account.id === 'bot-1') {
       whatsappLastError = null;
     }
 
     console.log(`WhatsApp conectado (${account.label})`);
+    scheduleWhatsAppReconnectCatchup(account.id, 'ready');
   });
 
   instance.on('change_state', state => {
-    markWhatsAppState(state || 'UNKNOWN', state === 'CONNECTED', account.id);
+    const connected = state === 'CONNECTED';
+    markWhatsAppState(state || 'UNKNOWN', connected, account.id);
+
+    if (!connected) {
+      account.disconnectedAt = account.disconnectedAt || Date.now();
+    } else {
+      account.disconnectedAt = null;
+      scheduleWhatsAppReconnectCatchup(account.id, 'change_state');
+    }
+
     console.log(`Estado de WhatsApp (${account.label}):`, state);
   });
 
   instance.on('disconnected', reason => {
     markWhatsAppState(`DISCONNECTED: ${reason}`, false, account.id);
     clearWhatsAppQr(account.id);
+    account.disconnectedAt = Date.now();
     console.log(`WhatsApp desconectado (${account.label}):`, reason);
   });
 
@@ -2114,11 +2135,62 @@ function isSyncableWhatsAppChat(chat) {
   return Boolean(chatId && chatId !== 'status@broadcast' && !chatId.endsWith('@g.us'));
 }
 
+function scheduleWhatsAppReconnectCatchup(accountId = 'bot-1', reason = 'reconnect') {
+  const account = getWhatsAppAccountState(accountId);
+
+  if (!whatsappCatchupOnReconnect || !account || !account.ready) {
+    return;
+  }
+
+  if (account.catchupTimer) {
+    clearTimeout(account.catchupTimer);
+  }
+
+  account.catchupScheduledAt = new Date().toISOString();
+  account.catchupLastError = null;
+  account.catchupTimer = setTimeout(() => {
+    account.catchupTimer = null;
+    account.catchupLastStartedAt = new Date().toISOString();
+    account.catchupLastError = null;
+
+    syncRecentWhatsAppMessages({
+      force: true,
+      reason: `catchup:${reason}`,
+      accountIds: [account.id],
+      chatLimit: whatsappCatchupChatLimit,
+      messageLimit: whatsappCatchupMessageLimit
+    })
+      .then(() => {
+        account.catchupLastFinishedAt = new Date().toISOString();
+      })
+      .catch(error => {
+        account.catchupLastError = error.message;
+        console.warn(`No se pudo recuperar historial tras reconexion (${account.label}):`, error.message);
+      });
+  }, whatsappCatchupDelayMs);
+}
+
 async function syncRecentWhatsAppMessages(options = {}) {
   const now = Date.now();
+  const requestedAccountIds = new Set(
+    (Array.isArray(options.accountIds) ? options.accountIds : [])
+      .map(accountId => String(accountId || '').trim())
+      .filter(isValidWhatsAppAccount)
+  );
+  const chatLimit = Math.min(
+    Math.max(Number(options.chatLimit || recentMessagesSyncChatLimit) || recentMessagesSyncChatLimit, 1),
+    500
+  );
+  const messageLimit = Math.min(
+    Math.max(Number(options.messageLimit || recentMessagesSyncMessageLimit) || recentMessagesSyncMessageLimit, 1),
+    200
+  );
   const syncSummary = {
     startedAt: new Date(now).toISOString(),
     finishedAt: null,
+    reason: String(options.reason || 'scheduled'),
+    chatLimit,
+    messageLimit,
     accounts: []
   };
 
@@ -2135,6 +2207,10 @@ async function syncRecentWhatsAppMessages(options = {}) {
 
   try {
     for (const account of whatsappAccountStates.values()) {
+      if (requestedAccountIds.size && !requestedAccountIds.has(account.id)) {
+        continue;
+      }
+
       const accountClient = account.client;
       const accountSummary = {
         accountId: account.id,
@@ -2166,7 +2242,7 @@ async function syncRecentWhatsAppMessages(options = {}) {
 
             return getChatSortTimestamp(right) - getChatSortTimestamp(left);
           })
-          .slice(0, recentMessagesSyncChatLimit);
+          .slice(0, chatLimit);
         accountSummary.chats = recentChats.length;
 
         for (const chat of recentChats) {
@@ -2181,7 +2257,7 @@ async function syncRecentWhatsAppMessages(options = {}) {
           lastRecentMessagesSyncByChat.set(syncKey, now);
 
           try {
-            const messages = await chat.fetchMessages({ limit: recentMessagesSyncMessageLimit });
+            const messages = await chat.fetchMessages({ limit: messageLimit });
             accountSummary.messages += messages.length;
 
             for (const message of messages) {
@@ -2422,6 +2498,11 @@ async function getWhatsAppStatus(accountId = 'bot-1') {
     wid: connectedInfo.wid,
     lastEventAt: account.lastEventAt,
     lastError: account.lastError,
+    disconnectedAt: account.disconnectedAt ? new Date(account.disconnectedAt).toISOString() : null,
+    catchupScheduledAt: account.catchupScheduledAt,
+    catchupLastStartedAt: account.catchupLastStartedAt,
+    catchupLastFinishedAt: account.catchupLastFinishedAt,
+    catchupLastError: account.catchupLastError,
     qr: account.ready ? null : account.qr,
     qrText: account.ready ? null : account.qrText,
     qrSvg: account.ready ? null : account.qrSvg
