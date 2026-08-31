@@ -2048,6 +2048,11 @@ function isSyncableWhatsAppChat(chat) {
 
 async function syncRecentWhatsAppMessages(options = {}) {
   const now = Date.now();
+  const syncSummary = {
+    startedAt: new Date(now).toISOString(),
+    finishedAt: null,
+    accounts: []
+  };
 
   if (recentMessagesSyncRunning) {
     return;
@@ -2063,6 +2068,17 @@ async function syncRecentWhatsAppMessages(options = {}) {
   try {
     for (const account of whatsappAccountStates.values()) {
       const accountClient = account.client;
+      const accountSummary = {
+        accountId: account.id,
+        ready: Boolean(account.ready),
+        state: account.state,
+        chats: 0,
+        messages: 0,
+        stored: 0,
+        error: ''
+      };
+
+      syncSummary.accounts.push(accountSummary);
 
       if (!accountClient || !account.ready) {
         continue;
@@ -2082,6 +2098,7 @@ async function syncRecentWhatsAppMessages(options = {}) {
             return getChatSortTimestamp(right) - getChatSortTimestamp(left);
           })
           .slice(0, recentMessagesSyncChatLimit);
+        accountSummary.chats = recentChats.length;
 
         for (const chat of recentChats) {
           const chatId = String(chat && chat.id && chat.id._serialized || '').trim();
@@ -2096,31 +2113,47 @@ async function syncRecentWhatsAppMessages(options = {}) {
 
           try {
             const messages = await chat.fetchMessages({ limit: recentMessagesSyncMessageLimit });
+            accountSummary.messages += messages.length;
 
             for (const message of messages) {
-              await storeWhatsAppMessage(message, 'whatsapp', account.id);
+              const stored = await storeWhatsAppMessage(message, 'whatsapp', account.id);
+
+              if (stored) {
+                accountSummary.stored += 1;
+              }
             }
           } catch (error) {
             if (handleTransientWhatsAppError(error, 'recent-messages-sync-error', account.id)) {
+              accountSummary.error = 'WhatsApp recargado durante sync de mensajes';
               console.warn(`WhatsApp se recargo mientras se sincronizaban mensajes recientes (${account.label}).`);
               break;
             }
 
+            accountSummary.error = error.message;
             console.warn(`No se pudieron sincronizar mensajes recientes (${account.label}):`, error.message);
           }
         }
       } catch (error) {
         if (handleTransientWhatsAppError(error, 'recent-chats-sync-error', account.id)) {
+          accountSummary.error = 'WhatsApp recargado listando chats';
           console.warn(`WhatsApp se recargo mientras se listaban chats recientes (${account.label}).`);
           continue;
         }
 
+        accountSummary.error = error.message;
         console.warn(`No se pudieron sincronizar chats recientes de WhatsApp (${account.label}):`, error.message);
       }
     }
   } catch (error) {
     console.warn('No se pudieron sincronizar chats recientes de WhatsApp:', error.message);
   } finally {
+    syncSummary.finishedAt = new Date().toISOString();
+    try {
+      setAppState('whatsapp_recent_sync_status', JSON.stringify(syncSummary));
+    } catch (error) {
+      console.warn('No se pudo guardar estado de sincronizacion reciente:', error.message);
+    }
+
     recentMessagesSyncRunning = false;
   }
 }
