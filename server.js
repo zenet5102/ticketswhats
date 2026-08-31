@@ -3627,7 +3627,7 @@ app.post('/messages/send', requirePrivileged, async (req, res) => {
     const accountId = isValidWhatsAppAccount(req.body && req.body.accountId)
       ? String(req.body.accountId).trim()
       : getDefaultWhatsAppAccountId(req.user);
-    const target = targetChatId || targetPhone;
+    const target = targetPhone || targetChatId;
     const cleanPhone = normalizeChatPhone(targetPhone || target);
     const cleanMessage = String(req.body && req.body.message || '').trim();
 
