@@ -18,6 +18,18 @@ const cookieName = process.env.THIRD_APP_AUTH_COOKIE_NAME || 'wwebjs_third_sessi
 const sessionHours = Math.min(Math.max(Number.parseInt(process.env.THIRD_APP_AUTH_SESSION_HOURS || process.env.AUTH_SESSION_HOURS || '12', 10), 1), 720);
 const sessionSecretPath = path.join(__dirname, 'data', 'third-auth-session-secret.key');
 const sessionSecret = getSessionSecret();
+const whatsappAccounts = [
+  {
+    id: 'bot-1',
+    label: process.env.WHATSAPP_PRIMARY_LABEL || 'Numero 1',
+    clientId: process.env.WHATSAPP_PRIMARY_CLIENT_ID || 'bot-1'
+  },
+  {
+    id: 'bot-2',
+    label: process.env.WHATSAPP_SECONDARY_LABEL || 'Numero 2',
+    clientId: process.env.SECOND_WHATSAPP_CLIENT_ID || 'bot-2'
+  }
+];
 
 app.use(cors());
 app.use(express.json({ limit: `${jsonLimitMb}mb` }));
@@ -313,6 +325,66 @@ function getQueueSnapshot() {
   };
 }
 
+function isValidWhatsAppAccount(accountId) {
+  return whatsappAccounts.some(account => account.id === String(accountId || '').trim());
+}
+
+async function getWhatsAppAccountLabels() {
+  try {
+    return JSON.parse(await thirdDb.getAppStateValue('whatsapp_account_labels', '{}')) || {};
+  } catch (error) {
+    return {};
+  }
+}
+
+async function getPublicWhatsAppAccounts(user) {
+  const labels = await getWhatsAppAccountLabels();
+  const allowed = user && user.isAdmin
+    ? whatsappAccounts.map(account => account.id)
+    : (Array.isArray(user && user.whatsappAccounts) && user.whatsappAccounts.length
+      ? user.whatsappAccounts
+      : [user && user.whatsappAccount || 'bot-1']);
+
+  return whatsappAccounts
+    .filter(account => allowed.includes(account.id))
+    .map(account => ({
+      id: account.id,
+      label: String(labels[account.id] || account.label || account.id).trim() || account.id,
+      clientId: account.clientId,
+      ready: false,
+      state: 'migration-only',
+      lastEventAt: null,
+      lastError: null,
+      qr: null,
+      qrText: null,
+      qrSvg: null,
+      connected: null
+    }));
+}
+
+async function updateWhatsAppAccountLabel(accountId, label) {
+  const cleanAccountId = String(accountId || '').trim();
+
+  if (!isValidWhatsAppAccount(cleanAccountId)) {
+    const error = new Error('Sesion WhatsApp invalida');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const cleanLabel = String(label || '').trim().slice(0, 80);
+
+  if (!cleanLabel) {
+    const error = new Error('Falta nombre de sesion');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const labels = await getWhatsAppAccountLabels();
+  labels[cleanAccountId] = cleanLabel;
+  await thirdDb.setAppStateValue('whatsapp_account_labels', JSON.stringify(labels));
+  return (await getPublicWhatsAppAccounts({ isAdmin: true })).find(account => account.id === cleanAccountId);
+}
+
 app.get('/login', asyncHandler(async (req, res, next) => {
   const user = await getSessionUser(req);
 
@@ -373,6 +445,22 @@ app.get('/cola', requireSession(), (req, res) => {
 
 app.get('/usuarios', requireSession(['admin']), (req, res) => {
   sendHtmlFile(res, 'users.html');
+});
+
+app.get('/whatsapp', requireSession(['admin']), (req, res) => {
+  sendHtmlFile(res, 'whatsapp.html');
+});
+
+app.get('/errores', requireSession(), (req, res) => {
+  sendHtmlFile(res, 'errores.html');
+});
+
+app.get('/enviar', requireSession(['admin', 'usuario']), (req, res) => {
+  sendHtmlFile(res, 'enviar.html');
+});
+
+app.get('/test', requireSession(['admin', 'usuario']), (req, res) => {
+  sendHtmlFile(res, 'enviar.html');
 });
 
 app.get('/phantom', requireSession(), (req, res) => {
@@ -512,7 +600,12 @@ app.get('/api/status', requireSession(), asyncHandler(async (req, res) => {
 }));
 
 app.get('/tickets/job-status', requireSession(), asyncHandler(async (req, res) => {
-  res.json(await thirdDb.getTicketJobStatus());
+  const status = await thirdDb.getTicketJobStatus();
+  res.json({
+    ...status,
+    whatsapp: (await getPublicWhatsAppAccounts(req.user))[0] || null,
+    whatsappAccounts: await getPublicWhatsAppAccounts(req.user)
+  });
 }));
 
 app.get('/tickets', requireSession(), asyncHandler(async (req, res) => {
@@ -575,6 +668,13 @@ app.post('/whatsapp/reconnect', requireSession(['admin', 'usuario']), asyncHandl
 
 app.post('/whatsapp/reset-auth', requireSession(['admin']), asyncHandler(async () => {
   unavailableInThirdServer('Reset de autenticacion WhatsApp');
+}));
+
+app.put('/whatsapp/accounts/:id', requireSession(['admin']), asyncHandler(async (req, res) => {
+  res.json({
+    success: true,
+    account: await updateWhatsAppAccountLabel(req.params.id, req.body && req.body.label)
+  });
 }));
 
 app.get('/users', requireSession(['admin']), asyncHandler(async (req, res) => {

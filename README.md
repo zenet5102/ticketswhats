@@ -43,6 +43,15 @@ GET /login
 POST /auth/login
 POST /auth/logout
 GET /auth/me
+GET /dashboard
+GET /mensajes
+GET /cola
+GET /whatsapp
+GET /usuarios
+GET /phantom/suspendidos
+GET /phantom/activos
+GET /phantom/clientes
+GET /phantom/baja
 GET /api/third/status
 GET /api/third/counts
 GET /api/third/users
@@ -52,7 +61,9 @@ GET /api/third/audit/messages
 POST /api/third/audit/messages
 ```
 
-El login del tercer server usa la tabla `users` migrada a MySQL. Las APIs aceptan sesion web o API key. Si `THIRD_APP_API_KEYS` esta configurado, enviar la clave asi:
+El login del tercer server usa la tabla `users` migrada a MySQL. Las paginas leen datos desde MySQL. La pantalla `/whatsapp` muestra las sesiones como entorno de migracion y guarda los nombres de sesion en `app_state` de MySQL, sin iniciar clientes reales de WhatsApp desde el tercer server.
+
+Las APIs aceptan sesion web o API key. Si `THIRD_APP_API_KEYS` esta configurado, enviar la clave asi:
 
 ```http
 Authorization: Bearer clave

@@ -672,6 +672,16 @@ async function getAppStateValue(key, fallback = '') {
   return rows[0] && rows[0].value !== null && rows[0].value !== undefined ? rows[0].value : fallback;
 }
 
+async function setAppStateValue(key, value) {
+  const database = await getPool();
+  await database.execute(`
+    INSERT INTO app_state (\`key\`, value)
+    VALUES (?, ?)
+    ON DUPLICATE KEY UPDATE value = VALUES(value)
+  `, [key, value]);
+  return value;
+}
+
 async function getTicketJobStatus() {
   const database = await getPool();
   const [[tickets]] = await database.query('SELECT COUNT(*) AS total FROM tickets');
@@ -807,6 +817,7 @@ module.exports = {
   normalizeChatPhone,
   pingDatabase,
   publicUser,
+  setAppStateValue,
   tableColumns,
   upsertRows
 };
