@@ -1740,7 +1740,7 @@ function listWhatsAppMessages(chatId, limit = 200, options = {}) {
         AND chat_id <> 'status@broadcast'
       ORDER BY timestamp_ts DESC, created_at DESC, id DESC
       LIMIT ?
-    )
+    ) recent_messages
     ORDER BY timestamp_ts ASC, created_at ASC, id ASC
   `).all(...chatIds, ...(accountFilter ? [accountFilter] : []), safeLimit);
 
@@ -1844,7 +1844,7 @@ function listWhatsAppMessagesByPhone(phone, limit = 200, options = {}) {
       WHERE ${whereParts.join(' AND ')}
       ORDER BY timestamp_ts DESC, created_at DESC, id DESC
       LIMIT ?
-    )
+    ) recent_messages
     ORDER BY timestamp_ts ASC, created_at ASC, id ASC
   `).all(...params, safeLimit);
 
