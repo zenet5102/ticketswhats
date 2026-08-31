@@ -636,29 +636,19 @@ async function listConversations({ limit = 100, offset = 0 } = {}) {
       latest.from_me AS last_from_me,
       latest.direction AS last_direction,
       latest.whatsapp_account,
-      COALESCE(overrides.bucket, 'main') AS bucket,
-      ticket.external_id AS ticket_external_id,
-      ticket.delegacion,
-      ticket.razon_social,
-      ticket.status AS ticket_status
+      COALESCE(overrides.bucket, 'main') AS bucket
     FROM whatsapp_messages latest
-    INNER JOIN (
-      SELECT chat_id, MAX(timestamp_ts) AS max_timestamp
-      FROM whatsapp_messages
-      WHERE chat_id <> 'status@broadcast'
-      GROUP BY chat_id
-    ) grouped
-      ON grouped.chat_id = latest.chat_id
-      AND grouped.max_timestamp = latest.timestamp_ts
     LEFT JOIN whatsapp_conversation_bucket_overrides overrides
       ON overrides.chat_id = latest.chat_id
       AND overrides.whatsapp_account = latest.whatsapp_account
-    LEFT JOIN tickets ticket
-      ON ticket.phone = latest.phone
-      OR ticket.phones_json LIKE CONCAT('%', latest.phone, '%')
-      OR latest.chat_id LIKE CONCAT('%', ticket.phone, '%')
     WHERE latest.chat_id <> 'status@broadcast'
-    GROUP BY latest.chat_id
+      AND latest.id = (
+        SELECT previous.id
+        FROM whatsapp_messages previous
+        WHERE previous.chat_id = latest.chat_id
+        ORDER BY previous.timestamp_ts DESC, previous.created_at DESC, previous.id DESC
+        LIMIT 1
+      )
     ORDER BY latest.timestamp_ts DESC, latest.created_at DESC
     LIMIT ${safeLimit} OFFSET ${safeOffset}
   `);
