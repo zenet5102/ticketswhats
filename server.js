@@ -84,6 +84,7 @@ const {
 } = require('./ticketsJob');
 const { getTodayDateString } = require('./ticketApi');
 const secondDb = require('./secondMessageDb');
+const { PhantomApi } = require('./phantomApi');
 
 let whatsappReady = false;
 let whatsappState = 'starting';
@@ -2641,41 +2642,6 @@ function renderStringTemplate(template, variables = {}) {
   });
 }
 
-function buildPhantomUrl(baseUrl, params = {}) {
-  const url = new URL(baseUrl);
-  for (const [key, value] of Object.entries(params)) {
-    if (value !== undefined && value !== null && value !== '') {
-      url.searchParams.set(key, String(value));
-    }
-  }
-  return url.toString();
-}
-
-function normalizePhantomQueryValue(value) {
-  const text = String(value === undefined || value === null ? '' : value).trim();
-  if (!/%[0-9a-f]{2}/i.test(text)) {
-    return text;
-  }
-  try {
-    return decodeURIComponent(text);
-  } catch (error) {
-    return text;
-  }
-}
-
-function getPhantomHeaders(extraHeaders = {}) {
-  let configuredHeaders = {};
-  if (process.env.PHANTOM_API_HEADERS) {
-    try {
-      const parsed = JSON.parse(process.env.PHANTOM_API_HEADERS);
-      configuredHeaders = parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
-    } catch (error) {
-      console.warn('PHANTOM_API_HEADERS no es JSON valido. Se ignora.');
-    }
-  }
-  return { ...configuredHeaders, ...extraHeaders };
-}
-
 function stripPhantomBom(value) {
   return String(value === undefined || value === null ? '' : value)
     .replace(/^(?:\uFEFF|\u00EF\u00BB\u00BF|\u00C3\u00AF\u00C2\u00BB\u00C2\u00BF)/, '')
@@ -2700,85 +2666,6 @@ function parsePhantomPayload(text) {
   } catch (error) {
     return cleanText;
   }
-}
-
-function extractPhantomToken(text) {
-  const cleanText = stripPhantomBom(text);
-  const parsed = parsePhantomPayload(cleanText);
-
-  if (typeof parsed === 'string') {
-    return stripPhantomBom(parsed.replace(/^"|"$/g, ''));
-  }
-
-  if (parsed && typeof parsed === 'object') {
-    const candidates = [
-      parsed.token,
-      parsed.Token,
-      parsed.access_token,
-      parsed.accessToken,
-      parsed.data && parsed.data.token,
-      parsed.data && parsed.data.Token,
-      parsed.result && parsed.result.token,
-      parsed.resultado && parsed.resultado.token
-    ];
-    const token = candidates.find(value => value !== undefined && value !== null && String(value).trim() !== '');
-    return token === undefined ? '' : stripPhantomBom(token);
-  }
-
-  return cleanText;
-}
-
-function extractPhantomTokenFromHeaders(headers) {
-  if (!headers || typeof headers.get !== 'function') {
-    return '';
-  }
-
-  for (const candidate of [headers.get('token'), headers.get('x-token'), headers.get('x-auth-token'), headers.get('authorization')]) {
-    const token = extractPhantomToken(String(candidate || '').replace(/^Bearer\s+/i, ''));
-    if (token) {
-      return token;
-    }
-  }
-
-  const setCookie = headers.get('set-cookie') || '';
-  const cookieMatch = setCookie.match(/(?:^|[;,\s])(?:token|phantom_token|auth_token)=([^;,\s]+)/i);
-  return cookieMatch ? stripPhantomBom(cookieMatch[1]) : '';
-}
-
-function formatPhantomError(status, text) {
-  const payload = parsePhantomPayload(text);
-  const detail = payload && typeof payload === 'object'
-    ? payload.error || payload.message || payload.msg || JSON.stringify(payload)
-    : String(payload || '').trim();
-  return detail ? `HTTP ${status}: ${detail}` : `HTTP ${status}`;
-}
-
-function extractPhantomRows(payload) {
-  if (Array.isArray(payload)) {
-    return payload;
-  }
-
-  if (!payload || typeof payload !== 'object') {
-    return payload === undefined || payload === null ? [] : [{ value: payload }];
-  }
-
-  return [
-    payload.abonados,
-    payload.Abonados,
-    payload.data,
-    payload.datos,
-    payload.Datos,
-    payload.results,
-    payload.resultados,
-    payload.items,
-    payload.records,
-    payload.list,
-    payload.lista,
-    payload.result,
-    payload.Result,
-    payload.response,
-    payload.respuesta
-  ].find(Array.isArray) || [payload];
 }
 
 function getFirstPhantomValue(row, keys, fallback = '') {
@@ -2955,44 +2842,8 @@ function createQueueItemFromRow(row = {}) {
   };
 }
 
-function getPhantomCredentials() {
-  const baseUrl = String(process.env.PHANTOM_API_URL || '').trim();
-  const apiUser = normalizePhantomQueryValue(process.env.PHANTOM_API_USER);
-  const apiPass = normalizePhantomQueryValue(process.env.PHANTOM_API_PASS);
-
-  if (!baseUrl || !apiUser || !apiPass) {
-    throw new Error('Faltan PHANTOM_API_URL, PHANTOM_API_USER o PHANTOM_API_PASS');
-  }
-
-  return { baseUrl, apiUser, apiPass };
-}
-
-async function createPhantomToken() {
-  const { baseUrl, apiUser, apiPass } = getPhantomCredentials();
-  const authResponse = await fetch(buildPhantomUrl(baseUrl, {
-    action: 'autentificar',
-    api_user: apiUser,
-    api_pass: apiPass
-  }), {
-    method: 'POST',
-    headers: getPhantomHeaders()
-  });
-  const authText = await authResponse.text();
-
-  if (!authResponse.ok) {
-    throw new Error(`Error autenticando Phantom: ${formatPhantomError(authResponse.status, authText)}`);
-  }
-
-  const token = extractPhantomToken(authText) || extractPhantomTokenFromHeaders(authResponse.headers);
-  if (!token) {
-    throw new Error(`Phantom no devolvio token. Auth HTTP ${authResponse.status}`);
-  }
-
-  return { baseUrl, token };
-}
-
 async function fetchPhantomConsultaMasivaRows(options = {}) {
-  const { baseUrl, token } = await createPhantomToken();
+  const api = new PhantomApi();
   const defaultLimit = parsePositiveInteger(process.env.PHANTOM_CONSULTA_LIMIT, 10);
   const limit = Math.min(parsePositiveInteger(options.limit, defaultLimit), 500);
   const page = parsePositiveInteger(options.page, 0);
@@ -3002,7 +2853,6 @@ async function fetchPhantomConsultaMasivaRows(options = {}) {
   const allEstados = options.allEstados === true || options.allStates === true;
   const estado = allEstados ? '' : normalizePhantomEstado(options.estado, process.env.PHANTOM_CONSULTA_ESTADO || 'Suspendido');
   const consultaParams = {
-    action: 'Consulta_Masiva_Datos',
     JSON: 1,
     Desc: parsePositiveInteger(process.env.PHANTOM_CONSULTA_DESC, 1),
     Limit: limit,
@@ -3015,31 +2865,12 @@ async function fetchPhantomConsultaMasivaRows(options = {}) {
     consultaParams.Estado = estado;
   }
 
-  const response = await fetch(buildPhantomUrl(baseUrl, consultaParams), {
-    method: 'POST',
-    headers: getPhantomHeaders({
-      Accept: 'application/json',
-      'Content-Type': 'application/json'
-    }),
-    body: JSON.stringify({
-      token,
-      ID_Desde: parsePositiveInteger(process.env.PHANTOM_CONSULTA_ID_DESDE, 1),
-      ID_Hasta: parsePositiveInteger(process.env.PHANTOM_CONSULTA_ID_HASTA, 999999999)
-    })
+  const result = await api.consultaMasivaDatos({
+    idDesde: parsePositiveInteger(process.env.PHANTOM_CONSULTA_ID_DESDE, 1),
+    idHasta: parsePositiveInteger(process.env.PHANTOM_CONSULTA_ID_HASTA, 999999999),
+    query: consultaParams
   });
-  const text = await response.text();
-
-  if (!response.ok) {
-    throw new Error(`Error consultando Phantom: ${formatPhantomError(response.status, text)}`);
-  }
-
-  const payload = parsePhantomPayload(text);
-  const phantomCode = payload && typeof payload === 'object' ? Number(payload.code) : NaN;
-  if (Number.isFinite(phantomCode) && phantomCode >= 400) {
-    throw new Error(`Error consultando Phantom: ${payload.message || payload.error || payload.msg || `code ${payload.code}`}`);
-  }
-
-  const rawRows = extractPhantomRows(payload);
+  const rawRows = result.rows;
   const rows = formatPhantomClientRows(rawRows, {
     filterDebt: !allEstados && estado.toLowerCase() !== 'baja'
   });
@@ -3076,28 +2907,24 @@ function assertPhantomNumberValue(value, label) {
 }
 
 async function fetchPhantomAction(action, options = {}) {
-  const { baseUrl, token } = await createPhantomToken();
-  const response = await fetch(buildPhantomUrl(baseUrl, {
-    action,
-    token,
-    ...(options.query || {})
-  }), {
-    method: options.method || 'POST',
-    headers: getPhantomHeaders({
-      Accept: 'application/json',
-      'Content-Type': 'application/json',
-      ...(options.headers || {})
-    }),
-    ...(options.method === 'GET' ? {} : { body: JSON.stringify(options.body || {}) })
-  });
-  const text = await response.text();
+  const api = new PhantomApi();
+  const auth = await api.autentificar();
+  const headers = { ...(options.headers || {}) };
 
-  if (!response.ok) {
-    throw new Error(`Error consultando Phantom: ${formatPhantomError(response.status, text)}`);
+  if (auth.cookieHeader && !headers.Cookie) {
+    headers.Cookie = auth.cookieHeader;
   }
 
-  const payload = parsePhantomPayload(text);
+  const response = await api.postAction(action, options.method === 'GET' ? undefined : (options.body || {}), {
+    headers,
+    query: {
+      token: auth.token || '',
+      ...(options.query || {})
+    }
+  });
+  const payload = response.payload;
   const phantomCode = payload && typeof payload === 'object' ? Number(payload.code) : NaN;
+
   if (Number.isFinite(phantomCode) && phantomCode >= 400) {
     throw new Error(`Error consultando Phantom: ${payload.message || payload.error || payload.msg || `code ${payload.code}`}`);
   }
