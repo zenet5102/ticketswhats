@@ -3,6 +3,8 @@ const { MysqlSyncDatabase } = require('./mysqlSyncDatabase');
 
 let db;
 let fallbackAutomaticMessageTemplateCursor = null;
+let lastWhatsAppChatAliasRefreshAt = 0;
+const whatsappChatAliasRefreshIntervalMs = 60000;
 
 function getDb() {
   if (db) {
@@ -1092,7 +1094,15 @@ function listPersistedWhatsAppChatAliases(database = getDb(), directChatIds = []
   `).all(...cleanDirectChatIds);
 }
 
-function refreshWhatsAppChatAliases(database = getDb()) {
+function refreshWhatsAppChatAliases(database = getDb(), options = {}) {
+  const now = Date.now();
+
+  if (!options.force && now - lastWhatsAppChatAliasRefreshAt < whatsappChatAliasRefreshIntervalMs) {
+    return 0;
+  }
+
+  lastWhatsAppChatAliasRefreshAt = now;
+
   const rows = database.prepare(`
     SELECT
       lid.chat_id AS alias_chat_id,
@@ -1338,7 +1348,9 @@ function listWhatsAppConversations(limit = 100, options = {}) {
   const accountFilter = String(options.whatsappAccount || options.accountId || '').trim();
   const database = getDb();
 
-  refreshWhatsAppChatAliases(database);
+  if (options.refreshAliases) {
+    refreshWhatsAppChatAliases(database);
+  }
 
   const whereClause = accountFilter ? "WHERE COALESCE(whatsapp_account, 'bot-1') = ?" : '';
   const queryParams = accountFilter ? [accountFilter, safeLimit, accountFilter] : [safeLimit];
