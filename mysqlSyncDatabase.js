@@ -220,6 +220,7 @@ if (!isMainThread) {
         error: {
           message: error && error.message || String(error),
           code: error && error.code,
+          sql: sql ? String(sql).replace(/\s+/g, ' ').trim().slice(0, 1000) : '',
           stack: error && error.stack
         }
       });
@@ -277,7 +278,10 @@ if (!isMainThread) {
       }
 
       if (!response.message.ok) {
-        const error = new Error(response.message.error && response.message.error.message || 'Error MySQL');
+        const detail = response.message.error && response.message.error.sql
+          ? ` SQL: ${response.message.error.sql}`
+          : '';
+        const error = new Error(`${response.message.error && response.message.error.message || 'Error MySQL'}${detail}`);
         error.code = response.message.error && response.message.error.code;
         error.stack = response.message.error && response.message.error.stack || error.stack;
         throw error;
