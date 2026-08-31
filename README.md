@@ -38,6 +38,10 @@ WHATSAPP_CATCHUP_ON_RECONNECT=true
 WHATSAPP_CATCHUP_DELAY_MS=3000
 WHATSAPP_CATCHUP_CHAT_LIMIT=120
 WHATSAPP_CATCHUP_MESSAGE_LIMIT=50
+WHATSAPP_TRANSIENT_RESTART_COOLDOWN_MS=120000
+WHATSAPP_CLIENT_INIT_DELAY_MS=5000
+WHATSAPP_CLIENT_INIT_STAGGER_MS=30000
+STARTUP_BACKGROUND_JOBS_DELAY_MS=30000
 ```
 
 El catch-up recorre los chats mas recientes de la cuenta reconectada y guarda los ultimos mensajes de cada chat en `whatsapp_messages`. La operacion es idempotente: si un mensaje ya existe, se actualiza sin duplicarlo. Para cortes mas largos, subir temporalmente `WHATSAPP_CATCHUP_CHAT_LIMIT` y `WHATSAPP_CATCHUP_MESSAGE_LIMIT`, reiniciar PM2 con `--update-env` y esperar a que la cuenta vuelva a conectar.

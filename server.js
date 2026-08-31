@@ -143,6 +143,9 @@ const whatsappCatchupDelayMs = parseNonNegativeInteger(process.env.WHATSAPP_CATC
 const whatsappCatchupChatLimit = parsePositiveInteger(process.env.WHATSAPP_CATCHUP_CHAT_LIMIT, 120);
 const whatsappCatchupMessageLimit = parsePositiveInteger(process.env.WHATSAPP_CATCHUP_MESSAGE_LIMIT, 50);
 const whatsappTransientRestartCooldownMs = parsePositiveInteger(process.env.WHATSAPP_TRANSIENT_RESTART_COOLDOWN_MS, 120000);
+const whatsappClientInitDelayMs = parseNonNegativeInteger(process.env.WHATSAPP_CLIENT_INIT_DELAY_MS, 5000);
+const whatsappClientInitStaggerMs = parseNonNegativeInteger(process.env.WHATSAPP_CLIENT_INIT_STAGGER_MS, 30000);
+const startupBackgroundJobsDelayMs = parseNonNegativeInteger(process.env.STARTUP_BACKGROUND_JOBS_DELAY_MS, 30000);
 const whatsappAuthRoot = path.resolve(__dirname, '.wwebjs_auth');
 const whatsappAuthSessionDir = path.resolve(whatsappAuthRoot, 'session-bot-1');
 const secondMaxStoredMediaBytes = parsePositiveInteger(process.env.SECOND_APP_MAX_STORED_MEDIA_MB, 15) * 1024 * 1024;
@@ -1757,9 +1760,15 @@ async function initializeWhatsAppClient(accountId = 'bot-1') {
 }
 
 async function initializeWhatsAppClients() {
-  for (const account of whatsappAccounts) {
-    initializeWhatsAppClient(account.id).catch(() => {});
-  }
+  whatsappAccounts.forEach((account, index) => {
+    const delay = whatsappClientInitDelayMs + index * whatsappClientInitStaggerMs;
+
+    setTimeout(() => {
+      initializeWhatsAppClient(account.id).catch(error => {
+        console.error(`Error iniciando WhatsApp programado (${account.label}):`, error);
+      });
+    }, delay);
+  });
 }
 
 async function restartWhatsAppClient(reason = 'manual', options = {}) {
@@ -4778,24 +4787,27 @@ app.post('/tickets/retry-notifications', requirePrivileged, async (req, res) => 
   }
 });
 
-secondDb.pingDatabase().catch(error => {
-  console.warn('MySQL de clientes no esta listo:', error.message);
-});
+function startBackgroundJobs() {
+  secondDb.pingDatabase().catch(error => {
+    console.warn('MySQL de clientes no esta listo:', error.message);
+  });
 
-startSecondMessageQueueScheduler();
-startPhantomBajaSyncScheduler();
-syncPhantomBajaClients('startup')
-  .then(result => console.log('[PHANTOM] Corrida inicial:', result))
-  .catch(error => console.error('[PHANTOM] Error corrida inicial:', error));
-processSecondMessageQueue()
-  .then(result => console.log('[QUEUE] Corrida inicial:', result))
-  .catch(error => console.error('[QUEUE] Error corrida inicial:', error));
+  startSecondMessageQueueScheduler();
+  startPhantomBajaSyncScheduler();
+  syncPhantomBajaClients('startup')
+    .then(result => console.log('[PHANTOM] Corrida inicial:', result))
+    .catch(error => console.error('[PHANTOM] Error corrida inicial:', error));
+  processSecondMessageQueue()
+    .then(result => console.log('[QUEUE] Corrida inicial:', result))
+    .catch(error => console.error('[QUEUE] Error corrida inicial:', error));
 
-startTicketScheduler({
-  isWhatsAppReady,
-  sendWhatsApp
-});
+  startTicketScheduler({
+    isWhatsAppReady,
+    sendWhatsApp
+  });
+}
 
 app.listen(config.port, () => {
   console.log(`API escuchando en puerto ${config.port}`);
+  setTimeout(startBackgroundJobs, startupBackgroundJobsDelayMs);
 });
