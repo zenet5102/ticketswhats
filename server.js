@@ -133,7 +133,8 @@ const mediaDownloadRetryDelaysMs = [0, 750, 2000];
 const notificationChannelReplyByChat = new Map();
 const notificationChannelReplyCooldownMs = config.notificationChannelReplyCooldownHours * 60 * 60 * 1000;
 const notificationChannelSuppressAfterManualMs = config.notificationChannelSuppressAfterManualHours * 60 * 60 * 1000;
-const recentMessagesSyncIntervalMs = parsePositiveInteger(process.env.WHATSAPP_RECENT_MESSAGES_SYNC_INTERVAL_MS, 5000);
+const whatsappStatusPollIntervalMs = parsePositiveInteger(process.env.WHATSAPP_STATUS_POLL_INTERVAL_MS, 30000);
+const recentMessagesSyncIntervalMs = parsePositiveInteger(process.env.WHATSAPP_RECENT_MESSAGES_SYNC_INTERVAL_MS, 120000);
 const recentMessagesSyncChatCooldownMs = parsePositiveInteger(process.env.WHATSAPP_RECENT_MESSAGES_SYNC_CHAT_COOLDOWN_MS, 12000);
 const recentMessagesSyncChatLimit = parsePositiveInteger(process.env.WHATSAPP_RECENT_MESSAGES_SYNC_CHAT_LIMIT, 35);
 const recentMessagesSyncMessageLimit = parsePositiveInteger(process.env.WHATSAPP_RECENT_MESSAGES_SYNC_MESSAGE_LIMIT, 12);
@@ -2559,8 +2560,13 @@ function getConnectedWhatsAppInfo(accountId = 'bot-1') {
 
 setInterval(() => {
   getWhatsAppAccountsStatus().catch(() => {});
-  syncRecentWhatsAppMessages().catch(() => {});
-}, 15000);
+}, whatsappStatusPollIntervalMs);
+
+setInterval(() => {
+  syncRecentWhatsAppMessages({
+    reason: 'interval'
+  }).catch(() => {});
+}, recentMessagesSyncIntervalMs);
 
 function isWhatsAppReady() {
   return getWhatsAppAccountState('bot-1').ready;
