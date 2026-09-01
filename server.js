@@ -27,6 +27,7 @@ const {
   getTicket,
   getLatestTicketResponseActionByChat,
   getWhatsAppConversationBucketOverride,
+  listLatestTicketResponseActionsByChatRefs,
   listAutomaticMessageTemplates,
   listTickets,
   listTicketsForAudit,
@@ -1303,6 +1304,26 @@ function attachTicketInfoToConversations(user, conversations, options = {}) {
       .filter(Boolean)
   );
   const ticketsByPhone = buildTicketInfoByPhone(user, visibleTickets);
+  const responseActionsByChat = new Map();
+  const responseActionsByPhone = new Map();
+
+  for (const action of listLatestTicketResponseActionsByChatRefs(
+    conversations.map(conversation => ({
+      chatId: conversation && conversation.chat_id,
+      phone: conversation && conversation.phone
+    }))
+  )) {
+    const actionChatId = String(action && action.chat_id || '').trim();
+    const actionPhone = normalizeChatPhone(action && action.phone || '');
+
+    if (actionChatId && !responseActionsByChat.has(actionChatId)) {
+      responseActionsByChat.set(actionChatId, action);
+    }
+
+    if (actionPhone && !responseActionsByPhone.has(actionPhone)) {
+      responseActionsByPhone.set(actionPhone, action);
+    }
+  }
 
   return conversations.map(conversation => {
     const phone = normalizeChatPhone(conversation && conversation.phone || '');
@@ -1310,10 +1331,11 @@ function attachTicketInfoToConversations(user, conversations, options = {}) {
     let ticketInfo = ticketsByPhone.get(phone) || ticketsByPhone.get(chatPhone) || {};
 
     if (!ticketInfo.ticket_external_id) {
-      const responseAction = getLatestTicketResponseActionByChat(
-        conversation && conversation.chat_id,
-        conversation && conversation.phone
-      );
+      const chatId = String(conversation && conversation.chat_id || '').trim();
+      const responseAction = responseActionsByChat.get(chatId) ||
+        responseActionsByPhone.get(phone) ||
+        responseActionsByPhone.get(chatPhone) ||
+        getLatestTicketResponseActionByChat(chatId, phone || chatPhone);
       const responseTicket = responseAction && getTicket(responseAction.ticket_external_id);
 
       if (responseTicket && canAccessTicket(user, responseTicket.external_id, visibleTicketIds)) {

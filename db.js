@@ -950,6 +950,50 @@ function getLatestTicketResponseActionByChat(chatId, phone) {
   `).get(cleanChatId, cleanPhone || null));
 }
 
+function listLatestTicketResponseActionsByChatRefs(refs = []) {
+  const chatIds = new Set();
+  const phones = new Set();
+
+  for (const ref of Array.isArray(refs) ? refs : []) {
+    const chatId = String(ref && ref.chatId || '').trim();
+    const phone = normalizeChatPhone(ref && (ref.phone || ref.chatId) || '');
+
+    if (chatId) {
+      chatIds.add(chatId);
+    }
+
+    if (phone) {
+      phones.add(phone);
+    }
+  }
+
+  const conditions = [];
+  const params = [];
+
+  if (chatIds.size) {
+    conditions.push(`chat_id IN (${Array.from(chatIds).map(() => '?').join(', ')})`);
+    params.push(...chatIds);
+  }
+
+  if (phones.size) {
+    conditions.push(`phone IN (${Array.from(phones).map(() => '?').join(', ')})`);
+    params.push(...phones);
+  }
+
+  if (!conditions.length) {
+    return [];
+  }
+
+  return getDb().prepare(`
+    SELECT *
+    FROM ticket_response_actions
+    WHERE ${conditions.join(' OR ')}
+    ORDER BY
+      COALESCE(completed_at, updated_at, created_at) DESC,
+      id DESC
+  `).all(...params).map(parseTicketResponseAction).filter(Boolean);
+}
+
 function completeTicketResponseAction(id, response = {}) {
   const action = getTicketResponseAction(id);
 
@@ -1954,6 +1998,7 @@ module.exports = {
   getRecentOutgoingMessage,
   getRecentOutgoingMessageBySource,
   getLatestTicketResponseActionByChat,
+  listLatestTicketResponseActionsByChatRefs,
   getPendingTicketResponseActionByChat,
   getTicket,
   getTicketGroupName,
