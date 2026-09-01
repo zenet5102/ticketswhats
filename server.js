@@ -107,6 +107,12 @@ const whatsappAccounts = [
     clientId: process.env.SECOND_WHATSAPP_CLIENT_ID || 'bot-2'
   }
 ];
+const configuredWhatsAppAccountIds = new Set(whatsappAccounts.map(account => account.id));
+const configuredLocalWhatsAppAccounts = String(process.env.WHATSAPP_LOCAL_ACCOUNTS || process.env.WHATSAPP_ENABLED_ACCOUNTS || 'bot-1,bot-2')
+  .split(',')
+  .map(accountId => accountId.trim())
+  .filter(accountId => configuredWhatsAppAccountIds.has(accountId));
+const localWhatsAppAccountIds = new Set(configuredLocalWhatsAppAccounts.length ? configuredLocalWhatsAppAccounts : ['bot-1']);
 const whatsappAccountStates = new Map(whatsappAccounts.map(account => [account.id, {
   ...account,
   ready: false,
@@ -151,6 +157,8 @@ const whatsappTransientRestartCooldownMs = parsePositiveInteger(process.env.WHAT
 const whatsappClientInitDelayMs = parseNonNegativeInteger(process.env.WHATSAPP_CLIENT_INIT_DELAY_MS, 5000);
 const whatsappClientInitStaggerMs = parseNonNegativeInteger(process.env.WHATSAPP_CLIENT_INIT_STAGGER_MS, 30000);
 const startupBackgroundJobsDelayMs = parseNonNegativeInteger(process.env.STARTUP_BACKGROUND_JOBS_DELAY_MS, 30000);
+const whatsappWorkerToken = String(process.env.WHATSAPP_WORKER_TOKEN || '').trim();
+const whatsappWorkerRequestTimeoutMs = parsePositiveInteger(process.env.WHATSAPP_WORKER_REQUEST_TIMEOUT_MS, 90000);
 const whatsappAuthRoot = path.resolve(__dirname, '.wwebjs_auth');
 const whatsappAuthSessionDir = path.resolve(whatsappAuthRoot, 'session-bot-1');
 const secondMaxStoredMediaBytes = parsePositiveInteger(process.env.SECOND_APP_MAX_STORED_MEDIA_MB, 15) * 1024 * 1024;
@@ -240,6 +248,64 @@ function getWhatsAppAccountConfig(accountId = 'bot-1') {
 
 function isValidWhatsAppAccount(accountId) {
   return whatsappAccountStates.has(String(accountId || '').trim());
+}
+
+function isLocalWhatsAppAccount(accountId) {
+  return localWhatsAppAccountIds.has(String(accountId || '').trim());
+}
+
+function getWhatsAppWorkerUrl(accountId) {
+  const cleanAccountId = String(accountId || '').trim();
+  const envSuffix = cleanAccountId.toUpperCase().replace(/[^A-Z0-9]/g, '_');
+  const configuredUrl = String(
+    process.env[`WHATSAPP_${envSuffix}_WORKER_URL`] ||
+    (cleanAccountId === 'bot-2' ? process.env.WHATSAPP_BOT2_WORKER_URL : '') ||
+    ''
+  ).trim();
+
+  return configuredUrl.replace(/\/+$/, '');
+}
+
+function isWorkerWhatsAppAccount(accountId) {
+  return isValidWhatsAppAccount(accountId) && !isLocalWhatsAppAccount(accountId) && Boolean(getWhatsAppWorkerUrl(accountId));
+}
+
+async function requestWhatsAppWorker(accountId, pathName, options = {}) {
+  const baseUrl = getWhatsAppWorkerUrl(accountId);
+
+  if (!baseUrl) {
+    throw new Error(`Worker de WhatsApp no configurado para ${accountId}`);
+  }
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), whatsappWorkerRequestTimeoutMs);
+
+  try {
+    const response = await fetch(`${baseUrl}${pathName}`, {
+      method: options.method || 'GET',
+      headers: {
+        ...(options.body ? { 'Content-Type': 'application/json' } : {}),
+        ...(whatsappWorkerToken ? { 'X-Worker-Token': whatsappWorkerToken } : {})
+      },
+      body: options.body ? JSON.stringify(options.body) : undefined,
+      signal: controller.signal
+    });
+    const data = await response.json().catch(() => ({}));
+
+    if (!response.ok || !data.success) {
+      throw new Error(data.error || `Worker ${accountId} HTTP ${response.status}`);
+    }
+
+    return data;
+  } catch (error) {
+    if (error && error.name === 'AbortError') {
+      throw new Error(`Worker de WhatsApp ${accountId} no respondio a tiempo`);
+    }
+
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 function getDefaultWhatsAppAccountId(user) {
@@ -1765,7 +1831,7 @@ async function initializeWhatsAppClient(accountId = 'bot-1') {
 }
 
 async function initializeWhatsAppClients() {
-  whatsappAccounts.forEach((account, index) => {
+  whatsappAccounts.filter(account => isLocalWhatsAppAccount(account.id)).forEach((account, index) => {
     const delay = whatsappClientInitDelayMs + index * whatsappClientInitStaggerMs;
 
     setTimeout(() => {
@@ -2264,6 +2330,10 @@ async function syncRecentWhatsAppMessages(options = {}) {
         continue;
       }
 
+      if (!isLocalWhatsAppAccount(account.id)) {
+        continue;
+      }
+
       const accountClient = account.client;
       const accountSummary = {
         accountId: account.id,
@@ -2555,6 +2625,45 @@ initializeWhatsAppClients();
 
 async function getWhatsAppStatus(accountId = 'bot-1') {
   const account = getWhatsAppAccountState(accountId);
+
+  if (isWorkerWhatsAppAccount(account.id)) {
+    try {
+      const data = await requestWhatsAppWorker(account.id, '/status');
+      const workerStatus = data.whatsapp || {};
+      markWhatsAppState(workerStatus.state || (workerStatus.ready ? 'CONNECTED' : 'WORKER'), Boolean(workerStatus.ready), account.id);
+      account.lastError = workerStatus.lastError || null;
+      account.lastEventAt = workerStatus.lastEventAt || account.lastEventAt;
+      account.qr = workerStatus.qr || null;
+      account.qrText = workerStatus.qrText || null;
+      account.qrSvg = workerStatus.qrSvg || null;
+
+      return {
+        ...workerStatus,
+        id: account.id,
+        label: account.label,
+        clientId: account.clientId,
+        worker: true
+      };
+    } catch (error) {
+      markWhatsAppState('WORKER_ERROR', false, account.id);
+      account.lastError = error.message;
+
+      return {
+        id: account.id,
+        label: account.label,
+        clientId: account.clientId,
+        ready: false,
+        state: account.state,
+        phone: '',
+        displayName: '',
+        wid: '',
+        lastEventAt: account.lastEventAt,
+        lastError: account.lastError,
+        worker: true
+      };
+    }
+  }
+
   const accountClient = account.client;
 
   try {
@@ -2689,6 +2798,28 @@ async function sendWhatsApp(phone, message, source = 'bot', options = {}) {
     : 'bot-1';
   const account = getWhatsAppAccountState(accountId);
 
+  if (isWorkerWhatsAppAccount(account.id)) {
+    const data = await requestWhatsAppWorker(account.id, '/send', {
+      method: 'POST',
+      body: {
+        target: phone,
+        message,
+        source,
+        sentByUsername: options.sentByUsername,
+        sentByName: options.sentByName
+      }
+    });
+    const savedMessage = data.message || null;
+
+    return {
+      _savedMessage: savedMessage,
+      _resolvedChatId: savedMessage && savedMessage.chat_id || '',
+      timestamp: savedMessage && savedMessage.timestamp_ts,
+      ack: savedMessage && savedMessage.ack,
+      id: savedMessage && savedMessage.id ? { _serialized: savedMessage.id } : null
+    };
+  }
+
   await getWhatsAppStatus(account.id);
 
   if (!account.client || !account.ready) {
@@ -2782,6 +2913,20 @@ async function sendWhatsApp(phone, message, source = 'bot', options = {}) {
 
 async function validateWhatsAppTarget(phone, accountId = 'bot-1') {
   const account = getWhatsAppAccountState(accountId);
+
+  if (isWorkerWhatsAppAccount(account.id)) {
+    const data = await requestWhatsAppWorker(account.id, '/validate-phone', {
+      method: 'POST',
+      body: { phone }
+    });
+
+    return {
+      exists: Boolean(data.exists),
+      phone: data.phone || normalizeChatPhone(phone),
+      chatId: data.chatId || '',
+      accountId: account.id
+    };
+  }
 
   await getWhatsAppStatus(account.id);
 
@@ -3956,17 +4101,69 @@ app.post('/messages/recover', requireAdmin, async (req, res) => {
       });
     }
 
+    if (accountId && isWorkerWhatsAppAccount(accountId)) {
+      const data = await requestWhatsAppWorker(accountId, '/recover', {
+        method: 'POST',
+        body: {
+          chatLimit: req.body && req.body.chatLimit || req.query && req.query.chatLimit,
+          messageLimit: req.body && req.body.messageLimit || req.query && req.query.messageLimit
+        }
+      });
+
+      return res.json({
+        success: true,
+        result: data.result
+      });
+    }
+
+    const workerRecoveries = [];
+
+    if (!accountId) {
+      for (const account of whatsappAccounts) {
+        if (!isWorkerWhatsAppAccount(account.id)) {
+          continue;
+        }
+
+        try {
+          const data = await requestWhatsAppWorker(account.id, '/recover', {
+            method: 'POST',
+            body: {
+              chatLimit: req.body && req.body.chatLimit || req.query && req.query.chatLimit || whatsappCatchupChatLimit,
+              messageLimit: req.body && req.body.messageLimit || req.query && req.query.messageLimit || whatsappCatchupMessageLimit
+            }
+          });
+
+          workerRecoveries.push({
+            accountId: account.id,
+            success: true,
+            result: data.result
+          });
+        } catch (error) {
+          workerRecoveries.push({
+            accountId: account.id,
+            success: false,
+            error: error.message
+          });
+        }
+      }
+    }
+
     const result = await syncRecentWhatsAppMessages({
       force: true,
       reason: 'manual-recovery',
-      accountIds,
+      accountIds: accountId ? accountIds : [...localWhatsAppAccountIds],
       chatLimit: req.body && req.body.chatLimit || req.query && req.query.chatLimit || whatsappCatchupChatLimit,
       messageLimit: req.body && req.body.messageLimit || req.query && req.query.messageLimit || whatsappCatchupMessageLimit
     });
 
     res.json({
       success: true,
-      result
+      result: workerRecoveries.length
+        ? {
+            local: result,
+            workers: workerRecoveries
+          }
+        : result
     });
   } catch (error) {
     res.status(500).json({

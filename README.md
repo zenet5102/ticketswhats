@@ -2,7 +2,12 @@
 
 ## Produccion con PM2
 
-En produccion no levantar el segundo server con `npm run dev:second`, porque usa `nodemon` y puede reiniciar cuando cambian archivos de sesion de WhatsApp.
+En produccion PM2 levanta dos procesos:
+
+- `wwebjs`: web, API, jobs y la sesion `bot-1`.
+- `wwebjs-bot2-worker`: sesion `bot-2` aislada en otro Node, escribiendo en la misma MySQL.
+
+No levantar procesos productivos con `npm run dev` ni `npm run dev:second`, porque usan `nodemon` y pueden reiniciar cuando cambian archivos de sesion de WhatsApp.
 
 Usar:
 
@@ -17,6 +22,21 @@ Para aplicar cambios:
 npm run pm2:restart
 pm2 save
 ```
+
+Variables recomendadas:
+
+```env
+WHATSAPP_LOCAL_ACCOUNTS=bot-1
+WHATSAPP_BOT2_WORKER_URL=http://127.0.0.1:3002
+WHATSAPP_WORKER_ACCOUNT_ID=bot-2
+WHATSAPP_WORKER_PORT=3002
+WHATSAPP_WORKER_LABEL=Coordinacion
+WHATSAPP_WORKER_CLIENT_ID=bot-2
+WHATSAPP_WORKER_TOKEN=
+WHATSAPP_WORKER_REQUEST_TIMEOUT_MS=90000
+```
+
+El principal envia mensajes del `bot-2`, valida numeros y dispara recuperaciones llamando al worker por localhost. Los mensajes entrantes y salientes del worker se guardan en `whatsapp_messages` con `whatsapp_account=bot-2`.
 
 ## API de auditoria de mensajes
 
@@ -219,6 +239,6 @@ Despues importar el historial viejo del segundo numero:
 git pull --ff-only origin codex/unificar-servers
 npm run migrate:sqlite-to-mysql
 npm run migrate:second-messages
-pm2 restart wwebjs --update-env
+pm2 restart ecosystem.config.js --update-env
 pm2 save
 ```
