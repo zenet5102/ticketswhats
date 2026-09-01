@@ -48,7 +48,7 @@ Filtros soportados:
 
 - `phone` o `telefono`: numero del cliente.
 - `ticket`, `ticketId` o `externalId`: ID del ticket.
-- `IDA`, `ida` o `clientId`: ID del cliente Phantom.
+- `IDA`, `ida` o `clientId`: ID del cliente Phantom. Si viene con ceros adelante, por ejemplo `008831`, se busca como `8831`.
 - `client`, `cliente` o `razonSocial`: nombre o razon social.
 - `accountId` o `whatsappAccount`: `bot-1` o `bot-2`.
 - `source`: `all`, `primary`, `sqlite`, `second` o `mysql`. Por defecto `all`.

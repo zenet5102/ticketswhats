@@ -2116,10 +2116,20 @@ async function findPhantomClientsByPhone(phone, limit = 10) {
   return matches.slice(0, safeLimit).map(match => match.row);
 }
 
-async function findPhantomClientById(id) {
+function normalizePhantomClientId(id) {
   const cleanId = String(id || '').trim();
 
   if (!/^\d+$/.test(cleanId)) {
+    return '';
+  }
+
+  return cleanId.replace(/^0+/, '') || '0';
+}
+
+async function findPhantomClientById(id) {
+  const cleanId = normalizePhantomClientId(id);
+
+  if (!cleanId) {
     return null;
   }
 
@@ -2133,7 +2143,6 @@ async function findPhantomClientById(id) {
 
   return rows[0] ? parsePhantomBajaDbRow(rows[0]) : null;
 }
-
 async function findPhantomClientByPhone(phone) {
   const matches = await findPhantomClientsByPhone(phone, 1);
   return matches[0] || null;
@@ -2197,6 +2206,7 @@ module.exports = {
   markMessageQueueSent,
   markStaleMessageQueueErrors,
   normalizeChatPhone,
+  normalizePhantomClientId,
   pingDatabase,
   releaseMessageQueueItem,
   replacePhantomBajaClients,

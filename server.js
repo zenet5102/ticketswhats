@@ -1051,6 +1051,7 @@ async function buildAuditMessagesResponse(query = {}) {
   const phoneInput = String(query.phone || query.telefono || '').trim();
   const ticketInput = String(query.ticket || query.ticketId || query.externalId || '').trim();
   const clientIdInput = String(query.clientId || query.ida || query.IDA || '').trim();
+  const normalizedClientIdInput = secondDb.normalizePhantomClientId(clientIdInput) || clientIdInput;
   const clientInput = String(query.client || query.cliente || query.razonSocial || '').trim();
   const phones = new Set();
   const ticketMap = new Map();
@@ -1080,7 +1081,7 @@ async function buildAuditMessagesResponse(query = {}) {
       const clientMatches = [];
 
       if (clientIdInput) {
-        const client = await secondDb.findPhantomClientById(clientIdInput);
+        const client = await secondDb.findPhantomClientById(normalizedClientIdInput);
         if (client) clientMatches.push(client);
       }
 
@@ -1142,6 +1143,7 @@ async function buildAuditMessagesResponse(query = {}) {
       phone: phoneInput,
       ticket: ticketInput,
       clientId: clientIdInput,
+      normalizedClientId: normalizedClientIdInput,
       client: clientInput,
       source,
       accountId,
