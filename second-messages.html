@@ -2279,7 +2279,7 @@
           ? getMediaLabelFromMime(conversation.media_mime)
           : conversation.body;
         const senderPreview = conversation.direction === 'outgoing'
-          ? (conversation.sent_by_name || conversation.sent_by_username || 'Sistema')
+          ? (conversation.sent_by_name || conversation.sent_by_username || conversation.owner_username || 'Sistema')
           : '';
         const preview = senderPreview ? senderPreview + ': ' + rawPreview : rawPreview;
         const phoneStatus = hasRealConversationPhone(conversation) ? 'Tel real' : 'Tel pendiente';
@@ -2404,6 +2404,7 @@
         message && message.from_me,
         message && message.sent_by_username || '',
         message && message.sent_by_name || '',
+        message && message.owner_username || '',
         message && message.timestamp_ts || ''
       ]);
     }
@@ -2423,7 +2424,7 @@
       const body = isMediaPlaceholder(message.body) && media ? '' : message.body;
       const personPrefix = outgoing ? 'Enviado por' : 'De';
       const person = outgoing
-        ? (message.sent_by_name || message.sent_by_username || 'Sistema')
+        ? (message.sent_by_name || message.sent_by_username || message.owner_username || 'Sistema')
         : getMessagePerson(message, conversation);
       const key = getMessageKey(message, index);
       const renderKey = getMessageRenderKey(message);

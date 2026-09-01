@@ -252,6 +252,14 @@ async function initializeMessageDatabase(databasePool) {
   await ensureTableColumn(databasePool, messagesTableSql, 'owner_username', 'VARCHAR(191) NULL');
   await ensureTableColumn(databasePool, messagesTableSql, 'sent_by_username', 'VARCHAR(191) NULL');
   await ensureTableColumn(databasePool, messagesTableSql, 'sent_by_name', 'VARCHAR(255) NULL');
+  await databasePool.query(`
+    UPDATE ${messagesTableSql}
+    SET sent_by_username = owner_username
+    WHERE direction = 'outgoing'
+      AND owner_username IS NOT NULL
+      AND owner_username <> ''
+      AND (sent_by_username IS NULL OR sent_by_username = '')
+  `);
   await ensureTableColumn(databasePool, queueTableSql, 'owner_username', 'VARCHAR(191) NULL');
   await ensureTableIndex(
     databasePool,
@@ -608,7 +616,7 @@ async function saveWhatsAppMessage(message = {}) {
   const body = String(message.body || '').trim();
   const id = String(message.id || `${direction}-${chatId}-${timestamp}`).trim();
   const ownerUsername = normalizeOwnerUsername(message.ownerUsername || message.owner_username);
-  const sentByUsername = normalizeOwnerUsername(message.sentByUsername || message.sent_by_username);
+  const sentByUsername = normalizeOwnerUsername(message.sentByUsername || message.sent_by_username || (direction === 'outgoing' ? ownerUsername : ''));
   const sentByName = String(message.sentByName || message.sent_by_name || '').trim();
 
   if (!id || !chatId || !body) {
