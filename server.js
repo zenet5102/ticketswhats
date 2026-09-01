@@ -144,9 +144,9 @@ const recentMessagesSyncMessageLimit = parsePositiveInteger(process.env.WHATSAPP
 const recentMessagesSyncBackoffBaseMs = parsePositiveInteger(process.env.WHATSAPP_RECENT_MESSAGES_SYNC_BACKOFF_BASE_MS, 300000);
 const recentMessagesSyncBackoffMaxMs = parsePositiveInteger(process.env.WHATSAPP_RECENT_MESSAGES_SYNC_BACKOFF_MAX_MS, 900000);
 const whatsappCatchupOnReconnect = String(process.env.WHATSAPP_CATCHUP_ON_RECONNECT || 'true').toLowerCase() !== 'false';
-const whatsappCatchupDelayMs = parseNonNegativeInteger(process.env.WHATSAPP_CATCHUP_DELAY_MS, 3000);
-const whatsappCatchupChatLimit = parsePositiveInteger(process.env.WHATSAPP_CATCHUP_CHAT_LIMIT, 120);
-const whatsappCatchupMessageLimit = parsePositiveInteger(process.env.WHATSAPP_CATCHUP_MESSAGE_LIMIT, 50);
+const whatsappCatchupDelayMs = parseNonNegativeInteger(process.env.WHATSAPP_CATCHUP_DELAY_MS, 60000);
+const whatsappCatchupChatLimit = parsePositiveInteger(process.env.WHATSAPP_CATCHUP_CHAT_LIMIT, 40);
+const whatsappCatchupMessageLimit = parsePositiveInteger(process.env.WHATSAPP_CATCHUP_MESSAGE_LIMIT, 15);
 const whatsappTransientRestartCooldownMs = parsePositiveInteger(process.env.WHATSAPP_TRANSIENT_RESTART_COOLDOWN_MS, 120000);
 const whatsappClientInitDelayMs = parseNonNegativeInteger(process.env.WHATSAPP_CLIENT_INIT_DELAY_MS, 5000);
 const whatsappClientInitStaggerMs = parseNonNegativeInteger(process.env.WHATSAPP_CLIENT_INIT_STAGGER_MS, 30000);
