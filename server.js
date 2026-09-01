@@ -103,6 +103,12 @@ const whatsappAccounts = [
     clientId: process.env.SECOND_WHATSAPP_CLIENT_ID || 'bot-2'
   }
 ];
+const serverWhatsAppAccountIds = new Set(
+  String(process.env.WHATSAPP_SERVER_ACCOUNTS || 'bot-1')
+    .split(',')
+    .map(accountId => accountId.trim())
+    .filter(Boolean)
+);
 const whatsappAccountStates = new Map(whatsappAccounts.map(account => [account.id, {
   ...account,
   ready: false,
@@ -1329,6 +1335,10 @@ async function initializeWhatsAppClient(accountId = 'bot-1') {
 
 async function initializeWhatsAppClients() {
   for (const account of whatsappAccounts) {
+    if (!serverWhatsAppAccountIds.has(account.id)) {
+      continue;
+    }
+
     initializeWhatsAppClient(account.id).catch(() => {});
   }
 }
@@ -4159,18 +4169,20 @@ app.post('/tickets/retry-notifications', requirePrivileged, async (req, res) => 
   }
 });
 
-secondDb.pingDatabase().catch(error => {
-  console.warn('MySQL de clientes no esta listo:', error.message);
-});
+if (String(process.env.RUN_SECOND_APP_JOBS_IN_MAIN || '').trim().toLowerCase() === 'true') {
+  secondDb.pingDatabase().catch(error => {
+    console.warn('MySQL de clientes no esta listo:', error.message);
+  });
 
-startSecondMessageQueueScheduler();
-startPhantomBajaSyncScheduler();
-syncPhantomBajaClients('startup')
-  .then(result => console.log('[PHANTOM] Corrida inicial:', result))
-  .catch(error => console.error('[PHANTOM] Error corrida inicial:', error));
-processSecondMessageQueue()
-  .then(result => console.log('[QUEUE] Corrida inicial:', result))
-  .catch(error => console.error('[QUEUE] Error corrida inicial:', error));
+  startSecondMessageQueueScheduler();
+  startPhantomBajaSyncScheduler();
+  syncPhantomBajaClients('startup')
+    .then(result => console.log('[PHANTOM] Corrida inicial:', result))
+    .catch(error => console.error('[PHANTOM] Error corrida inicial:', error));
+  processSecondMessageQueue()
+    .then(result => console.log('[QUEUE] Corrida inicial:', result))
+    .catch(error => console.error('[QUEUE] Error corrida inicial:', error));
+}
 
 startTicketScheduler({
   isWhatsAppReady,
