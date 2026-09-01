@@ -2741,12 +2741,53 @@
         return;
       }
 
-      if (prepareDraftChat(validation.phone, {
-        message: els.newChatMessageInput.value,
-        name: els.newChatModal.dataset.name || '',
-        clientId: els.newChatModal.dataset.clientId || ''
-      })) {
+      const message = els.newChatMessageInput.value.trim();
+      const contactName = String(els.newChatModal.dataset.name || '').trim();
+      const clientId = String(els.newChatModal.dataset.clientId || '').trim();
+
+      if (!message) {
+        els.newChatStatus.textContent = 'Falta mensaje';
+        els.newChatMessageInput.focus();
+        return;
+      }
+
+      els.newChatSubmitBtn.disabled = true;
+      els.newChatStatus.textContent = 'Enviando...';
+
+      try {
+        const data = await fetchJson('/api/messages/send', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            chatId: validation.chatId || '',
+            phone: validation.phone,
+            contactName,
+            message
+          })
+        });
+
+        state.selectedChatId = data.chatId || data.message && data.message.chat_id || validation.chatId || '';
+        state.draftPhone = '';
+        state.draftName = '';
+        state.draftClientId = clientId;
+        state.clientDetails = null;
+        state.clientCandidates = [];
+        state.clientTickets = [];
+        state.clientLiveData = null;
+        state.clientLiveReceivedAt = '';
+        state.clientLoadedFor = '';
+        els.phoneInput.value = '';
+        els.replyMessage.value = '';
+        els.newChatStatus.textContent = '';
+        els.sendError.textContent = 'Enviado';
         closeNewChatModal();
+        await loadConversations({ preserveSelection: true });
+        await loadMessages();
+      } catch (error) {
+        els.newChatStatus.textContent = error.message;
+        els.newChatSubmitBtn.disabled = false;
       }
     }
 
