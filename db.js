@@ -1806,7 +1806,7 @@ function listWhatsAppMessagesByPhone(phone, limit = 200, options = {}) {
     ORDER BY timestamp_ts ASC, created_at ASC, id ASC
   `).all(...params, safeLimit);
 
-  return dedupeVisualMessages(rows);
+  return rows;
 }
 function listWhatsAppChatPhones(chatId) {
   const cleanChatId = String(chatId || '').trim();
