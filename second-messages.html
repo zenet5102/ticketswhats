@@ -1616,11 +1616,19 @@
     }
 
     async function fetchJson(url, options = {}) {
-      const response = await fetch(url, options);
+      const { redirectOnUnauthorized = false, ...fetchOptions } = options;
+      fetchOptions.credentials = fetchOptions.credentials || 'same-origin';
+      const response = await fetch(url, fetchOptions);
 
       if (response.status === 401) {
-        window.location.href = '/login?next=' + encodeURIComponent(window.location.pathname + window.location.search);
-        return new Promise(() => { });
+        if (redirectOnUnauthorized) {
+          window.location.href = '/login?next=' + encodeURIComponent(window.location.pathname + window.location.search);
+          return new Promise(() => { });
+        }
+
+        const error = new Error('Sesion requerida');
+        error.status = 401;
+        throw error;
       }
 
       const data = await response.json().catch(() => ({}));
@@ -2505,7 +2513,7 @@
     }
 
     async function loadSession() {
-      const data = await fetchJson('/auth/me');
+      const data = await fetchJson('/auth/me', { redirectOnUnauthorized: true });
       state.auth = data.user;
       state.pinnedChatIds = readPinnedChatIds();
       els.sessionBadge.textContent = `${data.user.name} | ${String(data.user.role || '').toUpperCase()}`;
