@@ -1458,6 +1458,19 @@ async function listWhatsAppChatsByAgent(options = {}) {
 
   const database = await getPool();
   const [rows] = await database.execute(`
+    WITH matched_messages AS (
+      SELECT *
+      FROM ${messagesTableSql}
+      WHERE ${whereParts.join(' AND ')}
+    ),
+    matched AS (
+      SELECT
+        chat_id,
+        COUNT(*) AS agent_messages,
+        MAX(timestamp_ts) AS last_agent_message_ts
+      FROM matched_messages
+      GROUP BY chat_id
+    )
     SELECT
       latest.id,
       'bot-2' AS whatsapp_account,
@@ -1485,21 +1498,12 @@ async function listWhatsAppChatsByAgent(options = {}) {
       latest.created_at,
       matched.agent_messages,
       matched.last_agent_message_ts
-    FROM (
-      SELECT
-        chat_id,
-        COUNT(*) AS agent_messages,
-        MAX(timestamp_ts) AS last_agent_message_ts
-      FROM ${messagesTableSql}
-      WHERE ${whereParts.join(' AND ')}
-      GROUP BY chat_id
-    ) matched
-    JOIN ${messagesTableSql} latest
+    FROM matched
+    JOIN matched_messages latest
       ON latest.id = (
         SELECT ranked.id
-        FROM ${messagesTableSql} ranked
+        FROM matched_messages ranked
         WHERE ranked.chat_id = matched.chat_id
-          AND ranked.chat_id <> 'status@broadcast'
         ORDER BY ranked.timestamp_ts DESC, ranked.created_at DESC, ranked.id DESC
         LIMIT 1
       )

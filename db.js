@@ -1930,6 +1930,20 @@ function listWhatsAppChatsByAgent(options = {}) {
   }
 
   return getDb().prepare(`
+    WITH matched_messages AS (
+      SELECT *
+      FROM whatsapp_messages
+      WHERE ${whereParts.join(' AND ')}
+    ),
+    matched AS (
+      SELECT
+        COALESCE(whatsapp_account, 'bot-1') AS whatsapp_account,
+        chat_id,
+        COUNT(*) AS agent_messages,
+        MAX(timestamp_ts) AS last_agent_message_ts
+      FROM matched_messages
+      GROUP BY COALESCE(whatsapp_account, 'bot-1'), chat_id
+    )
     SELECT
       latest.id,
       matched.whatsapp_account,
@@ -1956,23 +1970,13 @@ function listWhatsAppChatsByAgent(options = {}) {
       latest.created_at,
       matched.agent_messages,
       matched.last_agent_message_ts
-    FROM (
-      SELECT
-        COALESCE(whatsapp_account, 'bot-1') AS whatsapp_account,
-        chat_id,
-        COUNT(*) AS agent_messages,
-        MAX(timestamp_ts) AS last_agent_message_ts
-      FROM whatsapp_messages
-      WHERE ${whereParts.join(' AND ')}
-      GROUP BY COALESCE(whatsapp_account, 'bot-1'), chat_id
-    ) matched
-    JOIN whatsapp_messages latest
+    FROM matched
+    JOIN matched_messages latest
       ON latest.id = (
         SELECT ranked.id
-        FROM whatsapp_messages ranked
+        FROM matched_messages ranked
         WHERE ranked.chat_id = matched.chat_id
           AND COALESCE(ranked.whatsapp_account, 'bot-1') = matched.whatsapp_account
-          AND ranked.chat_id <> 'status@broadcast'
         ORDER BY ranked.timestamp_ts DESC, ranked.created_at DESC, ranked.id DESC
         LIMIT 1
       )
