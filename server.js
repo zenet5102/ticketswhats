@@ -5058,16 +5058,23 @@ function startBackgroundJobs() {
 
   startSecondMessageQueueScheduler();
   startPhantomBajaSyncScheduler();
-  syncPhantomBajaClients('startup')
-    .then(result => console.log('[PHANTOM] Corrida inicial:', result))
-    .catch(error => console.error('[PHANTOM] Error corrida inicial:', error));
-  processSecondMessageQueue()
-    .then(result => console.log('[QUEUE] Corrida inicial:', result))
-    .catch(error => console.error('[QUEUE] Error corrida inicial:', error));
+
+  if (config.phantomBajaSyncOnStartup) {
+    syncPhantomBajaClients('startup')
+      .then(result => console.log('[PHANTOM] Corrida inicial:', result))
+      .catch(error => console.error('[PHANTOM] Error corrida inicial:', error));
+  }
+
+  if (config.secondQueueRunOnStartup) {
+    processSecondMessageQueue()
+      .then(result => console.log('[QUEUE] Corrida inicial:', result))
+      .catch(error => console.error('[QUEUE] Error corrida inicial:', error));
+  }
 
   startTicketScheduler({
     isWhatsAppReady,
-    sendWhatsApp
+    sendWhatsApp,
+    runOnStart: config.runTicketCycleOnStartup
   });
 }
 

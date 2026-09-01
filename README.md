@@ -67,6 +67,9 @@ WHATSAPP_TRANSIENT_RESTART_COOLDOWN_MS=120000
 WHATSAPP_CLIENT_INIT_DELAY_MS=5000
 WHATSAPP_CLIENT_INIT_STAGGER_MS=30000
 STARTUP_BACKGROUND_JOBS_DELAY_MS=30000
+TICKET_RUN_ON_STARTUP=false
+PHANTOM_BAJA_SYNC_ON_STARTUP=false
+SECOND_QUEUE_RUN_ON_STARTUP=false
 ```
 
 El catch-up automatico recorre una ventana chica de chats recientes de la cuenta reconectada y guarda los ultimos mensajes de cada chat en `whatsapp_messages`. La operacion es idempotente: si un mensaje ya existe, se actualiza sin duplicarlo. Para cortes mas largos, usar la recuperacion manual con limites mas altos.

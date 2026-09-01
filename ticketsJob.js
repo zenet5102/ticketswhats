@@ -747,7 +747,9 @@ function startTicketScheduler(options = {}) {
   schedulerState.active = true;
   schedulerState.startedAt = nowIso();
   schedulerState.nextRunAt = getNextRunIso();
-  run();
+  if (options.runOnStart !== false) {
+    run();
+  }
 
   const timer = setInterval(run, intervalMs);
   console.log(`Jobs de tickets activos cada ${config.syncIntervalMinutes} minutos.`);
