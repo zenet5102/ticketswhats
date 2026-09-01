@@ -7,8 +7,23 @@ module.exports = {
       watch: false,
       time: true,
       env: {
-        WHATSAPP_LOCAL_ACCOUNTS: process.env.WHATSAPP_LOCAL_ACCOUNTS || 'bot-1',
+        WHATSAPP_LOCAL_ACCOUNTS: process.env.WHATSAPP_LOCAL_ACCOUNTS || 'none',
+        WHATSAPP_BOT_1_WORKER_URL: process.env.WHATSAPP_BOT_1_WORKER_URL || 'http://127.0.0.1:3001',
         WHATSAPP_BOT2_WORKER_URL: process.env.WHATSAPP_BOT2_WORKER_URL || 'http://127.0.0.1:3002'
+      }
+    },
+    {
+      name: 'wwebjs-bot1-worker',
+      script: './whatsappWorker.js',
+      cwd: __dirname,
+      watch: false,
+      time: true,
+      env: {
+        WHATSAPP_WORKER_ACCOUNT_ID: 'bot-1',
+        WHATSAPP_WORKER_PORT: process.env.WHATSAPP_BOT1_WORKER_PORT || '3001',
+        WHATSAPP_WORKER_LABEL: process.env.WHATSAPP_PRIMARY_LABEL || 'Administracion',
+        WHATSAPP_WORKER_CLIENT_ID: process.env.WHATSAPP_PRIMARY_CLIENT_ID || 'bot-1',
+        WHATSAPP_WORKER_TOKEN: process.env.WHATSAPP_WORKER_TOKEN || ''
       }
     },
     {

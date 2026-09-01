@@ -108,11 +108,15 @@ const whatsappAccounts = [
   }
 ];
 const configuredWhatsAppAccountIds = new Set(whatsappAccounts.map(account => account.id));
-const configuredLocalWhatsAppAccounts = String(process.env.WHATSAPP_LOCAL_ACCOUNTS || process.env.WHATSAPP_ENABLED_ACCOUNTS || 'bot-1,bot-2')
+const rawLocalWhatsAppAccounts = Object.prototype.hasOwnProperty.call(process.env, 'WHATSAPP_LOCAL_ACCOUNTS')
+  ? process.env.WHATSAPP_LOCAL_ACCOUNTS
+  : process.env.WHATSAPP_ENABLED_ACCOUNTS;
+const configuredLocalWhatsAppAccounts = String(rawLocalWhatsAppAccounts === undefined ? 'bot-1,bot-2' : rawLocalWhatsAppAccounts)
   .split(',')
   .map(accountId => accountId.trim())
+  .filter(accountId => accountId && !['0', 'false', 'none', 'disabled'].includes(accountId.toLowerCase()))
   .filter(accountId => configuredWhatsAppAccountIds.has(accountId));
-const localWhatsAppAccountIds = new Set(configuredLocalWhatsAppAccounts.length ? configuredLocalWhatsAppAccounts : ['bot-1']);
+const localWhatsAppAccountIds = new Set(configuredLocalWhatsAppAccounts);
 const whatsappAccountStates = new Map(whatsappAccounts.map(account => [account.id, {
   ...account,
   ready: false,

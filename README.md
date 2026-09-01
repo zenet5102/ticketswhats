@@ -2,9 +2,10 @@
 
 ## Produccion con PM2
 
-En produccion PM2 levanta dos procesos:
+En produccion PM2 levanta tres procesos:
 
-- `wwebjs`: web, API, jobs y la sesion `bot-1`.
+- `wwebjs`: web, API y jobs, sin sesiones de WhatsApp cargadas.
+- `wwebjs-bot1-worker`: sesion `bot-1` aislada en otro Node, escribiendo en la misma MySQL.
 - `wwebjs-bot2-worker`: sesion `bot-2` aislada en otro Node, escribiendo en la misma MySQL.
 
 No levantar procesos productivos con `npm run dev` ni `npm run dev:second`, porque usan `nodemon` y pueden reiniciar cuando cambian archivos de sesion de WhatsApp.
@@ -26,7 +27,9 @@ pm2 save
 Variables recomendadas:
 
 ```env
-WHATSAPP_LOCAL_ACCOUNTS=bot-1
+WHATSAPP_LOCAL_ACCOUNTS=none
+WHATSAPP_BOT_1_WORKER_URL=http://127.0.0.1:3001
+WHATSAPP_BOT1_WORKER_PORT=3001
 WHATSAPP_BOT2_WORKER_URL=http://127.0.0.1:3002
 WHATSAPP_WORKER_ACCOUNT_ID=bot-2
 WHATSAPP_WORKER_PORT=3002
@@ -36,7 +39,7 @@ WHATSAPP_WORKER_TOKEN=
 WHATSAPP_WORKER_REQUEST_TIMEOUT_MS=90000
 ```
 
-El principal envia mensajes del `bot-2`, valida numeros y dispara recuperaciones llamando al worker por localhost. Los mensajes entrantes y salientes del worker se guardan en `whatsapp_messages` con `whatsapp_account=bot-2`.
+El principal envia mensajes, valida numeros y dispara recuperaciones llamando a los workers por localhost. Los mensajes entrantes y salientes se guardan en `whatsapp_messages` con `whatsapp_account=bot-1` o `whatsapp_account=bot-2`.
 
 ## API de auditoria de mensajes
 
