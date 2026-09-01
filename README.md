@@ -30,6 +30,8 @@ Endpoint:
 ```text
 GET /api/audit/messages
 POST /api/audit/messages
+GET /api/audit/messages/by-agent
+GET /api/audit/chats/by-agent
 ```
 
 Autenticacion:
@@ -79,4 +81,18 @@ curl -X POST "http://localhost:3000/api/audit/messages" \
   -H "Authorization: Bearer token-largo-uno" \
   -H "Content-Type: application/json" \
   -d "{\"phone\":\"5491111111111\",\"accountId\":\"bot-2\",\"limit\":50}"
+```
+
+Mensajes enviados por agente:
+
+```bash
+curl "http://localhost:3000/api/audit/messages/by-agent?agent=operador1&source=all&limit=100" \
+  -H "Authorization: Bearer token-largo-uno"
+```
+
+Chats donde intervino un agente:
+
+```bash
+curl "http://localhost:3000/api/audit/chats/by-agent?agent=operador1&accountId=bot-2&limit=50" \
+  -H "Authorization: Bearer token-largo-uno"
 ```

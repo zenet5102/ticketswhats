@@ -33,8 +33,10 @@ const {
   listTicketGroups,
   listWhatsAppConversationBucketOverrides,
   listWhatsAppChatPhones,
+  listWhatsAppChatsByAgent,
   listWhatsAppConversations,
   listWhatsAppMessages,
+  listWhatsAppMessagesByAgent,
   getAppState,
   getRecentOutgoingMessage,
   getRecentOutgoingMessageBySource,
@@ -1011,6 +1013,37 @@ function dedupeAuditMessages(messages) {
   );
 }
 
+function normalizeAuditChat(row, store, context = {}) {
+  const message = normalizeAuditMessage(row, store, context);
+
+  return {
+    ...message,
+    agentMessages: Number(row.agent_messages || 0),
+    lastAgentMessageTs: row.last_agent_message_ts ? Number(row.last_agent_message_ts) : null,
+    lastAgentMessageIso: row.last_agent_message_ts ? new Date(Number(row.last_agent_message_ts)).toISOString() : ''
+  };
+}
+
+function dedupeAuditChats(chats) {
+  const seen = new Set();
+  const output = [];
+
+  for (const chat of chats) {
+    const key = `${chat.store}:${chat.accountId}:${chat.chatId}`;
+
+    if (!seen.has(key)) {
+      seen.add(key);
+      output.push(chat);
+    }
+  }
+
+  return output.sort((left, right) =>
+    (right.lastAgentMessageTs || 0) - (left.lastAgentMessageTs || 0) ||
+    (right.timestampTs || 0) - (left.timestampTs || 0) ||
+    String(right.id).localeCompare(String(left.id))
+  );
+}
+
 function listTicketsForAudit(options = {}) {
   const cleanTicket = String(options.ticket || options.externalId || '').trim();
   const cleanPhone = normalizeChatPhone(options.phone || '');
@@ -1159,6 +1192,108 @@ async function buildAuditMessagesResponse(query = {}) {
     count: normalizedMessages.length,
     warnings,
     messages: normalizedMessages
+  };
+}
+
+function getAuditAgentQuery(query = {}) {
+  const agent = String(query.agent || query.username || query.ownerUsername || query.owner_username || query.operator || '').trim();
+  const agentName = String(query.agentName || query.name || '').trim();
+  const limit = normalizeAuditLimit(query.limit);
+  const fromTs = parseAuditTimestamp(query.from || query.fromDate || query.since);
+  const toTs = parseAuditTimestamp(query.to || query.toDate || query.until, true);
+  const source = String(query.source || 'all').trim().toLowerCase();
+  const accountId = String(query.accountId || query.whatsappAccount || '').trim();
+
+  if (!agent && !agentName) {
+    const error = new Error('Indica agent, username o agentName');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  return { agent, agentName, limit, fromTs, toTs, source, accountId };
+}
+
+async function buildAuditMessagesByAgentResponse(query = {}) {
+  const auditQuery = getAuditAgentQuery(query);
+  const { agent, agentName, limit, fromTs, toTs, source, accountId } = auditQuery;
+  const messages = [];
+  const warnings = [];
+  const queryOptions = { agent, agentName, accountId, fromTs, toTs, limit };
+
+  if (source === 'all' || source === 'primary' || source === 'sqlite') {
+    for (const row of listWhatsAppMessagesByAgent(queryOptions)) {
+      messages.push(normalizeAuditMessage(row, 'primary-sqlite'));
+    }
+  }
+
+  if (source === 'all' || source === 'second' || source === 'mysql') {
+    try {
+      for (const row of await secondDb.listWhatsAppMessagesByAgent(queryOptions)) {
+        messages.push(normalizeAuditMessage(row, 'second-mysql', { accountId: 'bot-2' }));
+      }
+    } catch (error) {
+      warnings.push(`No se pudo consultar mensajes MySQL: ${error.message}`);
+    }
+  }
+
+  const normalizedMessages = dedupeAuditMessages(messages).slice(-limit);
+
+  return {
+    success: true,
+    query: {
+      agent,
+      agentName,
+      source,
+      accountId,
+      fromTs: fromTs || null,
+      toTs: toTs || null,
+      limit
+    },
+    count: normalizedMessages.length,
+    warnings,
+    messages: normalizedMessages
+  };
+}
+
+async function buildAuditChatsByAgentResponse(query = {}) {
+  const auditQuery = getAuditAgentQuery(query);
+  const { agent, agentName, limit, fromTs, toTs, source, accountId } = auditQuery;
+  const chats = [];
+  const warnings = [];
+  const queryOptions = { agent, agentName, accountId, fromTs, toTs, limit };
+
+  if (source === 'all' || source === 'primary' || source === 'sqlite') {
+    for (const row of listWhatsAppChatsByAgent(queryOptions)) {
+      chats.push(normalizeAuditChat(row, 'primary-sqlite'));
+    }
+  }
+
+  if (source === 'all' || source === 'second' || source === 'mysql') {
+    try {
+      for (const row of await secondDb.listWhatsAppChatsByAgent(queryOptions)) {
+        chats.push(normalizeAuditChat(row, 'second-mysql', { accountId: 'bot-2' }));
+      }
+    } catch (error) {
+      warnings.push(`No se pudo consultar chats MySQL: ${error.message}`);
+    }
+  }
+
+  const normalizedChats = dedupeAuditChats(chats).slice(0, limit);
+
+  return {
+    success: true,
+    query: {
+      agent,
+      agentName,
+      source,
+      accountId,
+      fromTs: fromTs || null,
+      toTs: toTs || null,
+      limit
+    },
+    count: normalizedChats.length,
+    warnings,
+    chats: normalizedChats
   };
 }
 function buildTicketInfoByPhone(user) {
@@ -3516,6 +3651,28 @@ app.get('/api/audit/messages', requireAuditAccess, async (req, res) => {
 app.post('/api/audit/messages', requireAuditAccess, async (req, res) => {
   try {
     res.json(await buildAuditMessagesResponse(req.body || {}));
+  } catch (error) {
+    res.status(error.statusCode || 500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+app.get('/api/audit/messages/by-agent', requireAuditAccess, async (req, res) => {
+  try {
+    res.json(await buildAuditMessagesByAgentResponse(req.query || {}));
+  } catch (error) {
+    res.status(error.statusCode || 500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+app.get('/api/audit/chats/by-agent', requireAuditAccess, async (req, res) => {
+  try {
+    res.json(await buildAuditChatsByAgentResponse(req.query || {}));
   } catch (error) {
     res.status(error.statusCode || 500).json({
       success: false,
