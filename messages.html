@@ -34,7 +34,7 @@
     body {
       margin: 0;
       background:
-        linear-gradient(180deg, rgba(37, 99, 235, 0.08), transparent 230px),
+        linear-gradient(180deg, rgba(18, 140, 126, 0.08), transparent 230px),
         var(--bg);
       color: var(--text);
       font-family: Arial, Helvetica, sans-serif;
@@ -78,34 +78,6 @@
     .primary-nav {
       display: grid;
       gap: 8px;
-    }
-
-    .nav-group {
-      display: grid;
-      gap: 4px;
-    }
-
-    .nav-group summary {
-      list-style: none;
-    }
-
-    .nav-group summary::-webkit-details-marker {
-      display: none;
-    }
-
-    .nav-group .nav-link {
-      width: 100%;
-    }
-
-    .nav-submenu {
-      display: grid;
-      gap: 4px;
-      padding-left: 16px;
-    }
-
-    .nav-submenu .nav-link {
-      min-height: 34px;
-      font-size: 14px;
     }
 
     .nav-link {
@@ -722,35 +694,6 @@
       background: #f7f8fa;
     }
 
-    .sender-row {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      flex-wrap: wrap;
-    }
-
-    .sender-label {
-      color: var(--muted);
-      font-size: 12px;
-      font-weight: 700;
-      text-transform: uppercase;
-      letter-spacing: 0;
-    }
-
-    .sender-select {
-      min-height: 34px;
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      padding: 0 10px;
-      background: #ffffff;
-      color: var(--text);
-      font-weight: 700;
-    }
-
-    .sender-row.single-account {
-      display: none;
-    }
-
     .ticket-panel {
       display: flex;
       flex-direction: column;
@@ -1058,28 +1001,9 @@
           <span aria-hidden="true">&#9993;</span>
           Mensajes
         </a>
-        <a class="nav-link" href="/cola">
-          <span aria-hidden="true">&#9776;</span>
-          Cola
-        </a>
-        <details class="nav-group">
-          <summary class="nav-link">
-            <span aria-hidden="true">&#128101;</span>
-            Clientes
-          </summary>
-          <div class="nav-submenu">
-            <a class="nav-link" href="/phantom/suspendidos">Suspendidos</a>
-            <a class="nav-link" href="/phantom/activos">Activos</a>
-            <a class="nav-link" href="/phantom/baja">Bajas</a>
-          </div>
-        </details>
         <a class="nav-link" href="/errores">
           <span aria-hidden="true">&#9888;</span>
           Errores de envio
-        </a>
-        <a id="whatsappLink" class="nav-link" href="/whatsapp" hidden>
-          <span aria-hidden="true">&#9742;</span>
-          WhatsApp
         </a>
         <a id="usersLink" class="nav-link" href="/usuarios" hidden>
           <span aria-hidden="true">&#128100;</span>
@@ -1094,6 +1018,21 @@
         <div class="metric-label">WhatsApp</div>
         <div class="metric-value" id="whatsappState">--</div>
         <div class="metric-detail" id="whatsappDetail">--</div>
+        <div class="metric-actions" aria-label="Acciones de conexion">
+          <button id="refreshBtn" type="button" title="Actualizar mensajes">
+            <span aria-hidden="true">&#8635;</span>
+            Actualizar
+          </button>
+          <button id="reconnectBtn" type="button" title="Reconectar WhatsApp y generar QR si hace falta">
+            <span aria-hidden="true">&#8635;</span>
+            Reconectar
+          </button>
+          <button id="whatsappResetAuthBtn" type="button"
+            title="Borrar la sesion local de WhatsApp y generar un QR nuevo">
+            <span aria-hidden="true">&#9003;</span>
+            Borrar sesion
+          </button>
+        </div>
       </div>
       <div class="metric">
         <div class="metric-label">Conversaciones</div>
@@ -1110,6 +1049,14 @@
         <div class="metric-label">Ultima respuesta</div>
         <div class="metric-value" id="lastIncoming">--</div>
         <div class="metric-detail" id="lastIncomingDetail">--</div>
+      </div>
+    </section>
+
+    <section class="qr-panel" id="whatsappQrPanel" hidden>
+      <img id="whatsappQrImage" alt="QR para vincular WhatsApp">
+      <div class="qr-copy">
+        <div class="qr-title">Vincular WhatsApp</div>
+        <div class="qr-detail" id="whatsappQrDetail">Escanea este codigo desde WhatsApp para conectar la sesion.</div>
       </div>
     </section>
 
@@ -1153,10 +1100,6 @@
           <div class="empty">Sin mensajes seleccionados.</div>
         </div>
         <form id="replyForm" class="composer">
-          <div class="sender-row">
-            <label class="sender-label" for="senderAccountSelect">Enviar desde</label>
-            <select id="senderAccountSelect" class="sender-select" disabled></select>
-          </div>
           <textarea id="replyMessage" placeholder="Responder..." disabled></textarea>
           <div class="composer-actions">
             <div id="sendError" class="error-text"></div>
@@ -1223,10 +1166,6 @@
       </div>
       <form id="newChatForm" class="modal-body">
         <div class="modal-field">
-          <div class="field-label">Enviar desde</div>
-          <select id="newChatAccountSelect"></select>
-        </div>
-        <div class="modal-field">
           <div class="field-label">Numero</div>
           <input id="newChatPhoneInput" type="tel" inputmode="tel" placeholder="1162446858 o 5491162446858" autocomplete="off">
         </div>
@@ -1252,9 +1191,6 @@
       otherConversations: [],
       activeConversationBucket: 'main',
       selectedChatId: '',
-      selectedAccountId: 'bot-1',
-      assignedWhatsAppAccounts: ['bot-1'],
-      whatsappAccounts: [],
       selectionLocked: false,
       manualChatPending: false,
       auth: null,
@@ -1305,7 +1241,6 @@
       newChatCloseBtn: document.getElementById('newChatCloseBtn'),
       newChatError: document.getElementById('newChatError'),
       newChatForm: document.getElementById('newChatForm'),
-      newChatAccountSelect: document.getElementById('newChatAccountSelect'),
       newChatMessageInput: document.getElementById('newChatMessageInput'),
       newChatModal: document.getElementById('newChatModal'),
       newChatPhoneInput: document.getElementById('newChatPhoneInput'),
@@ -1313,9 +1248,10 @@
       newChatValidationState: document.getElementById('newChatValidationState'),
       otherChatsTab: document.getElementById('otherChatsTab'),
       phoneInput: document.getElementById('phoneInput'),
+      reconnectBtn: document.getElementById('reconnectBtn'),
+      refreshBtn: document.getElementById('refreshBtn'),
       replyForm: document.getElementById('replyForm'),
       replyMessage: document.getElementById('replyMessage'),
-      senderAccountSelect: document.getElementById('senderAccountSelect'),
       sendBtn: document.getElementById('sendBtn'),
       sendError: document.getElementById('sendError'),
       sessionBadge: document.getElementById('sessionBadge'),
@@ -1324,8 +1260,11 @@
       ticketDetails: document.getElementById('ticketDetails'),
       toast: document.getElementById('toast'),
       usersLink: document.getElementById('usersLink'),
-      whatsappLink: document.getElementById('whatsappLink'),
       whatsappDetail: document.getElementById('whatsappDetail'),
+      whatsappQrDetail: document.getElementById('whatsappQrDetail'),
+      whatsappQrImage: document.getElementById('whatsappQrImage'),
+      whatsappQrPanel: document.getElementById('whatsappQrPanel'),
+      whatsappResetAuthBtn: document.getElementById('whatsappResetAuthBtn'),
       whatsappState: document.getElementById('whatsappState')
     };
 
@@ -1851,21 +1790,20 @@
 
       for (const conversation of conversations) {
         const chatId = String(conversation && conversation.chat_id || '').trim();
-        const conversationKey = getConversationKey(conversation);
         const timestamp = getIncomingTimestamp(conversation);
 
         if (!chatId || !timestamp) {
           continue;
         }
 
-        const hadPrevious = state.lastIncomingByChat.has(conversationKey);
-        const previousTimestamp = state.lastIncomingByChat.get(conversationKey) || 0;
+        const hadPrevious = state.lastIncomingByChat.has(chatId);
+        const previousTimestamp = state.lastIncomingByChat.get(chatId) || 0;
         const isNewConversationMessage = !hadPrevious && timestamp >= state.messageNotificationStartedAt - 5000;
 
         const isNewIncoming = shouldNotify && ((hadPrevious && timestamp > previousTimestamp) || isNewConversationMessage);
 
         if (isNewIncoming) {
-          state.newIncomingChatIds.add(conversationKey);
+          state.newIncomingChatIds.add(chatId);
 
           if (isTicketConversation(conversation)) {
             hasNewMessage = true;
@@ -1876,7 +1814,7 @@
           }
         }
 
-        state.lastIncomingByChat.set(conversationKey, Math.max(previousTimestamp, timestamp));
+        state.lastIncomingByChat.set(chatId, Math.max(previousTimestamp, timestamp));
       }
 
       if (!state.messageNotificationReady) {
@@ -1898,15 +1836,6 @@
 
     function applySession(user) {
       state.auth = user;
-      state.assignedWhatsAppAccounts = Array.isArray(user.whatsappAccounts) && user.whatsappAccounts.length
-        ? user.whatsappAccounts
-        : [user.whatsappAccount || 'bot-1'];
-      const params = new URLSearchParams(window.location.search);
-      const requestedAccountId = String(params.get('accountId') || params.get('whatsapp') || params.get('cuenta') || '').trim();
-      state.selectedAccountId = state.assignedWhatsAppAccounts.includes(requestedAccountId)
-        ? requestedAccountId
-        : state.assignedWhatsAppAccounts[0] || 'bot-1';
-
       const roleLabel = user.role === 'usuario' ? 'Usuario' : user.role.toUpperCase();
       els.sessionBadge.textContent = user.name + ' | ' + roleLabel;
 
@@ -1914,7 +1843,11 @@
       els.phoneInput.disabled = !fullAccess;
       els.startChatBtn.disabled = !fullAccess;
       els.usersLink.hidden = user.role !== 'admin';
-      els.whatsappLink.hidden = user.role !== 'admin';
+      els.reconnectBtn.hidden = !fullAccess;
+      els.reconnectBtn.disabled = !fullAccess;
+      els.refreshBtn.disabled = !state.whatsappReady;
+      els.whatsappResetAuthBtn.hidden = !fullAccess;
+      els.whatsappResetAuthBtn.disabled = !fullAccess;
       els.channelSettingsBtn.disabled = !fullAccess;
 
       if (!fullAccess) {
@@ -2033,73 +1966,37 @@
     }
 
     function renderStatus(status) {
-      state.whatsappAccounts = Array.isArray(status.whatsappAccounts) && status.whatsappAccounts.length
-        ? status.whatsappAccounts
-        : [status.whatsapp || {}].filter(Boolean);
-      renderSenderAccounts();
-
-      const whatsapp = getSelectedWhatsAppAccountStatus() || status.whatsapp || {};
-      const ready = Boolean(whatsapp.ready);
+      const whatsapp = status.whatsapp || {};
+      const ready = Boolean(status.whatsappReady || whatsapp.ready);
       const connectedPhone = getConnectedWhatsAppLabel(whatsapp);
+      const canReconnectWhatsApp = hasFullAccess();
       state.whatsappReady = ready;
 
       els.whatsappState.innerHTML =
         '<span class="metric-value-row">' +
         `<span class="badge ${ready ? 'good' : 'bad'}">${escapeHtml(ready ? 'Conectado' : 'No conectado')}</span>` +
+        `<span class="badge blue whatsapp-phone-badge">${escapeHtml(connectedPhone)}</span>` +
         '</span>';
-      els.whatsappDetail.textContent = `${whatsapp.label || whatsapp.id || 'WhatsApp'} | ${connectedPhone}`;
-    }
+      els.whatsappDetail.textContent = whatsapp.lastError || (ready
+        ? 'WA: ' + (whatsapp.state || '--')
+        : 'Sin conexion');
 
-    function getSelectedWhatsAppAccountStatus() {
-      return state.whatsappAccounts.find(account => account.id === state.selectedAccountId) ||
-        state.whatsappAccounts[0] ||
-        null;
-    }
-
-    function getWhatsAppAccountLabel(accountId) {
-      const account = state.whatsappAccounts.find(item => item.id === accountId);
-      const label = String(account && account.label || accountId || '').trim();
-      const phone = String(account && account.phone || '').trim();
-
-      if (!label && !phone) {
-        return '--';
+      if (!ready && whatsapp.qrSvg) {
+        els.whatsappQrPanel.hidden = false;
+        els.whatsappQrImage.hidden = false;
+        els.whatsappQrImage.src = whatsapp.qrSvg;
+        els.whatsappQrDetail.textContent = 'Escanea este codigo desde WhatsApp para conectar la sesion.';
+      } else {
+        els.whatsappQrPanel.hidden = true;
+        els.whatsappQrImage.hidden = false;
+        els.whatsappQrImage.removeAttribute('src');
       }
 
-      return phone ? `${label || accountId} (${phone})` : label;
-    }
-
-    function renderSenderAccounts() {
-      if (!els.senderAccountSelect) {
-        return;
+      if (!state.loading) {
+        els.refreshBtn.disabled = !ready;
+        els.reconnectBtn.disabled = !canReconnectWhatsApp;
+        els.whatsappResetAuthBtn.disabled = !canReconnectWhatsApp;
       }
-
-      const accounts = state.whatsappAccounts.length
-        ? state.whatsappAccounts
-        : [{ id: 'bot-1', label: 'Numero 1' }];
-      const senderRow = els.senderAccountSelect.closest('.sender-row');
-
-      if (!accounts.some(account => account.id === state.selectedAccountId)) {
-        const assignedMatch = accounts.find(account => state.assignedWhatsAppAccounts.includes(account.id));
-        state.selectedAccountId = assignedMatch && assignedMatch.id || accounts[0] && accounts[0].id || 'bot-1';
-      }
-
-      els.senderAccountSelect.innerHTML = accounts.map(account => {
-        const label = getWhatsAppAccountLabel(account.id);
-        const stateLabel = account.ready ? 'Conectado' : 'No conectado';
-        return `<option value="${escapeHtml(account.id)}">${escapeHtml(label)} - ${escapeHtml(stateLabel)}</option>`;
-      }).join('');
-      els.senderAccountSelect.value = state.selectedAccountId;
-      if (senderRow) {
-        senderRow.classList.toggle('single-account', accounts.length <= 1);
-      }
-
-      if (els.newChatAccountSelect) {
-        els.newChatAccountSelect.innerHTML = els.senderAccountSelect.innerHTML;
-        els.newChatAccountSelect.value = state.selectedAccountId;
-        els.newChatAccountSelect.closest('.modal-field').hidden = accounts.length <= 1;
-      }
-
-      setComposerEnabled(Boolean(state.selectedChatId || state.manualChatPending));
     }
 
     function getConnectedWhatsAppLabel(whatsapp) {
@@ -2117,36 +2014,21 @@
       return state.activeConversationBucket === 'other' ? state.otherConversations : state.conversations;
     }
 
-    function getConversationAccountId(conversation) {
-      return String(conversation && conversation.whatsapp_account || conversation && conversation.accountId || 'bot-1').trim() || 'bot-1';
-    }
-
-    function getConversationKey(conversation) {
-      return `${getConversationAccountId(conversation)}:${String(conversation && conversation.chat_id || '').trim()}`;
-    }
-
-    function isSelectedConversation(conversation) {
-      return String(conversation && conversation.chat_id || '').trim() === state.selectedChatId &&
-        getConversationAccountId(conversation) === state.selectedAccountId;
-    }
-
     function getUnreadConversationCount() {
       const knownChatIds = new Set(
         [...state.conversations, ...state.otherConversations]
-          .map(conversation => getConversationKey(conversation))
+          .map(conversation => String(conversation && conversation.chat_id || '').trim())
           .filter(Boolean)
       );
 
-      return [...state.newIncomingChatIds].filter(key => knownChatIds.has(key)).length;
+      return [...state.newIncomingChatIds].filter(chatId => knownChatIds.has(chatId)).length;
     }
 
-    function findConversationByChatId(chatId, accountId = state.selectedAccountId) {
+    function findConversationByChatId(chatId) {
       const cleanChatId = String(chatId || '').trim();
-      const cleanAccountId = String(accountId || 'bot-1').trim() || 'bot-1';
 
       return [...state.conversations, ...state.otherConversations]
-        .find(item => String(item && item.chat_id || '').trim() === cleanChatId &&
-          getConversationAccountId(item) === cleanAccountId);
+        .find(item => String(item && item.chat_id || '').trim() === cleanChatId);
     }
 
     function setConversationBucket(bucket) {
@@ -2157,9 +2039,8 @@
 
       const activeConversations = getActiveConversations();
 
-      if (!activeConversations.some(isSelectedConversation)) {
+      if (!activeConversations.some(conversation => conversation.chat_id === state.selectedChatId)) {
         state.selectedChatId = activeConversations[0] && activeConversations[0].chat_id || '';
-        state.selectedAccountId = activeConversations[0] ? getConversationAccountId(activeConversations[0]) : state.selectedAccountId;
         state.renderedMessagesChatId = '';
       }
 
@@ -2210,20 +2091,17 @@
       }
 
       els.conversationList.innerHTML = conversations.map(conversation => {
-        const active = isSelectedConversation(conversation) ? ' active' : '';
-        const accountId = getConversationAccountId(conversation);
-        const hasNewIncoming = state.newIncomingChatIds.has(getConversationKey(conversation));
+        const active = conversation.chat_id === state.selectedChatId ? ' active' : '';
+        const hasNewIncoming = state.newIncomingChatIds.has(String(conversation.chat_id || '').trim());
         const incomingClass = hasNewIncoming ? ' has-new-incoming' : '';
         const tone = conversation.direction === 'incoming' ? 'good' : 'warn';
         const label = hasNewIncoming ? 'Nuevo' : (conversation.direction === 'incoming' ? 'Respondio' : 'Enviado');
         const meta = getConversationMeta(conversation);
-        const accountLabel = getWhatsAppAccountLabel(accountId);
         const bodyPreview = conversation.body || '';
-        const previewParts = [accountLabel !== '--' ? accountLabel : '', meta && meta !== '--' ? meta : '', bodyPreview];
-        const preview = previewParts.filter(Boolean).join(' | ');
+        const preview = meta && meta !== '--' ? `${meta} | ${bodyPreview}` : bodyPreview;
 
         return `
-          <button class="conversation${active}${incomingClass}" type="button" data-chat-id="${escapeHtml(conversation.chat_id)}" data-account-id="${escapeHtml(accountId)}">
+          <button class="conversation${active}${incomingClass}" type="button" data-chat-id="${escapeHtml(conversation.chat_id)}">
             <div class="conversation-top">
               <div class="conversation-name">${escapeHtml(getConversationName(conversation))}</div>
               <div class="conversation-time">${escapeHtml(formatDateTime(conversation.timestamp_ts))}</div>
@@ -2238,7 +2116,7 @@
 
       els.conversationList.querySelectorAll('.conversation').forEach(button => {
         button.addEventListener('click', () => {
-          selectConversation(button.dataset.chatId, button.dataset.accountId);
+          selectConversation(button.dataset.chatId);
         });
       });
     }
@@ -2275,7 +2153,6 @@
       const canSend = enabled && hasFullAccess();
       els.replyMessage.disabled = !canSend;
       els.sendBtn.disabled = !canSend;
-      els.senderAccountSelect.disabled = !canSend || (Boolean(state.selectedChatId) && !state.manualChatPending);
 
       if (!hasFullAccess()) {
         els.sendError.textContent = 'Solo lectura';
@@ -2300,7 +2177,6 @@
         message && message.from_me,
         message && message.sent_by_username || '',
         message && message.sent_by_name || '',
-        message && message.whatsapp_account || '',
         message && message.timestamp_ts || ''
       ]);
     }
@@ -2316,15 +2192,13 @@
 
     function renderMessageRow(message, index) {
       const direction = message.direction === 'outgoing' ? 'outgoing' : 'incoming';
-      const conversation = findConversationByChatId(message.chat_id, message.whatsapp_account || state.selectedAccountId);
+      const conversation = findConversationByChatId(message.chat_id);
       const media = renderMessageMedia(message);
       const body = String(message.body || '').trim();
       const showBody = body && (!media || !isMediaPlaceholder(body));
       const personPrefix = direction === 'outgoing' ? 'Enviado por' : 'De';
-      const messageAccountId = message.whatsapp_account || state.selectedAccountId;
-      const accountLabel = getWhatsAppAccountLabel(messageAccountId);
       const person = direction === 'outgoing'
-        ? [message.sent_by_name || message.sent_by_username || 'Sistema', accountLabel !== '--' ? accountLabel : ''].filter(Boolean).join(' | ')
+        ? (message.sent_by_name || message.sent_by_username || 'Sistema')
         : getMessagePerson(message, conversation);
       const key = getMessageKey(message, index);
       const renderKey = getMessageRenderKey(message);
@@ -2354,11 +2228,9 @@
 
       setComposerEnabled(true);
 
-      const renderedKey = `${state.selectedAccountId}:${state.selectedChatId}`;
-
-      if (state.renderedMessagesChatId !== renderedKey) {
+      if (state.renderedMessagesChatId !== state.selectedChatId) {
         els.messageList.innerHTML = '';
-        state.renderedMessagesChatId = renderedKey;
+        state.renderedMessagesChatId = state.selectedChatId;
       }
 
       if (!messages.length) {
@@ -2443,7 +2315,7 @@
       detectNewTicketMessages([...state.conversations, ...state.otherConversations]);
 
       const activeConversations = getActiveConversations();
-      const selectedInActiveBucket = activeConversations.some(isSelectedConversation);
+      const selectedInActiveBucket = activeConversations.some(conversation => conversation.chat_id === state.selectedChatId);
       const shouldPreserveSelection = preserveSelection && state.selectionLocked;
 
       if (selectedInActiveBucket && shouldPreserveSelection) {
@@ -2456,7 +2328,6 @@
 
       if (!shouldPreserveSelection || !selectedInActiveBucket) {
         state.selectedChatId = activeConversations[0] && activeConversations[0].chat_id || '';
-        state.selectedAccountId = activeConversations[0] ? getConversationAccountId(activeConversations[0]) : state.selectedAccountId;
         state.manualChatPending = false;
       }
 
@@ -2470,7 +2341,7 @@
         return;
       }
 
-      const data = await fetchJson(`/messages?chatId=${encodeURIComponent(state.selectedChatId)}&accountId=${encodeURIComponent(state.selectedAccountId)}`);
+      const data = await fetchJson(`/messages?chatId=${encodeURIComponent(state.selectedChatId)}`);
       renderMessages(data.messages || []);
     }
 
@@ -2480,6 +2351,9 @@
       }
 
       state.loading = true;
+      els.refreshBtn.disabled = true;
+      els.reconnectBtn.disabled = true;
+      els.whatsappResetAuthBtn.disabled = true;
       els.channelSettingsBtn.disabled = true;
 
       try {
@@ -2495,23 +2369,78 @@
         els.lastRefresh.textContent = `Error: ${error.message}`;
       } finally {
         state.loading = false;
+        els.refreshBtn.disabled = !state.whatsappReady;
+        els.reconnectBtn.disabled = !hasFullAccess();
+        els.whatsappResetAuthBtn.disabled = !hasFullAccess();
         els.channelSettingsBtn.disabled = !hasFullAccess();
       }
     }
 
-    function selectConversation(chatId, accountId = state.selectedAccountId) {
+    async function reconnectWhatsApp() {
+      if (!hasFullAccess()) {
+        showToast('Permisos insuficientes');
+        return;
+      }
+
+      els.reconnectBtn.disabled = true;
+      showToast('Reconectando WhatsApp...');
+
+      try {
+        await fetchJson('/whatsapp/reconnect', {
+          method: 'POST'
+        });
+        showToast('WhatsApp reiniciado');
+        await loadStatus();
+      } catch (error) {
+        showToast(error.message);
+        els.whatsappDetail.textContent = error.message;
+      } finally {
+        els.reconnectBtn.disabled = false;
+        els.refreshBtn.disabled = !state.whatsappReady;
+      }
+    }
+
+    async function resetWhatsAppAuth() {
+      if (!hasFullAccess()) {
+        showToast('Permisos insuficientes');
+        return;
+      }
+
+      if (!window.confirm('Esto borra la sesion local de WhatsApp y genera un QR nuevo. Continuar?')) {
+        return;
+      }
+
+      els.reconnectBtn.disabled = true;
+      els.whatsappResetAuthBtn.disabled = true;
+      showToast('Borrando sesion de WhatsApp...');
+
+      try {
+        await fetchJson('/whatsapp/reset-auth', {
+          method: 'POST'
+        });
+        showToast('Sesion borrada. El QR puede tardar unos segundos.');
+        await loadStatus();
+      } catch (error) {
+        showToast(error.message);
+        els.whatsappDetail.textContent = error.message;
+      } finally {
+        els.reconnectBtn.disabled = false;
+        els.whatsappResetAuthBtn.disabled = false;
+        els.refreshBtn.disabled = !state.whatsappReady;
+      }
+    }
+
+    function selectConversation(chatId) {
       state.selectedChatId = chatId || '';
-      state.selectedAccountId = accountId || 'bot-1';
       state.selectionLocked = Boolean(state.selectedChatId);
       state.manualChatPending = false;
-      const conversation = findConversationByChatId(state.selectedChatId, state.selectedAccountId);
-      state.newIncomingChatIds.delete(conversation ? getConversationKey(conversation) : `${state.selectedAccountId}:${state.selectedChatId}`);
+      state.newIncomingChatIds.delete(String(state.selectedChatId || '').trim());
+      const conversation = findConversationByChatId(state.selectedChatId);
       state.ticketExternalId = String(conversation && conversation.ticket_external_id || '').trim();
       state.ticket = null;
       els.sendError.textContent = '';
       renderConversations();
       renderChatHeader(conversation);
-      renderSenderAccounts();
       loadMessages().catch(error => {
         els.sendError.textContent = error.message;
       });
@@ -2543,7 +2472,6 @@
           },
           body: JSON.stringify({
             chatId,
-            accountId: state.selectedAccountId,
             bucket: targetBucket
           })
         });
@@ -2556,7 +2484,7 @@
         els.otherChatsTab.classList.toggle('active', targetBucket === 'other');
         state.selectedChatId = chatId;
         renderConversations();
-        renderChatHeader(findConversationByChatId(chatId, state.selectedAccountId));
+        renderChatHeader(findConversationByChatId(chatId));
         showToast(`Movido a ${targetLabel}`);
       } catch (error) {
         showToast(error.message);
@@ -2584,11 +2512,6 @@
       }
 
       clearTimeout(state.newChatValidationTimer);
-      if (prefill.accountId && state.whatsappAccounts.some(account => account.id === prefill.accountId)) {
-        state.selectedAccountId = prefill.accountId;
-      }
-      renderSenderAccounts();
-      els.newChatAccountSelect.value = state.selectedAccountId;
       els.newChatPhoneInput.value = prefill.phone || '';
       els.newChatMessageInput.value = prefill.message || '';
       resetNewChatValidation();
@@ -2635,7 +2558,6 @@
 
     async function validateNewChatPhone() {
       const phone = normalizeNewChatPhone(els.newChatPhoneInput.value);
-      state.selectedAccountId = els.newChatAccountSelect.value || state.selectedAccountId || 'bot-1';
       const requestId = state.newChatValidationRequestId + 1;
       state.newChatValidationRequestId = requestId;
       state.newChatValidation = null;
@@ -2655,10 +2577,7 @@
           headers: {
             'Content-Type': 'application/json'
           },
-          body: JSON.stringify({
-            phone,
-            accountId: state.selectedAccountId
-          })
+          body: JSON.stringify({ phone })
         });
 
         if (requestId !== state.newChatValidationRequestId) {
@@ -2709,7 +2628,6 @@
         return;
       }
 
-      state.selectedAccountId = els.newChatAccountSelect.value || state.selectedAccountId || 'bot-1';
       const validation = state.newChatValidation || await validateNewChatPhone();
 
       if (!validation) {
@@ -2737,8 +2655,7 @@
             chatId: validation.chatId,
             phone: validation.phone,
             message,
-            ticketExternalId: state.ticketExternalId,
-            accountId: state.selectedAccountId
+            ticketExternalId: state.ticketExternalId
           })
         });
 
@@ -2748,7 +2665,6 @@
 
         if (data.message && data.message.chat_id) {
           state.selectedChatId = data.message.chat_id;
-          state.selectedAccountId = data.message.whatsapp_account || state.selectedAccountId;
           state.selectionLocked = true;
           state.manualChatPending = true;
         } else {
@@ -2835,8 +2751,7 @@
             chatId: state.selectedChatId,
             phone,
             message,
-            ticketExternalId,
-            accountId: state.selectedAccountId
+            ticketExternalId
           })
         });
 
@@ -2845,7 +2760,6 @@
 
         if (data.message && data.message.chat_id) {
           state.selectedChatId = data.message.chat_id;
-          state.selectedAccountId = data.message.whatsapp_account || state.selectedAccountId;
           state.selectionLocked = true;
           state.manualChatPending = true;
         }
@@ -2864,9 +2778,12 @@
       }
     }
 
+    els.refreshBtn.addEventListener('click', refreshAll);
     els.mainChatsTab.addEventListener('click', () => setConversationBucket('main'));
     els.otherChatsTab.addEventListener('click', () => setConversationBucket('other'));
     els.moveBucketBtn.addEventListener('click', moveSelectedConversationBucket);
+    els.reconnectBtn.addEventListener('click', reconnectWhatsApp);
+    els.whatsappResetAuthBtn.addEventListener('click', resetWhatsAppAuth);
     els.logoutBtn.addEventListener('click', logout);
     els.channelSettingsBtn.addEventListener('click', openChannelSettings);
     els.channelCloseBtn.addEventListener('click', closeChannelSettings);
@@ -2882,16 +2799,6 @@
     els.newChatCancelBtn.addEventListener('click', closeNewChatModal);
     els.newChatForm.addEventListener('submit', startNewChatFromModal);
     els.newChatPhoneInput.addEventListener('input', () => scheduleNewChatValidation());
-    els.newChatAccountSelect.addEventListener('change', () => {
-      state.selectedAccountId = els.newChatAccountSelect.value || 'bot-1';
-      if (els.senderAccountSelect) {
-        els.senderAccountSelect.value = state.selectedAccountId;
-      }
-      scheduleNewChatValidation(0);
-      renderStatus({
-        whatsappAccounts: state.whatsappAccounts
-      });
-    });
     els.newChatModal.addEventListener('click', event => {
       if (event.target === els.newChatModal) {
         closeNewChatModal();
@@ -2900,20 +2807,6 @@
     document.addEventListener('pointerdown', unlockNotificationSound, { once: true });
     document.addEventListener('keydown', unlockNotificationSound, { once: true });
     els.replyForm.addEventListener('submit', sendReply);
-    els.senderAccountSelect.addEventListener('change', () => {
-      if (state.selectedChatId && !state.manualChatPending) {
-        els.senderAccountSelect.value = state.selectedAccountId;
-        return;
-      }
-      state.selectedAccountId = els.senderAccountSelect.value || 'bot-1';
-      state.renderedMessagesChatId = '';
-      renderStatus({
-        whatsappAccounts: state.whatsappAccounts
-      });
-      loadMessages().catch(error => {
-        els.sendError.textContent = error.message;
-      });
-    });
     els.startChatBtn.addEventListener('click', () => openNewChatModal());
     els.chatSearchInput.addEventListener('input', () => {
       state.chatSearch = els.chatSearchInput.value;

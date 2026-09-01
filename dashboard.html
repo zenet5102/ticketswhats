@@ -73,34 +73,6 @@
       gap: 8px;
     }
 
-    .nav-group {
-      display: grid;
-      gap: 4px;
-    }
-
-    .nav-group summary {
-      list-style: none;
-    }
-
-    .nav-group summary::-webkit-details-marker {
-      display: none;
-    }
-
-    .nav-group .nav-link {
-      width: 100%;
-    }
-
-    .nav-submenu {
-      display: grid;
-      gap: 4px;
-      padding-left: 16px;
-    }
-
-    .nav-submenu .nav-link {
-      min-height: 34px;
-      font-size: 14px;
-    }
-
     .nav-link {
       min-height: 38px;
       border: 0;
@@ -203,6 +175,19 @@
     button:disabled {
       cursor: progress;
       opacity: 0.7;
+    }
+
+    .primary-nav button.nav-link {
+      width: 100%;
+      border: 0;
+      background: transparent;
+      color: var(--muted);
+      justify-content: flex-start;
+    }
+
+    .primary-nav button.nav-link:hover {
+      background: var(--soft-blue);
+      color: var(--accent);
     }
 
     .content {
@@ -1162,33 +1147,15 @@
           <span aria-hidden="true">&#9993;</span>
           Mensajes
         </a>
-        <a class="nav-link" href="/cola">
-          <span aria-hidden="true">&#9776;</span>
-          Cola
-        </a>
-        <details class="nav-group">
-          <summary class="nav-link">
-            <span aria-hidden="true">&#128101;</span>
-            Clientes
-          </summary>
-          <div class="nav-submenu">
-            <a class="nav-link" href="/phantom/suspendidos">Suspendidos</a>
-            <a class="nav-link" href="/phantom/activos">Activos</a>
-            <a class="nav-link" href="/phantom/baja">Bajas</a>
-          </div>
-        </details>
         <a class="nav-link" href="/errores">
           <span aria-hidden="true">&#9888;</span>
           Errores de envio
         </a>
-        <a id="whatsappLink" class="nav-link" href="/whatsapp" hidden>
-          <span aria-hidden="true">&#9742;</span>
-          WhatsApp
-        </a>
-        <a id="usersLink" class="nav-link" href="/usuarios" hidden>
+        <button id="usersBtn" class="nav-link" type="button" title="Administrar usuarios" hidden
+          onclick="window.location.href='/usuarios'">
           <span aria-hidden="true">&#128100;</span>
           Usuarios
-        </a>
+        </button>
       </nav>
     </aside>
 
@@ -1447,8 +1414,7 @@
       templatesModal: document.getElementById('templatesModal'),
       templatesSummary: document.getElementById('templatesSummary'),
       transferUsersList: document.getElementById('transferUsersList'),
-      usersLink: document.getElementById('usersLink'),
-      whatsappLink: document.getElementById('whatsappLink')
+      usersBtn: document.getElementById('usersBtn')
     };
 
     function toDateInputValue(date) {
@@ -2335,8 +2301,7 @@
       [els.syncBtn, els.statusBtn, els.phonesBtn, els.runBtn, els.saveMessageBtn, els.templatesBtn].forEach(button => {
         button.hidden = !fullAccess;
       });
-      els.usersLink.hidden = user.role !== 'admin';
-      els.whatsappLink.hidden = user.role !== 'admin';
+      els.usersBtn.hidden = user.role !== 'admin';
       els.transferCard.hidden = !fullAccess;
       els.transferBtn.hidden = !fullAccess;
       els.autoReminderSwitch.disabled = !canManageAutomaticReminder();

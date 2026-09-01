@@ -6,23 +6,23 @@
   <title>Usuarios</title>
   <style>
     :root {
-      --bg: #f6f7f9;
+      --bg: #e7f0ed;
       --panel: #ffffff;
-      --panel-soft: #f8fbff;
-      --line: #d9dee7;
-      --text: #17202a;
-      --muted: #657386;
-      --accent: #2563eb;
-      --accent-dark: #2563eb;
-      --accent-soft: #eaf1ff;
-      --accent-pale: #eaf1ff;
-      --good: #11845b;
+      --panel-soft: #f7fbf9;
+      --line: #d8e5df;
+      --text: #172722;
+      --muted: #61736d;
+      --accent: #00a884;
+      --accent-dark: #008069;
+      --accent-soft: #d9fdd3;
+      --accent-pale: #eef8f4;
+      --good: #008069;
       --warn: #a16207;
       --bad: #bd2c2c;
-      --soft-good: #e7f7ef;
+      --soft-good: #dff8ea;
       --soft-warn: #fff3d8;
       --soft-bad: #fde8e8;
-      --soft-blue: #eaf1ff;
+      --soft-blue: #eef8f4;
     }
 
     body.coordination-app {
@@ -67,7 +67,7 @@
 
     .app-header {
       grid-column: 1 / -1;
-      border-bottom: 1px solid #1d4ed8;
+      border-bottom: 1px solid #006c58;
       background: var(--accent-dark);
       color: #ffffff;
     }
@@ -101,7 +101,7 @@
 
     .subtitle {
       margin-top: 4px;
-      color: #dbeafe;
+      color: #d2f4e8;
       font-size: 13px;
     }
 
@@ -121,26 +121,19 @@
     }
 
     .nav-group {
+      border-top: 1px solid var(--line);
+      margin-top: 6px;
+      padding-top: 10px;
       display: grid;
       gap: 4px;
     }
 
-    .nav-group summary {
-      list-style: none;
-    }
-
-    .nav-group summary::-webkit-details-marker {
-      display: none;
-    }
-
-    .nav-group .nav-link {
-      width: 100%;
-    }
-
-    .nav-submenu {
-      display: grid;
-      gap: 4px;
-      padding-left: 16px;
+    .nav-group-label {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+      padding: 0 12px 2px;
+      text-transform: uppercase;
     }
 
     button,
@@ -170,13 +163,12 @@
       display: inline-flex;
       align-items: center;
       justify-content: flex-start;
-      gap: 8px;
       white-space: nowrap;
     }
 
-    .nav-submenu .nav-link {
+    .nav-group .nav-link {
       min-height: 34px;
-      font-size: 14px;
+      padding-left: 22px;
     }
 
     .nav-link:hover,
@@ -213,7 +205,7 @@
       border-radius: 8px;
       background: rgba(255, 255, 255, 0.14);
       border-color: rgba(255, 255, 255, 0.24);
-      color: #eff6ff;
+      color: #e8fff6;
       padding: 0 12px;
       display: inline-flex;
       align-items: center;
@@ -498,9 +490,6 @@
           <label>Grupos</label>
           <div id="groupsBox" class="group-options"></div>
 
-          <label>WhatsApp</label>
-          <div id="whatsappAccountsBox" class="group-options"></div>
-
           <label for="password">Contrasena</label>
           <input id="password" type="password" autocomplete="new-password" required>
 
@@ -528,14 +517,13 @@
                 <th>Nombre</th>
                 <th>Rol</th>
                 <th>Grupos</th>
-                <th>WhatsApp</th>
                 <th>Actualizado</th>
                 <th></th>
               </tr>
             </thead>
             <tbody id="usersBody">
               <tr>
-                <td colspan="7" class="muted">Cargando...</td>
+                <td colspan="6" class="muted">Cargando...</td>
               </tr>
             </tbody>
           </table>
@@ -552,7 +540,6 @@
       users: [],
       roles: [],
       groups: [],
-      whatsappAccounts: [],
       auth: null
     };
 
@@ -576,7 +563,6 @@
       userForm: document.getElementById('userForm'),
       userId: document.getElementById('userId'),
       username: document.getElementById('username'),
-      whatsappAccountsBox: document.getElementById('whatsappAccountsBox'),
       usersBody: document.getElementById('usersBody')
     };
 
@@ -622,19 +608,24 @@
       document.body.classList.toggle('coordination-app', isCoordination);
       els.appTitle.textContent = isCoordination ? 'Coordinacion' : 'Administracion';
 
-      els.primaryNav.innerHTML = [
-        '<a class="nav-link" href="/dashboard"><span aria-hidden="true">&#9638;</span><span>Tickets</span></a>',
-        '<a class="nav-link" href="/mensajes"><span aria-hidden="true">&#9993;</span><span>Mensajes</span></a>',
-        '<a class="nav-link" href="/cola"><span aria-hidden="true">&#9776;</span><span>Cola</span></a>',
-        '<details class="nav-group"><summary class="nav-link"><span aria-hidden="true">&#128101;</span><span>Clientes</span></summary><div class="nav-submenu">' +
-          '<a class="nav-link" href="/phantom/suspendidos">Suspendidos</a>' +
-          '<a class="nav-link" href="/phantom/activos">Activos</a>' +
-          '<a class="nav-link" href="/phantom/baja">Bajas</a>' +
-        '</div></details>',
-        '<a class="nav-link" href="/errores"><span aria-hidden="true">&#9888;</span><span>Errores de envio</span></a>',
-        '<a class="nav-link" href="/whatsapp"><span aria-hidden="true">&#9742;</span><span>WhatsApp</span></a>',
-        '<a class="nav-link active" href="/usuarios"><span aria-hidden="true">&#128100;</span><span>Usuarios</span></a>'
-      ].join('');
+      els.primaryNav.innerHTML = isCoordination
+        ? [
+          '<a class="nav-link" href="/dashboard"><span aria-hidden="true">&#9638;</span> Tickets</a>',
+          '<a class="nav-link" href="/mensajes"><span aria-hidden="true">&#9993;</span> Mensajes</a>',
+          '<a class="nav-link" href="/errores"><span aria-hidden="true">&#9888;</span> Errores de envio</a>',
+          '<a class="nav-link active" href="/usuarios"><span aria-hidden="true">&#128100;</span> Usuarios</a>'
+        ].join('')
+        : [
+          '<a class="nav-link" href="/mensajes">Mensajes</a>',
+          '<a class="nav-link" href="/cola">Cola</a>',
+          '<div class="nav-group" aria-label="Clientes">',
+          '<div class="nav-group-label">Clientes</div>',
+          '<a class="nav-link" href="/phantom/suspendidos">Suspendidos</a>',
+          '<a class="nav-link" href="/phantom/baja">Baja</a>',
+          '<a class="nav-link" href="/phantom/activos">Activos</a>',
+          '</div>',
+          '<a class="nav-link active" href="/usuarios">Usuarios</a>'
+        ].join('');
     }
 
     function formatDateTime(value) {
@@ -739,35 +730,6 @@
         .map(input => input.value);
     }
 
-    function renderWhatsAppAccountOptions(selectedAccounts = []) {
-      const accounts = state.whatsappAccounts.length
-        ? state.whatsappAccounts
-        : [{ id: 'bot-1', label: 'Numero 1' }, { id: 'bot-2', label: 'Numero 2' }];
-      const selected = new Set((selectedAccounts && selectedAccounts.length ? selectedAccounts : ['bot-1'])
-        .map(accountId => String(accountId).trim())
-        .filter(Boolean));
-
-      els.whatsappAccountsBox.innerHTML = accounts.map(account => {
-        const id = 'whatsapp-' + String(account.id || '').replace(/[^a-z0-9_-]+/gi, '-');
-        const checked = selected.has(String(account.id)) ? ' checked' : '';
-        const phone = String(account.phone || '').trim();
-        const label = String(account.label || account.id || '').trim();
-        const text = phone ? `${label} (${phone})` : label;
-
-        return '<label class="group-option" for="' + escapeHtml(id) + '">' +
-          '<input id="' + escapeHtml(id) + '" type="checkbox" value="' + escapeHtml(account.id) + '"' + checked + '>' +
-          '<span>' + escapeHtml(text) + '</span>' +
-        '</label>';
-      }).join('');
-    }
-
-    function getSelectedWhatsAppAccounts() {
-      const selected = Array.from(els.whatsappAccountsBox.querySelectorAll('input[type="checkbox"]:checked'))
-        .map(input => input.value);
-
-      return selected.length ? selected : ['bot-1'];
-    }
-
     function renderGroupBadges(groups = []) {
       if (!groups.length) {
         return '<span class="muted">--</span>';
@@ -778,17 +740,6 @@
       }).join(' ');
     }
 
-    function renderWhatsAppAccountBadges(accounts = []) {
-      const selected = Array.isArray(accounts) && accounts.length ? accounts : ['bot-1'];
-
-      return selected.map(accountId => {
-        const account = state.whatsappAccounts.find(item => item.id === accountId);
-        const label = account && account.label || accountId;
-        const phone = account && account.phone ? ` (${account.phone})` : '';
-        return '<span class="badge blue">' + escapeHtml(label + phone) + '</span>';
-      }).join(' ');
-    }
-
     function renderUsers() {
       els.userCount.textContent = String(state.users.length);
       els.summary.textContent = state.users.length === 1
@@ -796,7 +747,7 @@
         : state.users.length + ' usuarios';
 
       if (!state.users.length) {
-        els.usersBody.innerHTML = '<tr><td colspan="7" class="muted">Sin usuarios.</td></tr>';
+        els.usersBody.innerHTML = '<tr><td colspan="6" class="muted">Sin usuarios.</td></tr>';
         return;
       }
 
@@ -806,7 +757,6 @@
           '<td>' + escapeHtml(user.name) + '</td>' +
           '<td><span class="badge ' + roleTone(user.role) + '">' + escapeHtml(roleLabel(user.role)) + '</span></td>' +
           '<td>' + (user.role === 'admin' ? '<span class="badge good">Todos</span>' : renderGroupBadges(user.groups || [])) + '</td>' +
-          '<td>' + renderWhatsAppAccountBadges(user.whatsappAccounts || [user.whatsappAccount || 'bot-1']) + '</td>' +
           '<td class="muted">' + escapeHtml(formatDateTime(user.updatedAt)) + '</td>' +
           '<td>' +
             '<div class="row-actions">' +
@@ -843,10 +793,8 @@
 
       state.roles = data.roles || [];
       state.groups = data.groups || [];
-      state.whatsappAccounts = data.whatsappAccounts || [];
       state.users = data.users || [];
       renderRoleOptions();
-      renderWhatsAppAccountOptions(['bot-1']);
       renderUsers();
     }
 
@@ -862,7 +810,6 @@
       els.name.value = '';
       els.role.value = 'usuario';
       renderGroupOptions([]);
-      renderWhatsAppAccountOptions(['bot-1']);
       els.password.value = '';
       els.password.required = true;
       els.password.placeholder = '';
@@ -878,7 +825,6 @@
       els.name.value = user.name;
       els.role.value = user.role;
       renderGroupOptions(user.groups || []);
-      renderWhatsAppAccountOptions(user.whatsappAccounts || [user.whatsappAccount || 'bot-1']);
       els.password.value = '';
       els.password.required = false;
       els.password.placeholder = 'Opcional al editar';
@@ -899,7 +845,6 @@
         name: els.name.value.trim(),
         role: els.role.value,
         groups: getSelectedGroups(),
-        whatsappAccounts: getSelectedWhatsAppAccounts(),
         password: els.password.value
       };
 

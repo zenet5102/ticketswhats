@@ -73,34 +73,6 @@
       gap: 8px;
     }
 
-    .nav-group {
-      display: grid;
-      gap: 4px;
-    }
-
-    .nav-group summary {
-      list-style: none;
-    }
-
-    .nav-group summary::-webkit-details-marker {
-      display: none;
-    }
-
-    .nav-group .nav-link {
-      width: 100%;
-    }
-
-    .nav-submenu {
-      display: grid;
-      gap: 4px;
-      padding-left: 16px;
-    }
-
-    .nav-submenu .nav-link {
-      min-height: 34px;
-      font-size: 14px;
-    }
-
     .nav-link {
       min-height: 38px;
       border-radius: 8px;
@@ -444,28 +416,9 @@
           <span aria-hidden="true">&#9993;</span>
           Mensajes
         </a>
-        <a class="nav-link" href="/cola">
-          <span aria-hidden="true">&#9776;</span>
-          Cola
-        </a>
-        <details class="nav-group">
-          <summary class="nav-link">
-            <span aria-hidden="true">&#128101;</span>
-            Clientes
-          </summary>
-          <div class="nav-submenu">
-            <a class="nav-link" href="/phantom/suspendidos">Suspendidos</a>
-            <a class="nav-link" href="/phantom/activos">Activos</a>
-            <a class="nav-link" href="/phantom/baja">Bajas</a>
-          </div>
-        </details>
         <a class="nav-link active" href="/errores">
           <span aria-hidden="true">&#9888;</span>
           Errores de envio
-        </a>
-        <a id="whatsappLink" class="nav-link" href="/whatsapp" hidden>
-          <span aria-hidden="true">&#9742;</span>
-          WhatsApp
         </a>
         <a id="usersLink" class="nav-link" href="/usuarios" hidden>
           <span aria-hidden="true">&#128100;</span>
@@ -539,8 +492,7 @@
       retryBtn: document.getElementById('retryBtn'),
       sessionBadge: document.getElementById('sessionBadge'),
       toast: document.getElementById('toast'),
-      usersLink: document.getElementById('usersLink'),
-      whatsappLink: document.getElementById('whatsappLink')
+      usersLink: document.getElementById('usersLink')
     };
 
     function escapeHtml(value) {
@@ -590,7 +542,6 @@
       const roleLabel = user.role === 'usuario' ? 'Usuario' : user.role.toUpperCase();
       els.sessionBadge.textContent = user.name + ' | ' + roleLabel;
       els.usersLink.hidden = user.role !== 'admin';
-      els.whatsappLink.hidden = user.role !== 'admin';
     }
 
     async function loadSession() {
