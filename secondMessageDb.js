@@ -1240,14 +1240,19 @@ async function identifyChatClient(options = {}) {
 }
 
 function getAuditPhoneCandidates(value) {
-  const clean = normalizeChatPhone(value);
   const candidates = new Set();
+  const raw = String(value || '');
+  const parts = raw.match(/\d{6,}/g) || [];
 
-  if (clean) candidates.add(clean);
-  if (clean.startsWith('549') && clean.length > 3) candidates.add(clean.slice(3));
-  if (clean.startsWith('54') && clean.length > 2) candidates.add(clean.slice(2));
-  if (clean.length > 10) candidates.add(clean.slice(-10));
-  if (clean.length > 8) candidates.add(clean.slice(-8));
+  for (const part of parts.length ? parts : [raw]) {
+    const clean = normalizeChatPhone(part);
+
+    if (clean) candidates.add(clean);
+    if (clean.startsWith('549') && clean.length > 3) candidates.add(clean.slice(3));
+    if (clean.startsWith('54') && clean.length > 2) candidates.add(clean.slice(2));
+    if (clean.length > 10) candidates.add(clean.slice(-10));
+    if (clean.length > 8) candidates.add(clean.slice(-8));
+  }
 
   return Array.from(candidates).filter(item => item.length >= 6);
 }
@@ -1263,16 +1268,30 @@ async function listWhatsAppMessagesByPhone(phone, limit = 200, options = {}) {
     return [];
   }
 
+  const database = await getPool();
   const phoneWhere = phoneCandidates.map(() => 'phone LIKE ?').join(' OR ');
   const chatWhere = phoneCandidates.map(() => 'chat_id LIKE ?').join(' OR ');
+  const normalizedChatWhere = phoneCandidates
+    .map(() => "REPLACE(REPLACE(REPLACE(LOWER(chat_id), '@c.us', ''), '@s.whatsapp.net', ''), '@lid', '') = ?")
+    .join(' OR ');
+  const matchWhere = `(${phoneWhere} OR ${chatWhere} OR ${normalizedChatWhere})`;
+  const matchParams = [
+    ...phoneCandidates.map(candidate => `%${candidate}%`),
+    ...phoneCandidates.map(candidate => `%${candidate}%`),
+    ...phoneCandidates
+  ];
+  const [matchedChatRows] = await database.execute(`
+    SELECT DISTINCT chat_id
+    FROM ${messagesTableSql}
+    WHERE ${matchWhere}
+      AND chat_id <> 'status@broadcast'
+  `, matchParams);
+  const chatIds = matchedChatRows.map(row => String(row.chat_id || '').trim()).filter(Boolean);
   const whereParts = [
-    `(${phoneWhere} OR ${chatWhere})`,
+    `(${matchWhere}${chatIds.length ? ' OR chat_id IN (' + chatIds.map(() => '?').join(',') + ')' : ''})`,
     "chat_id <> 'status@broadcast'"
   ];
-  const params = [
-    ...phoneCandidates.map(candidate => `%${candidate}%`),
-    ...phoneCandidates.map(candidate => `%${candidate}%`)
-  ];
+  const params = [...matchParams, ...chatIds];
 
   if (Number.isFinite(fromTs) && fromTs > 0) {
     whereParts.push('timestamp_ts >= ?');
@@ -1284,7 +1303,6 @@ async function listWhatsAppMessagesByPhone(phone, limit = 200, options = {}) {
     params.push(toTs);
   }
 
-  const database = await getPool();
   const [rows] = await database.execute(`
     SELECT
       id,
