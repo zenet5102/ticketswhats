@@ -119,6 +119,9 @@ const whatsappAccountStates = new Map(whatsappAccounts.map(account => [account.i
   catchupLastFinishedAt: null,
   catchupLastError: null,
   lastTransientRestartAt: 0,
+  recentSyncFailureCount: 0,
+  recentSyncBackoffUntil: 0,
+  recentSyncLastError: null,
   qr: null,
   qrText: null,
   qrSvg: null,
@@ -138,6 +141,8 @@ const recentMessagesSyncIntervalMs = parsePositiveInteger(process.env.WHATSAPP_R
 const recentMessagesSyncChatCooldownMs = parsePositiveInteger(process.env.WHATSAPP_RECENT_MESSAGES_SYNC_CHAT_COOLDOWN_MS, 12000);
 const recentMessagesSyncChatLimit = parsePositiveInteger(process.env.WHATSAPP_RECENT_MESSAGES_SYNC_CHAT_LIMIT, 35);
 const recentMessagesSyncMessageLimit = parsePositiveInteger(process.env.WHATSAPP_RECENT_MESSAGES_SYNC_MESSAGE_LIMIT, 12);
+const recentMessagesSyncBackoffBaseMs = parsePositiveInteger(process.env.WHATSAPP_RECENT_MESSAGES_SYNC_BACKOFF_BASE_MS, 300000);
+const recentMessagesSyncBackoffMaxMs = parsePositiveInteger(process.env.WHATSAPP_RECENT_MESSAGES_SYNC_BACKOFF_MAX_MS, 900000);
 const whatsappCatchupOnReconnect = String(process.env.WHATSAPP_CATCHUP_ON_RECONNECT || 'true').toLowerCase() !== 'false';
 const whatsappCatchupDelayMs = parseNonNegativeInteger(process.env.WHATSAPP_CATCHUP_DELAY_MS, 3000);
 const whatsappCatchupChatLimit = parsePositiveInteger(process.env.WHATSAPP_CATCHUP_CHAT_LIMIT, 120);
@@ -2184,6 +2189,30 @@ function scheduleWhatsAppReconnectCatchup(accountId = 'bot-1', reason = 'reconne
   }, whatsappCatchupDelayMs);
 }
 
+function clearRecentSyncBackoff(account) {
+  account.recentSyncFailureCount = 0;
+  account.recentSyncBackoffUntil = 0;
+  account.recentSyncLastError = null;
+}
+
+function registerRecentSyncFailure(account, error) {
+  account.recentSyncFailureCount = Number(account.recentSyncFailureCount || 0) + 1;
+  account.recentSyncLastError = String(error && error.message || error || '').trim();
+
+  if (account.recentSyncFailureCount < 2) {
+    return 0;
+  }
+
+  const multiplier = Math.min(account.recentSyncFailureCount - 1, 3);
+  const delay = Math.min(
+    recentMessagesSyncBackoffBaseMs * multiplier,
+    recentMessagesSyncBackoffMaxMs
+  );
+
+  account.recentSyncBackoffUntil = Date.now() + delay;
+  return delay;
+}
+
 async function syncRecentWhatsAppMessages(options = {}) {
   const now = Date.now();
   const requestedAccountIds = new Set(
@@ -2240,6 +2269,8 @@ async function syncRecentWhatsAppMessages(options = {}) {
         accountId: account.id,
         ready: Boolean(account.ready),
         state: account.state,
+        skipped: false,
+        backoffUntil: account.recentSyncBackoffUntil ? new Date(account.recentSyncBackoffUntil).toISOString() : null,
         chats: 0,
         messages: 0,
         stored: 0,
@@ -2249,6 +2280,12 @@ async function syncRecentWhatsAppMessages(options = {}) {
       syncSummary.accounts.push(accountSummary);
 
       if (!accountClient || !account.ready) {
+        continue;
+      }
+
+      if (!options.force && Number(account.recentSyncBackoffUntil || 0) > now) {
+        accountSummary.skipped = true;
+        accountSummary.error = 'sync-backoff';
         continue;
       }
 
@@ -2298,12 +2335,24 @@ async function syncRecentWhatsAppMessages(options = {}) {
             })) {
               accountSummary.error = 'WhatsApp recargado durante sync de mensajes';
               console.warn(`WhatsApp se recargo mientras se sincronizaban mensajes recientes (${account.label}).`);
+              const delay = registerRecentSyncFailure(account, error);
+              if (delay) {
+                console.warn(`Sync reciente pausado para ${account.label} por ${Math.round(delay / 60000)} minutos.`);
+              }
               break;
             }
 
             accountSummary.error = error.message;
+            const delay = registerRecentSyncFailure(account, error);
+            if (delay) {
+              console.warn(`Sync reciente pausado para ${account.label} por ${Math.round(delay / 60000)} minutos.`);
+            }
             console.warn(`No se pudieron sincronizar mensajes recientes (${account.label}):`, error.message);
           }
+        }
+
+        if (!accountSummary.error) {
+          clearRecentSyncBackoff(account);
         }
       } catch (error) {
         if (handleTransientWhatsAppError(error, 'recent-chats-sync-error', account.id, {
@@ -2312,10 +2361,18 @@ async function syncRecentWhatsAppMessages(options = {}) {
         })) {
           accountSummary.error = 'WhatsApp recargado listando chats';
           console.warn(`WhatsApp se recargo mientras se listaban chats recientes (${account.label}).`);
+          const delay = registerRecentSyncFailure(account, error);
+          if (delay) {
+            console.warn(`Sync reciente pausado para ${account.label} por ${Math.round(delay / 60000)} minutos.`);
+          }
           continue;
         }
 
         accountSummary.error = error.message;
+        const delay = registerRecentSyncFailure(account, error);
+        if (delay) {
+          console.warn(`Sync reciente pausado para ${account.label} por ${Math.round(delay / 60000)} minutos.`);
+        }
         console.warn(`No se pudieron sincronizar chats recientes de WhatsApp (${account.label}):`, error.message);
       }
     }
@@ -2509,7 +2566,10 @@ async function getWhatsAppStatus(accountId = 'bot-1') {
       }
     }
   } catch (error) {
-    if (handleTransientWhatsAppError(error, 'status-check-error', account.id)) {
+    if (handleTransientWhatsAppError(error, 'status-check-error', account.id, {
+      restart: false,
+      markRefreshing: false
+    })) {
       // Keep returning the current status object below.
     } else {
       account.lastError = error.message;
@@ -2538,6 +2598,9 @@ async function getWhatsAppStatus(accountId = 'bot-1') {
     catchupLastStartedAt: account.catchupLastStartedAt,
     catchupLastFinishedAt: account.catchupLastFinishedAt,
     catchupLastError: account.catchupLastError,
+    recentSyncFailureCount: account.recentSyncFailureCount,
+    recentSyncBackoffUntil: account.recentSyncBackoffUntil ? new Date(account.recentSyncBackoffUntil).toISOString() : null,
+    recentSyncLastError: account.recentSyncLastError,
     qr: account.ready ? null : account.qr,
     qrText: account.ready ? null : account.qrText,
     qrSvg: account.ready ? null : account.qrSvg
