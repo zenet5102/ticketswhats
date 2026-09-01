@@ -1215,6 +1215,88 @@ async function identifyChatClient(options = {}) {
   };
 }
 
+function getAuditPhoneCandidates(value) {
+  const clean = normalizeChatPhone(value);
+  const candidates = new Set();
+
+  if (clean) candidates.add(clean);
+  if (clean.startsWith('549') && clean.length > 3) candidates.add(clean.slice(3));
+  if (clean.startsWith('54') && clean.length > 2) candidates.add(clean.slice(2));
+  if (clean.length > 10) candidates.add(clean.slice(-10));
+  if (clean.length > 8) candidates.add(clean.slice(-8));
+
+  return Array.from(candidates).filter(item => item.length >= 6);
+}
+
+async function listWhatsAppMessagesByPhone(phone, limit = 200, options = {}) {
+  const phoneCandidates = getAuditPhoneCandidates(phone);
+  const safeLimit = Math.min(Math.max(Number(limit) || 200, 1), 1000);
+  const accountFilter = String(options.whatsappAccount || options.accountId || '').trim();
+  const fromTs = Number(options.fromTs || 0);
+  const toTs = Number(options.toTs || 0);
+
+  if (!phoneCandidates.length || (accountFilter && accountFilter !== 'bot-2')) {
+    return [];
+  }
+
+  const phoneWhere = phoneCandidates.map(() => 'phone LIKE ?').join(' OR ');
+  const chatWhere = phoneCandidates.map(() => 'chat_id LIKE ?').join(' OR ');
+  const whereParts = [
+    `(${phoneWhere} OR ${chatWhere})`,
+    "chat_id <> 'status@broadcast'"
+  ];
+  const params = [
+    ...phoneCandidates.map(candidate => `%${candidate}%`),
+    ...phoneCandidates.map(candidate => `%${candidate}%`)
+  ];
+
+  if (Number.isFinite(fromTs) && fromTs > 0) {
+    whereParts.push('timestamp_ts >= ?');
+    params.push(fromTs);
+  }
+
+  if (Number.isFinite(toTs) && toTs > 0) {
+    whereParts.push('timestamp_ts <= ?');
+    params.push(toTs);
+  }
+
+  const database = await getPool();
+  const [rows] = await database.execute(`
+    SELECT
+      id,
+      'bot-2' AS whatsapp_account,
+      chat_id,
+      CASE
+        WHEN LOWER(chat_id) LIKE '%@lid'
+          AND phone = REPLACE(LOWER(chat_id), '@lid', '')
+        THEN NULL
+        ELSE phone
+      END AS phone,
+      contact_name,
+      direction,
+      body,
+      media_mime,
+      NULL AS media_data,
+      media_filename,
+      timestamp_ts,
+      timestamp_iso,
+      from_me,
+      ack,
+      source,
+      owner_username,
+      created_at
+    FROM (
+      SELECT *
+      FROM ${messagesTableSql}
+      WHERE ${whereParts.join(' AND ')}
+      ORDER BY timestamp_ts DESC, created_at DESC, id DESC
+      LIMIT ${safeLimit}
+    ) recent_messages
+    ORDER BY timestamp_ts ASC, created_at ASC, id ASC
+  `, params);
+
+  return rows;
+}
 async function listWhatsAppChatPhones(chatId, options = {}) {
   const cleanChatId = String(chatId || '').trim();
   const ownerUsername = normalizeOwnerUsername(options.ownerUsername || options.owner_username);
@@ -2065,6 +2147,7 @@ module.exports = {
   listWhatsAppCommunicationTickets,
   listWhatsAppConversations,
   listWhatsAppMessages,
+  listWhatsAppMessagesByPhone,
   transferWhatsAppChatOwner,
   markMessageQueueError,
   markMessageQueueSent,
