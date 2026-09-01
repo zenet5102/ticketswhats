@@ -896,9 +896,13 @@ function clearTemporaryGroupTransfer(username) {
 }
 
 function getVisibleTicketPhones(user, date) {
+  return getVisibleTicketPhonesFromTickets(listVisibleTicketsForUser(user, date));
+}
+
+function getVisibleTicketPhonesFromTickets(tickets) {
   const phones = new Set();
 
-  for (const ticket of listVisibleTicketsForUser(user, date)) {
+  for (const ticket of Array.isArray(tickets) ? tickets : []) {
     for (const value of [ticket.phone, ...getTicketPhones(ticket)]) {
       const phone = normalizeChatPhone(value || '');
 
@@ -1268,9 +1272,9 @@ async function buildAuditMessagesResponse(query = {}) {
   };
 }
 
-function buildTicketInfoByPhone(user) {
+function buildTicketInfoByPhone(user, visibleTickets) {
   const byPhone = new Map();
-  const tickets = listVisibleTicketsForUser(user, getTodayDateString())
+  const tickets = (Array.isArray(visibleTickets) ? visibleTickets : listVisibleTicketsForUser(user, getTodayDateString()))
     .slice()
     .sort((left, right) => Number(right.start_ts || 0) - Number(left.start_ts || 0));
 
@@ -1289,8 +1293,16 @@ function buildTicketInfoByPhone(user) {
   return byPhone;
 }
 
-function attachTicketInfoToConversations(user, conversations) {
-  const ticketsByPhone = buildTicketInfoByPhone(user);
+function attachTicketInfoToConversations(user, conversations, options = {}) {
+  const visibleTickets = Array.isArray(options.visibleTickets)
+    ? options.visibleTickets
+    : listVisibleTicketsForUser(user, getTodayDateString());
+  const visibleTicketIds = new Set(
+    visibleTickets
+      .map(ticket => String(ticket && ticket.external_id || '').trim())
+      .filter(Boolean)
+  );
+  const ticketsByPhone = buildTicketInfoByPhone(user, visibleTickets);
 
   return conversations.map(conversation => {
     const phone = normalizeChatPhone(conversation && conversation.phone || '');
@@ -1304,7 +1316,7 @@ function attachTicketInfoToConversations(user, conversations) {
       );
       const responseTicket = responseAction && getTicket(responseAction.ticket_external_id);
 
-      if (responseTicket && canAccessTicket(user, responseTicket.external_id)) {
+      if (responseTicket && canAccessTicket(user, responseTicket.external_id, visibleTicketIds)) {
         ticketInfo = getTicketInfo(responseTicket);
       }
     }
@@ -1500,9 +1512,12 @@ function splitConversationBuckets(conversations, requestedLimit, shouldUseMainBu
 function listConversationBucketsForUser(user, limit) {
   const requestedLimit = Math.min(Math.max(Number(limit) || 100, 1), 300);
   const accountIds = getAllowedWhatsAppAccountIds(user);
+  const today = getTodayDateString();
+  const visibleTickets = listVisibleTicketsForUser(user, today);
   const conversations = attachTicketInfoToConversations(
     user,
-    accountIds.flatMap(accountId => listWhatsAppConversations(1000, { accountId }))
+    accountIds.flatMap(accountId => listWhatsAppConversations(1000, { accountId })),
+    { visibleTickets }
   );
 
   if (user && user.isAdmin) {
@@ -1510,7 +1525,7 @@ function listConversationBucketsForUser(user, limit) {
   }
 
   if (userHasTicketGroupRestrictions(user)) {
-    const phones = getVisibleTicketPhones(user, getTodayDateString());
+    const phones = getVisibleTicketPhonesFromTickets(visibleTickets);
 
     return splitConversationBuckets(
       conversations,
@@ -1785,7 +1800,7 @@ function attachWhatsAppEvents(instance, accountId = 'bot-1') {
   });
 }
 
-function canAccessTicket(user, ticketExternalId) {
+function canAccessTicket(user, ticketExternalId, visibleTicketIds = null) {
   const cleanExternalId = String(ticketExternalId || '').trim();
 
   if (!cleanExternalId) {
@@ -1794,6 +1809,10 @@ function canAccessTicket(user, ticketExternalId) {
 
   if (user && user.isAdmin) {
     return Boolean(getTicket(cleanExternalId));
+  }
+
+  if (visibleTicketIds instanceof Set) {
+    return visibleTicketIds.has(cleanExternalId);
   }
 
   return listVisibleTicketsForUser(user).some(ticket => String(ticket.external_id || '') === cleanExternalId);
