@@ -2098,7 +2098,11 @@
         const label = hasNewIncoming ? 'Nuevo' : (conversation.direction === 'incoming' ? 'Respondio' : 'Enviado');
         const meta = getConversationMeta(conversation);
         const bodyPreview = conversation.body || '';
-        const preview = meta && meta !== '--' ? `${meta} | ${bodyPreview}` : bodyPreview;
+        const senderPreview = conversation.direction === 'outgoing'
+          ? (conversation.sent_by_name || conversation.sent_by_username || 'Sistema')
+          : '';
+        const messagePreview = senderPreview ? senderPreview + ': ' + bodyPreview : bodyPreview;
+        const preview = meta && meta !== '--' ? meta + ' | ' + messagePreview : messagePreview;
 
         return `
           <button class="conversation${active}${incomingClass}" type="button" data-chat-id="${escapeHtml(conversation.chat_id)}">

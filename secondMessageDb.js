@@ -144,6 +144,8 @@ async function initializeMessageDatabase(databasePool) {
       ack INT NULL,
       source VARCHAR(64) NULL,
       owner_username VARCHAR(191) NULL,
+      sent_by_username VARCHAR(191) NULL,
+      sent_by_name VARCHAR(255) NULL,
       created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
       PRIMARY KEY (id),
@@ -248,6 +250,8 @@ async function initializeMessageDatabase(databasePool) {
   `);
 
   await ensureTableColumn(databasePool, messagesTableSql, 'owner_username', 'VARCHAR(191) NULL');
+  await ensureTableColumn(databasePool, messagesTableSql, 'sent_by_username', 'VARCHAR(191) NULL');
+  await ensureTableColumn(databasePool, messagesTableSql, 'sent_by_name', 'VARCHAR(255) NULL');
   await ensureTableColumn(databasePool, queueTableSql, 'owner_username', 'VARCHAR(191) NULL');
   await ensureTableIndex(
     databasePool,
@@ -604,6 +608,8 @@ async function saveWhatsAppMessage(message = {}) {
   const body = String(message.body || '').trim();
   const id = String(message.id || `${direction}-${chatId}-${timestamp}`).trim();
   const ownerUsername = normalizeOwnerUsername(message.ownerUsername || message.owner_username);
+  const sentByUsername = normalizeOwnerUsername(message.sentByUsername || message.sent_by_username);
+  const sentByName = String(message.sentByName || message.sent_by_name || '').trim();
 
   if (!id || !chatId || !body) {
     throw new Error('Faltan datos del mensaje');
@@ -627,9 +633,11 @@ async function saveWhatsAppMessage(message = {}) {
       from_me,
       ack,
       source,
-      owner_username
+      owner_username,
+      sent_by_username,
+      sent_by_name
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON DUPLICATE KEY UPDATE
       chat_id = CASE
         WHEN VALUES(source) = 'whatsapp-second'
@@ -649,6 +657,8 @@ async function saveWhatsAppMessage(message = {}) {
       END,
       contact_name = COALESCE(VALUES(contact_name), contact_name),
       owner_username = COALESCE(VALUES(owner_username), owner_username),
+      sent_by_username = COALESCE(VALUES(sent_by_username), sent_by_username),
+      sent_by_name = COALESCE(VALUES(sent_by_name), sent_by_name),
       body = CASE
         WHEN body LIKE '[% sin texto]' AND VALUES(body) NOT LIKE '[% sin texto]'
         THEN VALUES(body)
@@ -684,7 +694,9 @@ async function saveWhatsAppMessage(message = {}) {
     message.fromMe ? 1 : 0,
     Number.isFinite(Number(message.ack)) ? Number(message.ack) : null,
     String(message.source || '').trim() || null,
-    ownerUsername || null
+    ownerUsername || null,
+    sentByUsername || null,
+    sentByName || null
   ]);
 
   return getWhatsAppMessage(id);
@@ -821,6 +833,8 @@ async function listWhatsAppConversations(limit = 100, options = {}) {
       latest.ack,
       latest.source,
       latest.owner_username,
+      latest.sent_by_username,
+      latest.sent_by_name,
       latest.created_at,
       counts.total_messages,
       counts.incoming_messages,
@@ -1080,6 +1094,8 @@ async function listWhatsAppMessages(chatId, limit = 200, options = {}) {
         ack,
         source,
         owner_username,
+        sent_by_username,
+        sent_by_name,
         created_at
       FROM ${messagesTableSql}
       WHERE chat_id IN (${chatIds.map(() => '?').join(',')})
@@ -1284,6 +1300,8 @@ async function listWhatsAppMessagesByPhone(phone, limit = 200, options = {}) {
       ack,
       source,
       owner_username,
+      sent_by_username,
+      sent_by_name,
       created_at
     FROM (
       SELECT *

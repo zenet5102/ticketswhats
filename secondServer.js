@@ -1389,7 +1389,9 @@ async function sendWhatsApp(target, message, mediaInput, source = 'second-app', 
     fromMe: true,
     ack: sentMessage && sentMessage.ack,
     source,
-    ownerUsername
+    ownerUsername,
+    sentByUsername: options.sentByUsername,
+    sentByName: options.sentByName
   });
 
   if (!existingOwnerUsername && ownerUsername) {
@@ -1489,7 +1491,9 @@ async function processSecondMessageQueue() {
             item.variables.razonSocial ||
             item.variables.cliente
           ),
-          ownerUsername: item.owner_username
+          ownerUsername: item.owner_username,
+          sentByUsername: item.owner_username || 'queue',
+          sentByName: item.owner_username || 'Cola'
         });
         await markMessageQueueSent(item.id, body, template.index);
         unresolvedItemIds.delete(Number(item.id));
@@ -3199,6 +3203,8 @@ app.post('/api/messages/send', requirePrivileged, async (req, res) => {
     const result = await sendWhatsApp(target, body.message, body.media, 'second-inbox', {
       contactName: body.contactName,
       ownerUsername: getUserOwnerUsername(req.user),
+      sentByUsername: req.user && req.user.username,
+      sentByName: req.user && req.user.name,
       allowAssignedChatSend: canSeeAllOwnedChats(req.user)
     });
 

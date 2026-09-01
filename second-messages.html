@@ -2275,9 +2275,13 @@
         const pinned = isChatPinned(conversation.chat_id);
         const pinnedClass = pinned ? ' pinned' : '';
         const pinnedLabel = pinned ? 'Fijado' : 'Fijar';
-        const preview = conversation.media_mime && isMediaPlaceholder(conversation.body)
+        const rawPreview = conversation.media_mime && isMediaPlaceholder(conversation.body)
           ? getMediaLabelFromMime(conversation.media_mime)
           : conversation.body;
+        const senderPreview = conversation.direction === 'outgoing'
+          ? (conversation.sent_by_name || conversation.sent_by_username || 'Sistema')
+          : '';
+        const preview = senderPreview ? senderPreview + ': ' + rawPreview : rawPreview;
         const phoneStatus = hasRealConversationPhone(conversation) ? 'Tel real' : 'Tel pendiente';
         const phoneStatusTone = hasRealConversationPhone(conversation) ? 'good' : 'warn';
 
@@ -2398,6 +2402,8 @@
         message && message.ack,
         message && message.direction || '',
         message && message.from_me,
+        message && message.sent_by_username || '',
+        message && message.sent_by_name || '',
         message && message.timestamp_ts || ''
       ]);
     }
@@ -2415,13 +2421,17 @@
       const outgoing = message.direction === 'outgoing' || Number(message.from_me) === 1;
       const media = renderMessageMedia(message);
       const body = isMediaPlaceholder(message.body) && media ? '' : message.body;
+      const personPrefix = outgoing ? 'Enviado por' : 'De';
+      const person = outgoing
+        ? (message.sent_by_name || message.sent_by_username || 'Sistema')
+        : getMessagePerson(message, conversation);
       const key = getMessageKey(message, index);
       const renderKey = getMessageRenderKey(message);
 
       return `
         <div class="message-row ${outgoing ? 'outgoing' : 'incoming'}" data-message-key="${escapeHtml(key)}" data-render-key="${escapeHtml(renderKey)}">
           <div class="bubble">
-            ${outgoing ? '' : `<div class="message-person">${escapeHtml(getMessagePerson(message, conversation))}</div>`}
+            <div class="message-person">${personPrefix}: ${escapeHtml(person)}</div>
             ${media}
             ${body ? `<div class="message-text">${escapeHtml(body)}</div>` : ''}
             <div class="message-meta">

@@ -1365,6 +1365,8 @@ function listWhatsAppConversations(limit = 100, options = {}) {
       ranked.from_me,
       ranked.ack,
       ranked.source,
+      ranked.sent_by_username,
+      ranked.sent_by_name,
       ranked.created_at,
       counts.total_messages,
       counts.incoming_messages,
