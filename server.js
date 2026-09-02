@@ -84,6 +84,7 @@ const {
   syncTickets
 } = require('./ticketsJob');
 const { getTodayDateString } = require('./ticketApi');
+const primaryMessageDb = require('./primaryMessageDb');
 const secondDb = require('./secondMessageDb');
 
 let whatsappReady = false;
@@ -177,6 +178,22 @@ const phantomBajaSyncState = {
 };
 let recentMessagesSyncRunning = false;
 let lastRecentMessagesSyncAt = 0;
+
+function mirrorPrimaryMessageToMysql(message, context = 'mensaje') {
+  if (!message) {
+    return;
+  }
+
+  primaryMessageDb.saveWhatsAppMessage(message).catch(error => {
+    console.warn(`No se pudo replicar ${context} en MySQL del primer server:`, error.message);
+  });
+}
+
+function mirrorPrimaryMessageAckToMysql(messageId, ack) {
+  primaryMessageDb.updateWhatsAppMessageAck(messageId, ack).catch(error => {
+    console.warn('No se pudo replicar ack en MySQL del primer server:', error.message);
+  });
+}
 
 function parsePositiveInteger(value, fallback) {
   const parsed = Number.parseInt(value, 10);
@@ -1722,6 +1739,7 @@ function attachWhatsAppEvents(instance, accountId = 'bot-1') {
     try {
       const messageId = message && message.id && message.id._serialized;
       updateWhatsAppMessageAck(messageId, ack);
+      mirrorPrimaryMessageAckToMysql(messageId, ack);
     } catch (error) {
       console.warn('No se pudo actualizar estado del mensaje:', error.message);
     }
@@ -2080,7 +2098,7 @@ async function storeWhatsAppMessage(message, source = 'whatsapp', accountId = 'b
     const body = rawBody || `[${getMediaLabel(mediaInfo.mediaMime, message.type)} sin texto]`;
     const contactInfo = await getMessageContactInfo(message, chatId, accountId);
 
-    return saveWhatsAppMessage({
+    const savedMessage = saveWhatsAppMessage({
       id: getStoredMessageId(message, chatId, direction),
       chatId,
       phone: contactInfo.contactPhone || normalizeChatPhone(chatId),
@@ -2096,6 +2114,10 @@ async function storeWhatsAppMessage(message, source = 'whatsapp', accountId = 'b
       source,
       whatsappAccount: accountId
     });
+
+    mirrorPrimaryMessageToMysql(savedMessage, 'mensaje de WhatsApp');
+
+    return savedMessage;
   } catch (error) {
     handleTransientWhatsAppError(error, 'media-download-error', accountId);
     console.warn('No se pudo guardar mensaje de WhatsApp:', error.message);
@@ -2511,6 +2533,7 @@ async function sendWhatsApp(phone, message, source = 'bot', options = {}) {
       sentByName: options.sentByName,
       whatsappAccount: account.id
     });
+    mirrorPrimaryMessageToMysql(savedMessage, 'mensaje enviado');
   } catch (error) {
     console.warn('Mensaje enviado, pero no se pudo guardar el historial:', error.message);
   }
@@ -4655,6 +4678,15 @@ app.post('/tickets/retry-notifications', requirePrivileged, async (req, res) => 
     });
   }
 });
+
+primaryMessageDb.pingDatabase()
+  .then(() => {
+    const status = primaryMessageDb.getStatusPayload();
+    console.log(`MySQL del primer server listo: ${status.database}.${status.table}`);
+  })
+  .catch(error => {
+    console.warn('MySQL del primer server no esta listo:', error.message);
+  });
 
 if (String(process.env.RUN_SECOND_APP_JOBS_IN_MAIN || '').trim().toLowerCase() === 'true') {
   secondDb.pingDatabase().catch(error => {
