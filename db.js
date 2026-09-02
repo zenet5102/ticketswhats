@@ -1401,6 +1401,20 @@ function listWhatsAppConversations(limit = 100, options = {}) {
     const account = normalizeWhatsAppAccount(row.whatsapp_account);
 
     return !(canonicalChatId && chatKeys.has(`${account}:${canonicalChatId}`));
+  }).sort((left, right) => {
+    const timeDelta = Number(right.timestamp_ts || 0) - Number(left.timestamp_ts || 0);
+
+    if (timeDelta) {
+      return timeDelta;
+    }
+
+    const createdDelta = String(right.created_at || '').localeCompare(String(left.created_at || ''));
+
+    if (createdDelta) {
+      return createdDelta;
+    }
+
+    return String(right.id || '').localeCompare(String(left.id || ''));
   });
 }
 
@@ -1412,9 +1426,6 @@ function getMessageVisualDuplicateKeys(message) {
   const mediaMime = String(message.media_mime || '').trim();
   const mediaFilename = String(message.media_filename || '').trim();
   const whatsappAccount = normalizeWhatsAppAccount(message.whatsapp_account || message.whatsappAccount);
-  const contentKey = direction === 'outgoing'
-    ? JSON.stringify([whatsappAccount, 'outgoing-content', body, mediaMime, mediaFilename])
-    : '';
 
   if (!direction || !body) {
     return [];
@@ -1422,8 +1433,7 @@ function getMessageVisualDuplicateKeys(message) {
 
   return [
     phone ? JSON.stringify([whatsappAccount, 'phone', direction, phone, body, mediaMime, mediaFilename]) : '',
-    chatId ? JSON.stringify([whatsappAccount, 'chat', direction, chatId, body, mediaMime, mediaFilename]) : '',
-    contentKey
+    chatId ? JSON.stringify([whatsappAccount, 'chat', direction, chatId, body, mediaMime, mediaFilename]) : ''
   ].filter(Boolean);
 }
 
@@ -1482,15 +1492,45 @@ function mergeMessageSenderDetails(preferred, fallback) {
   };
 }
 
+function isLikelyMirroredMessage(current, candidate) {
+  const currentTime = Number(current && current.timestamp_ts || 0);
+  const candidateTime = Number(candidate && candidate.timestamp_ts || 0);
+  const currentChatId = String(current && current.chat_id || '').trim();
+  const candidateChatId = String(candidate && candidate.chat_id || '').trim();
+  const currentSource = String(current && current.source || '').trim();
+  const candidateSource = String(candidate && candidate.source || '').trim();
+  const currentPhone = normalizeChatPhone(current && (current.phone || current.chat_id));
+  const candidatePhone = normalizeChatPhone(candidate && (candidate.phone || candidate.chat_id));
+
+  if (!current || !candidate || !currentTime || !candidateTime) {
+    return false;
+  }
+
+  if (Math.abs(currentTime - candidateTime) > 5000) {
+    return false;
+  }
+
+  if (currentChatId !== candidateChatId) {
+    return Boolean(
+      currentPhone &&
+      candidatePhone &&
+      currentPhone === candidatePhone &&
+      (isLidChatId(currentChatId) || isLidChatId(candidateChatId))
+    );
+  }
+
+  return currentSource !== candidateSource &&
+    (currentSource === 'whatsapp' || candidateSource === 'whatsapp');
+}
+
 function dedupeVisualMessages(rows) {
-  const duplicateWindowMs = 10 * 60 * 1000;
   const groups = [];
 
   for (const row of rows) {
     const keys = getMessageVisualDuplicateKeys(row);
     const timestamp = Number(row.timestamp_ts || 0);
     const existing = keys.length
-      ? groups.find(group => keys.some(key => group.keys.has(key)) && Math.abs(group.timestamp - timestamp) <= duplicateWindowMs)
+      ? groups.find(group => keys.some(key => group.keys.has(key)) && isLikelyMirroredMessage(group.row, row))
       : null;
 
     if (!existing) {

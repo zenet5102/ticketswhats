@@ -1461,21 +1461,19 @@ function splitConversationBuckets(conversations, requestedLimit) {
   const forcedMain = withOverrides.filter(conversation => conversation.conversation_bucket_override === 'main');
   const forcedOther = withOverrides.filter(conversation => conversation.conversation_bucket_override === 'other');
   const autoConversations = withOverrides.filter(conversation => !conversation.conversation_bucket_override);
-  const trackedConversations = [
-    ...sortConversationsByLatest(forcedMain),
-    ...sortConversationsByLatest(autoConversations.filter(isTrackedConversation))
-  ]
+  const trackedConversations = sortConversationsByLatest([
+    ...forcedMain,
+    ...autoConversations.filter(isTrackedConversation)
+  ])
     .slice(0, requestedLimit);
   const representedChatIds = getRepresentedChatIds(trackedConversations);
 
   return {
     conversations: trackedConversations,
-    otherConversations: [
-      ...sortConversationsByLatest(forcedOther),
-      ...sortConversationsByLatest(
-        autoConversations.filter(conversation => isOtherConversation(conversation) && !representedChatIds.has(getConversationIdentity(conversation)))
-      )
-    ]
+    otherConversations: sortConversationsByLatest([
+      ...forcedOther,
+      ...autoConversations.filter(conversation => isOtherConversation(conversation) && !representedChatIds.has(getConversationIdentity(conversation)))
+    ])
       .slice(0, requestedLimit)
   };
 }
