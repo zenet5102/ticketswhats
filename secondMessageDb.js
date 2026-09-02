@@ -146,13 +146,17 @@ async function initializeMessageDatabase(databasePool) {
       owner_username VARCHAR(191) NULL,
       sent_by_username VARCHAR(191) NULL,
       sent_by_name VARCHAR(255) NULL,
+      client_id VARCHAR(191) NULL,
+      ticket_id VARCHAR(191) NULL,
       created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
       PRIMARY KEY (id),
       KEY idx_second_messages_chat_time (chat_id, timestamp_ts),
       KEY idx_second_messages_time (timestamp_ts),
       KEY idx_second_messages_phone (phone),
-      KEY idx_second_messages_owner (owner_username, chat_id, timestamp_ts)
+      KEY idx_second_messages_owner (owner_username, chat_id, timestamp_ts),
+      KEY idx_second_messages_client (client_id),
+      KEY idx_second_messages_ticket (ticket_id)
     ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
   `);
 
@@ -252,6 +256,8 @@ async function initializeMessageDatabase(databasePool) {
   await ensureTableColumn(databasePool, messagesTableSql, 'owner_username', 'VARCHAR(191) NULL');
   await ensureTableColumn(databasePool, messagesTableSql, 'sent_by_username', 'VARCHAR(191) NULL');
   await ensureTableColumn(databasePool, messagesTableSql, 'sent_by_name', 'VARCHAR(255) NULL');
+  await ensureTableColumn(databasePool, messagesTableSql, 'client_id', 'VARCHAR(191) NULL');
+  await ensureTableColumn(databasePool, messagesTableSql, 'ticket_id', 'VARCHAR(191) NULL');
   await databasePool.query(`
     UPDATE ${messagesTableSql}
     SET sent_by_username = owner_username
@@ -266,6 +272,18 @@ async function initializeMessageDatabase(databasePool) {
     messagesTableSql,
     'idx_second_messages_owner',
     'KEY idx_second_messages_owner (owner_username, chat_id, timestamp_ts)'
+  );
+  await ensureTableIndex(
+    databasePool,
+    messagesTableSql,
+    'idx_second_messages_client',
+    'KEY idx_second_messages_client (client_id)'
+  );
+  await ensureTableIndex(
+    databasePool,
+    messagesTableSql,
+    'idx_second_messages_ticket',
+    'KEY idx_second_messages_ticket (ticket_id)'
   );
   await ensureTableIndex(
     databasePool,
@@ -342,6 +360,18 @@ function normalizeChatPhone(value) {
 
 function normalizeOwnerUsername(value) {
   return String(value || '').trim().toLowerCase().slice(0, 191);
+}
+
+function normalizeOptionalId(...values) {
+  for (const value of values) {
+    const cleanValue = String(value || '').trim();
+
+    if (cleanValue) {
+      return cleanValue.slice(0, 191);
+    }
+  }
+
+  return null;
 }
 
 function getOwnerScopeWhereSql(columnSql, ownerUsername, includeUnassigned = false) {
@@ -643,9 +673,11 @@ async function saveWhatsAppMessage(message = {}) {
       source,
       owner_username,
       sent_by_username,
-      sent_by_name
+      sent_by_name,
+      client_id,
+      ticket_id
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON DUPLICATE KEY UPDATE
       chat_id = CASE
         WHEN VALUES(source) = 'whatsapp-second'
@@ -667,6 +699,8 @@ async function saveWhatsAppMessage(message = {}) {
       owner_username = COALESCE(VALUES(owner_username), owner_username),
       sent_by_username = COALESCE(VALUES(sent_by_username), sent_by_username),
       sent_by_name = COALESCE(VALUES(sent_by_name), sent_by_name),
+      client_id = COALESCE(VALUES(client_id), client_id),
+      ticket_id = COALESCE(VALUES(ticket_id), ticket_id),
       body = CASE
         WHEN body LIKE '[% sin texto]' AND VALUES(body) NOT LIKE '[% sin texto]'
         THEN VALUES(body)
@@ -704,7 +738,9 @@ async function saveWhatsAppMessage(message = {}) {
     String(message.source || '').trim() || null,
     ownerUsername || null,
     sentByUsername || null,
-    sentByName || null
+    sentByName || null,
+    normalizeOptionalId(message.clientId, message.client_id, message.IDA, message.ida),
+    normalizeOptionalId(message.ticketId, message.ticket_id, message.ticketExternalId, message.externalId)
   ]);
 
   return getWhatsAppMessage(id);
@@ -1104,6 +1140,8 @@ async function listWhatsAppMessages(chatId, limit = 200, options = {}) {
         owner_username,
         sent_by_username,
         sent_by_name,
+        client_id,
+        ticket_id,
         created_at
       FROM ${messagesTableSql}
       WHERE chat_id IN (${chatIds.map(() => '?').join(',')})
@@ -1328,6 +1366,8 @@ async function listWhatsAppMessagesByPhone(phone, limit = 200, options = {}) {
       owner_username,
       sent_by_username,
       sent_by_name,
+      client_id,
+      ticket_id,
       created_at
     FROM (
       SELECT *
@@ -1415,6 +1455,8 @@ async function listWhatsAppMessagesByAgent(options = {}) {
       owner_username,
       sent_by_username,
       sent_by_name,
+      client_id,
+      ticket_id,
       created_at
     FROM (
       SELECT *
@@ -1495,6 +1537,8 @@ async function listWhatsAppChatsByAgent(options = {}) {
       latest.owner_username,
       latest.sent_by_username,
       latest.sent_by_name,
+      latest.client_id,
+      latest.ticket_id,
       latest.created_at,
       matched.agent_messages,
       matched.last_agent_message_ts

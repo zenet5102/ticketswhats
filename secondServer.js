@@ -1493,7 +1493,9 @@ async function processSecondMessageQueue() {
           ),
           ownerUsername: item.owner_username,
           sentByUsername: item.owner_username || 'queue',
-          sentByName: item.owner_username || 'Cola'
+          sentByName: item.owner_username || 'Cola',
+          clientId: getQueueClientIdFromVariables(item.variables),
+          ticketId: getQueueTicketIdFromVariables(item.variables)
         });
         await markMessageQueueSent(item.id, body, template.index);
         unresolvedItemIds.delete(Number(item.id));
@@ -2033,6 +2035,29 @@ function getQueueTargetFromVariables(variables = {}) {
     variables.telefono ||
     variables.phone ||
     variables.target ||
+    ''
+  ).trim();
+}
+
+function getQueueClientIdFromVariables(variables = {}) {
+  return String(
+    variables.client_id ||
+    variables.clientId ||
+    variables.IDA ||
+    variables.ida ||
+    variables.id ||
+    ''
+  ).trim();
+}
+
+function getQueueTicketIdFromVariables(variables = {}) {
+  return String(
+    variables.ticket_id ||
+    variables.ticketId ||
+    variables.ticket_external_id ||
+    variables.ticketExternalId ||
+    variables.external_id ||
+    variables.externalId ||
     ''
   ).trim();
 }

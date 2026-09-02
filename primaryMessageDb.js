@@ -118,6 +118,17 @@ async function ensureTableColumn(databasePool, tableSql, columnName, definition)
   }
 }
 
+async function ensureTableIndex(databasePool, tableSql, indexName, definition) {
+  const [rows] = await databasePool.query(
+    `SHOW INDEX FROM ${tableSql} WHERE Key_name = ?`,
+    [indexName]
+  );
+
+  if (!rows.length) {
+    await databasePool.query(`ALTER TABLE ${tableSql} ADD ${definition}`);
+  }
+}
+
 async function initializeMessageDatabase(databasePool) {
   await databasePool.query(`
     CREATE TABLE IF NOT EXISTS ${messagesTableSql} (
@@ -138,19 +149,37 @@ async function initializeMessageDatabase(databasePool) {
       sent_by_username VARCHAR(191) NULL,
       sent_by_name VARCHAR(255) NULL,
       whatsapp_account VARCHAR(64) NOT NULL DEFAULT 'bot-1',
+      client_id VARCHAR(191) NULL,
+      ticket_id VARCHAR(191) NULL,
       created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
       PRIMARY KEY (id),
       KEY idx_primary_messages_account_chat_time (whatsapp_account, chat_id, timestamp_ts),
       KEY idx_primary_messages_chat_time (chat_id, timestamp_ts),
       KEY idx_primary_messages_time (timestamp_ts),
-      KEY idx_primary_messages_phone (phone)
+      KEY idx_primary_messages_phone (phone),
+      KEY idx_primary_messages_client (client_id),
+      KEY idx_primary_messages_ticket (ticket_id)
     ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
   `);
 
   await ensureTableColumn(databasePool, messagesTableSql, 'sent_by_username', 'VARCHAR(191) NULL');
   await ensureTableColumn(databasePool, messagesTableSql, 'sent_by_name', 'VARCHAR(255) NULL');
   await ensureTableColumn(databasePool, messagesTableSql, 'whatsapp_account', "VARCHAR(64) NOT NULL DEFAULT 'bot-1'");
+  await ensureTableColumn(databasePool, messagesTableSql, 'client_id', 'VARCHAR(191) NULL');
+  await ensureTableColumn(databasePool, messagesTableSql, 'ticket_id', 'VARCHAR(191) NULL');
+  await ensureTableIndex(
+    databasePool,
+    messagesTableSql,
+    'idx_primary_messages_client',
+    'KEY idx_primary_messages_client (client_id)'
+  );
+  await ensureTableIndex(
+    databasePool,
+    messagesTableSql,
+    'idx_primary_messages_ticket',
+    'KEY idx_primary_messages_ticket (ticket_id)'
+  );
 }
 
 async function getPool() {
@@ -182,6 +211,18 @@ async function getPool() {
 
 function normalizeWhatsAppAccount(value) {
   return String(value || 'bot-1').trim() || 'bot-1';
+}
+
+function normalizeOptionalId(...values) {
+  for (const value of values) {
+    const cleanValue = String(value || '').trim();
+
+    if (cleanValue) {
+      return cleanValue.slice(0, 191);
+    }
+  }
+
+  return null;
 }
 
 async function saveWhatsAppMessage(message = {}) {
@@ -216,9 +257,11 @@ async function saveWhatsAppMessage(message = {}) {
       source,
       sent_by_username,
       sent_by_name,
-      whatsapp_account
+      whatsapp_account,
+      client_id,
+      ticket_id
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON DUPLICATE KEY UPDATE
       chat_id = VALUES(chat_id),
       phone = COALESCE(VALUES(phone), phone),
@@ -238,7 +281,9 @@ async function saveWhatsAppMessage(message = {}) {
       source = COALESCE(VALUES(source), source),
       sent_by_username = COALESCE(VALUES(sent_by_username), sent_by_username),
       sent_by_name = COALESCE(VALUES(sent_by_name), sent_by_name),
-      whatsapp_account = COALESCE(VALUES(whatsapp_account), whatsapp_account)
+      whatsapp_account = COALESCE(VALUES(whatsapp_account), whatsapp_account),
+      client_id = COALESCE(VALUES(client_id), client_id),
+      ticket_id = COALESCE(VALUES(ticket_id), ticket_id)
   `, [
     id,
     chatId,
@@ -256,7 +301,9 @@ async function saveWhatsAppMessage(message = {}) {
     String(message.source || '').trim() || null,
     String(message.sent_by_username || message.sentByUsername || '').trim() || null,
     String(message.sent_by_name || message.sentByName || '').trim() || null,
-    normalizeWhatsAppAccount(message.whatsapp_account || message.whatsappAccount || message.accountId)
+    normalizeWhatsAppAccount(message.whatsapp_account || message.whatsappAccount || message.accountId),
+    normalizeOptionalId(message.client_id, message.clientId, message.IDA, message.ida),
+    normalizeOptionalId(message.ticket_id, message.ticketId, message.ticketExternalId, message.externalId)
   ]);
 }
 

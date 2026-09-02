@@ -2227,7 +2227,9 @@ async function processIncomingTicketResponse(storedMessage) {
     const reply = getTicketResponseReply(result.selectedOption.action);
 
     if (reply) {
-      await sendWhatsApp(storedMessage.chat_id, reply, 'ticket-response');
+      await sendWhatsApp(storedMessage.chat_id, reply, 'ticket-response', {
+        ticketId: result.completedAction && result.completedAction.ticket_external_id
+      });
     }
   } else if (result && result.matched === false) {
     const reply = getTicketResponseReply('default');
@@ -2432,6 +2434,28 @@ function getTicketExternalId(ticket) {
   return String(ticket && (ticket.external_id || ticket.externalId) || '').trim();
 }
 
+function getMessageClientIdFromOptions(options = {}) {
+  return String(
+    options.clientId ||
+    options.client_id ||
+    options.IDA ||
+    options.ida ||
+    getTicketIda(options.ticket) ||
+    ''
+  ).trim();
+}
+
+function getMessageTicketIdFromOptions(options = {}) {
+  return String(
+    options.ticketId ||
+    options.ticket_id ||
+    options.ticketExternalId ||
+    options.externalId ||
+    getTicketExternalId(options.ticket) ||
+    ''
+  ).trim();
+}
+
 function buildTicketQuestionContext(message, options = {}) {
   if (!options.includeResponseQuestion) {
     return null;
@@ -2531,7 +2555,9 @@ async function sendWhatsApp(phone, message, source = 'bot', options = {}) {
       source,
       sentByUsername: options.sentByUsername,
       sentByName: options.sentByName,
-      whatsappAccount: account.id
+      whatsappAccount: account.id,
+      clientId: getMessageClientIdFromOptions(options),
+      ticketId: getMessageTicketIdFromOptions(options)
     });
     mirrorPrimaryMessageToMysql(savedMessage, 'mensaje enviado');
   } catch (error) {
@@ -3125,6 +3151,29 @@ function getQueueTargetFromVariables(variables = {}) {
   return String(variables.movil || variables.telefono || variables.phone || variables.target || '').trim();
 }
 
+function getQueueClientIdFromVariables(variables = {}) {
+  return String(
+    variables.client_id ||
+    variables.clientId ||
+    variables.IDA ||
+    variables.ida ||
+    variables.id ||
+    ''
+  ).trim();
+}
+
+function getQueueTicketIdFromVariables(variables = {}) {
+  return String(
+    variables.ticket_id ||
+    variables.ticketId ||
+    variables.ticket_external_id ||
+    variables.ticketExternalId ||
+    variables.external_id ||
+    variables.externalId ||
+    ''
+  ).trim();
+}
+
 function createQueueItemFromRow(row = {}) {
   const variables = createMessageVariablesFromRow(row);
   const target = normalizeSecondQueuePhone(getQueueTargetFromVariables(variables));
@@ -3453,7 +3502,9 @@ async function processSecondMessageQueue() {
         await sendWhatsApp(target, body, item.source || 'second-queue', {
           accountId: 'bot-2',
           sentByUsername: item.owner_username || 'queue',
-          sentByName: item.owner_username || 'Cola'
+          sentByName: item.owner_username || 'Cola',
+          clientId: getQueueClientIdFromVariables(item.variables),
+          ticketId: getQueueTicketIdFromVariables(item.variables)
         });
         await secondDb.markMessageQueueSent(item.id, body, template.index);
         unresolvedItemIds.delete(Number(item.id));
@@ -3865,7 +3916,8 @@ app.post('/messages/send', requirePrivileged, async (req, res) => {
     const sentMessage = await sendWhatsApp(target, cleanMessage, 'inbox', {
       sentByUsername: req.user && req.user.username,
       sentByName: req.user && req.user.name,
-      accountId
+      accountId,
+      ticketId: ticketExternalId
     });
     const fallbackChatId = isDirectChatId(target) ? target : `${cleanPhone}@c.us`;
     const chatId = getMessageChatId(sentMessage, fallbackChatId);
@@ -3883,7 +3935,8 @@ app.post('/messages/send', requirePrivileged, async (req, res) => {
       source: 'inbox',
       sent_by_username: req.user && req.user.username || null,
       sent_by_name: req.user && req.user.name || null,
-      whatsapp_account: accountId
+      whatsapp_account: accountId,
+      ticket_id: ticketExternalId || null
     };
 
     let ticket = null;
