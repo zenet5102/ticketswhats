@@ -305,7 +305,13 @@ async function saveWhatsAppMessage(message = {}) {
       timestamp_ts = VALUES(timestamp_ts),
       timestamp_iso = VALUES(timestamp_iso),
       from_me = VALUES(from_me),
-      ack = COALESCE(VALUES(ack), ack),
+      ack = CASE
+        WHEN VALUES(ack) = -1 THEN -1
+        WHEN ack = -1 THEN ack
+        WHEN ack IS NULL THEN VALUES(ack)
+        WHEN VALUES(ack) IS NULL THEN ack
+        ELSE GREATEST(ack, VALUES(ack))
+      END,
       source = COALESCE(VALUES(source), source),
       sent_by_username = COALESCE(VALUES(sent_by_username), sent_by_username),
       sent_by_name = COALESCE(VALUES(sent_by_name), sent_by_name),
@@ -344,10 +350,16 @@ async function updateWhatsAppMessageAck(id, ack) {
   }
 
   const database = await getPool();
-  await database.execute(
-    `UPDATE ${messagesTableSql} SET ack = ? WHERE id = ?`,
-    [parsedAck, cleanId]
-  );
+  await database.execute(`
+    UPDATE ${messagesTableSql}
+    SET ack = CASE
+      WHEN ? = -1 THEN -1
+      WHEN ack = -1 THEN ack
+      WHEN ack IS NULL THEN ?
+      ELSE GREATEST(ack, ?)
+    END
+    WHERE id = ?
+  `, [parsedAck, parsedAck, parsedAck, cleanId]);
 }
 
 async function listRecentWhatsAppMessages(limit = 1000, options = {}) {

@@ -1173,9 +1173,14 @@ function updateWhatsAppMessageAck(id, ack) {
 
   getDb().prepare(`
     UPDATE whatsapp_messages
-    SET ack = ?
+    SET ack = CASE
+      WHEN ? = -1 THEN -1
+      WHEN ack = -1 THEN ack
+      WHEN ack IS NULL THEN ?
+      ELSE MAX(ack, ?)
+    END
     WHERE id = ?
-  `).run(parsedAck, cleanId);
+  `).run(parsedAck, parsedAck, parsedAck, cleanId);
 
   return getWhatsAppMessage(cleanId);
 }
@@ -1240,7 +1245,13 @@ function saveWhatsAppMessage(message = {}) {
       media_mime = COALESCE(excluded.media_mime, whatsapp_messages.media_mime),
       media_data = COALESCE(excluded.media_data, whatsapp_messages.media_data),
       media_filename = COALESCE(excluded.media_filename, whatsapp_messages.media_filename),
-      ack = COALESCE(excluded.ack, whatsapp_messages.ack),
+      ack = CASE
+        WHEN excluded.ack = -1 THEN -1
+        WHEN whatsapp_messages.ack = -1 THEN whatsapp_messages.ack
+        WHEN whatsapp_messages.ack IS NULL THEN excluded.ack
+        WHEN excluded.ack IS NULL THEN whatsapp_messages.ack
+        ELSE MAX(whatsapp_messages.ack, excluded.ack)
+      END,
       sent_by_username = COALESCE(excluded.sent_by_username, whatsapp_messages.sent_by_username),
       sent_by_name = COALESCE(excluded.sent_by_name, whatsapp_messages.sent_by_name),
       whatsapp_account = COALESCE(excluded.whatsapp_account, whatsapp_messages.whatsapp_account),
