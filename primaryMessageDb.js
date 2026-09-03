@@ -213,6 +213,34 @@ function normalizeWhatsAppAccount(value) {
   return String(value || 'bot-1').trim() || 'bot-1';
 }
 
+function normalizeChatPhone(value) {
+  return String(value || '')
+    .replace(/@c\.us$/i, '')
+    .replace(/@s\.whatsapp\.net$/i, '')
+    .replace(/@lid$/i, '')
+    .replace(/@g\.us$/i, '')
+    .replace(/\D/g, '');
+}
+
+function isLidChatId(value) {
+  return /@lid$/i.test(String(value || '').trim());
+}
+
+function isDirectPhoneChatId(value) {
+  return /@(c\.us|s\.whatsapp\.net)$/i.test(String(value || '').trim());
+}
+
+function normalizeMessagePhone(phone, chatId) {
+  const normalized = normalizeChatPhone(phone);
+  const lidUser = isLidChatId(chatId) ? normalizeChatPhone(chatId) : '';
+
+  if (normalized && lidUser && normalized === lidUser) {
+    return '';
+  }
+
+  return normalized;
+}
+
 function normalizeOptionalId(...values) {
   for (const value of values) {
     const cleanValue = String(value || '').trim();
@@ -322,6 +350,345 @@ async function updateWhatsAppMessageAck(id, ack) {
   );
 }
 
+async function listRecentWhatsAppMessages(limit = 1000, options = {}) {
+  const safeLimit = Math.min(Math.max(Number(limit) || 1000, 1), 2000);
+  const accountFilter = String(options.whatsappAccount || options.accountId || '').trim();
+  const database = await getPool();
+  const params = [];
+  const whereParts = [];
+
+  if (accountFilter) {
+    whereParts.push('COALESCE(whatsapp_account, ?) = ?');
+    params.push('bot-1', accountFilter);
+  }
+
+  params.push(safeLimit);
+
+  const [rows] = await database.execute(`
+    SELECT
+      id,
+      chat_id,
+      phone,
+      contact_name,
+      direction,
+      body,
+      media_mime,
+      media_data,
+      media_filename,
+      timestamp_ts,
+      timestamp_iso,
+      from_me,
+      ack,
+      source,
+      sent_by_username,
+      sent_by_name,
+      whatsapp_account
+    FROM ${messagesTableSql}
+    ${whereParts.length ? `WHERE ${whereParts.join(' AND ')}` : ''}
+    ORDER BY timestamp_ts DESC, created_at DESC, id DESC
+    LIMIT ?
+  `, params);
+
+  return rows;
+}
+
+async function listWhatsAppConversations(limit = 100, options = {}) {
+  const safeLimit = Math.min(Math.max(Number(limit) || 100, 1), 1000);
+  const accountFilter = String(options.whatsappAccount || options.accountId || '').trim();
+  const database = await getPool();
+  const whereClause = accountFilter ? 'WHERE COALESCE(whatsapp_account, ?) = ?' : '';
+  const whereParams = accountFilter ? ['bot-1', accountFilter] : [];
+
+  const [rows] = await database.execute(`
+    WITH ranked AS (
+      SELECT
+        ${messagesTableSql}.*,
+        ROW_NUMBER() OVER (
+          PARTITION BY COALESCE(whatsapp_account, 'bot-1'), chat_id
+          ORDER BY timestamp_ts DESC, created_at DESC, id DESC
+        ) AS row_number
+      FROM ${messagesTableSql}
+      ${whereClause}
+    ),
+    counts AS (
+      SELECT
+        COALESCE(whatsapp_account, 'bot-1') AS whatsapp_account,
+        chat_id,
+        COUNT(*) AS total_messages,
+        SUM(CASE WHEN direction = 'incoming' THEN 1 ELSE 0 END) AS incoming_messages,
+        SUM(CASE WHEN direction = 'outgoing' THEN 1 ELSE 0 END) AS outgoing_messages,
+        MAX(CASE WHEN direction = 'incoming' THEN timestamp_ts ELSE NULL END) AS last_incoming_ts,
+        SUM(CASE
+          WHEN direction = 'outgoing'
+            AND source IN ('ticket', 'ticket-response', 'notification-channel', 'manual', 'inbox', 'bot')
+          THEN 1
+          ELSE 0
+        END) AS app_started_messages,
+        SUM(CASE
+          WHEN direction = 'outgoing'
+            AND source IN ('manual', 'inbox', 'bot')
+          THEN 1
+          ELSE 0
+        END) AS manual_started_messages
+      FROM ${messagesTableSql}
+      ${whereClause}
+      GROUP BY COALESCE(whatsapp_account, 'bot-1'), chat_id
+    )
+    SELECT
+      ranked.id,
+      COALESCE(ranked.whatsapp_account, 'bot-1') AS whatsapp_account,
+      ranked.chat_id,
+      COALESCE(
+        (
+          SELECT latest_phone.phone
+          FROM ${messagesTableSql} latest_phone
+          WHERE latest_phone.chat_id = ranked.chat_id
+            AND COALESCE(latest_phone.whatsapp_account, 'bot-1') = COALESCE(ranked.whatsapp_account, 'bot-1')
+            AND latest_phone.phone IS NOT NULL
+            AND latest_phone.phone <> ''
+            AND NOT (
+              LOWER(ranked.chat_id) LIKE '%@lid'
+              AND latest_phone.phone = REPLACE(LOWER(ranked.chat_id), '@lid', '')
+            )
+          ORDER BY latest_phone.timestamp_ts DESC, latest_phone.created_at DESC
+          LIMIT 1
+        ),
+        CASE
+          WHEN LOWER(ranked.chat_id) LIKE '%@lid'
+            AND ranked.phone = REPLACE(LOWER(ranked.chat_id), '@lid', '')
+          THEN NULL
+          ELSE ranked.phone
+        END
+      ) AS phone,
+      COALESCE(
+        (
+          SELECT latest_contact.contact_name
+          FROM ${messagesTableSql} latest_contact
+          WHERE latest_contact.chat_id = ranked.chat_id
+            AND COALESCE(latest_contact.whatsapp_account, 'bot-1') = COALESCE(ranked.whatsapp_account, 'bot-1')
+            AND latest_contact.direction = 'incoming'
+            AND latest_contact.contact_name IS NOT NULL
+            AND latest_contact.contact_name <> ''
+          ORDER BY latest_contact.timestamp_ts DESC, latest_contact.created_at DESC
+          LIMIT 1
+        ),
+        ranked.contact_name
+      ) AS contact_name,
+      ranked.direction,
+      ranked.body,
+      ranked.timestamp_ts,
+      ranked.timestamp_iso,
+      ranked.from_me,
+      ranked.ack,
+      ranked.source,
+      ranked.sent_by_username,
+      ranked.sent_by_name,
+      ranked.created_at,
+      counts.total_messages,
+      counts.incoming_messages,
+      counts.outgoing_messages,
+      counts.last_incoming_ts,
+      counts.app_started_messages,
+      counts.manual_started_messages
+    FROM ranked
+    JOIN counts
+      ON counts.chat_id = ranked.chat_id
+      AND counts.whatsapp_account = COALESCE(ranked.whatsapp_account, 'bot-1')
+    WHERE ranked.row_number = 1
+    ORDER BY ranked.timestamp_ts DESC, ranked.created_at DESC
+    LIMIT ?
+  `, [...whereParams, ...whereParams, safeLimit]);
+
+  return rows;
+}
+
+async function listWhatsAppChatPhones(chatId, options = {}) {
+  const cleanChatId = String(chatId || '').trim();
+  const accountFilter = String(options.whatsappAccount || options.accountId || '').trim();
+
+  if (!cleanChatId) {
+    return [];
+  }
+
+  const database = await getPool();
+  const params = [cleanChatId];
+  const whereParts = [
+    'chat_id = ?',
+    'phone IS NOT NULL',
+    "phone <> ''"
+  ];
+
+  if (accountFilter) {
+    whereParts.push("COALESCE(whatsapp_account, 'bot-1') = ?");
+    params.push(accountFilter);
+  }
+
+  const [rows] = await database.execute(`
+    SELECT DISTINCT phone
+    FROM ${messagesTableSql}
+    WHERE ${whereParts.join(' AND ')}
+    ORDER BY phone
+  `, params);
+
+  return rows.map(row => row.phone);
+}
+
+function dedupeVisualMessages(rows) {
+  const seen = new Set();
+  const output = [];
+
+  for (const row of rows) {
+    const direction = String(row.direction || '').trim().toLowerCase();
+    const phone = normalizeChatPhone(row.phone || row.chat_id);
+    const body = String(row.body || '').trim();
+    const key = JSON.stringify([
+      normalizeWhatsAppAccount(row.whatsapp_account),
+      phone || String(row.chat_id || '').trim().toLowerCase(),
+      direction,
+      body,
+      row.media_mime || '',
+      row.media_filename || '',
+      Math.floor(Number(row.timestamp_ts || 0) / 5000)
+    ]);
+
+    if (seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    output.push(row);
+  }
+
+  return output;
+}
+
+async function listWhatsAppMessages(chatId, limit = 200, options = {}) {
+  const cleanChatId = String(chatId || '').trim();
+  const safeLimit = Math.min(Math.max(Number(limit) || 200, 1), 500);
+  const accountFilter = String(options.whatsappAccount || options.accountId || '').trim();
+
+  if (!cleanChatId) {
+    return [];
+  }
+
+  const database = await getPool();
+  const chatIds = [cleanChatId];
+  const aliasPhone = isDirectPhoneChatId(cleanChatId) ? normalizeChatPhone(cleanChatId) : '';
+  const selectedPhones = (await listWhatsAppChatPhones(cleanChatId, { accountId: accountFilter }))
+    .map(phone => normalizeChatPhone(phone))
+    .filter(Boolean);
+
+  if (aliasPhone) {
+    const params = [aliasPhone];
+    const whereParts = [
+      "LOWER(chat_id) LIKE '%@lid'",
+      'phone = ?',
+      "chat_id <> 'status@broadcast'"
+    ];
+
+    if (accountFilter) {
+      whereParts.push("COALESCE(whatsapp_account, 'bot-1') = ?");
+      params.push(accountFilter);
+    }
+
+    const [aliasRows] = await database.execute(`
+      SELECT DISTINCT chat_id
+      FROM ${messagesTableSql}
+      WHERE ${whereParts.join(' AND ')}
+      ORDER BY chat_id
+    `, params);
+
+    for (const aliasRow of aliasRows) {
+      const aliasChatId = String(aliasRow.chat_id || '').trim();
+
+      if (aliasChatId && !chatIds.includes(aliasChatId)) {
+        chatIds.push(aliasChatId);
+      }
+    }
+  }
+
+  if (isLidChatId(cleanChatId) && selectedPhones.length) {
+    const placeholders = selectedPhones.map(() => '?').join(',');
+    const params = [...selectedPhones];
+    const whereParts = [
+      `phone IN (${placeholders})`,
+      "LOWER(chat_id) NOT LIKE '%@lid'",
+      "chat_id <> 'status@broadcast'"
+    ];
+
+    if (accountFilter) {
+      whereParts.push("COALESCE(whatsapp_account, 'bot-1') = ?");
+      params.push(accountFilter);
+    }
+
+    const [directRows] = await database.execute(`
+      SELECT DISTINCT chat_id
+      FROM ${messagesTableSql}
+      WHERE ${whereParts.join(' AND ')}
+      ORDER BY chat_id
+    `, params);
+
+    for (const directRow of directRows) {
+      const directChatId = String(directRow.chat_id || '').trim();
+
+      if (directChatId && !chatIds.includes(directChatId)) {
+        chatIds.push(directChatId);
+      }
+    }
+  }
+
+  const chatPlaceholders = chatIds.map(() => '?').join(',');
+  const params = [...chatIds];
+  const whereParts = [
+    `chat_id IN (${chatPlaceholders})`,
+    "chat_id <> 'status@broadcast'"
+  ];
+
+  if (accountFilter) {
+    whereParts.push("COALESCE(whatsapp_account, 'bot-1') = ?");
+    params.push(accountFilter);
+  }
+
+  params.push(safeLimit);
+
+  const [rows] = await database.execute(`
+    SELECT
+      id,
+      COALESCE(whatsapp_account, 'bot-1') AS whatsapp_account,
+      chat_id,
+      CASE
+        WHEN LOWER(chat_id) LIKE '%@lid'
+          AND phone = REPLACE(LOWER(chat_id), '@lid', '')
+        THEN NULL
+        ELSE phone
+      END AS phone,
+      contact_name,
+      direction,
+      body,
+      media_mime,
+      media_data,
+      media_filename,
+      timestamp_ts,
+      timestamp_iso,
+      from_me,
+      ack,
+      source,
+      sent_by_username,
+      sent_by_name,
+      created_at
+    FROM (
+      SELECT *
+      FROM ${messagesTableSql}
+      WHERE ${whereParts.join(' AND ')}
+      ORDER BY timestamp_ts DESC, created_at DESC, id DESC
+      LIMIT ?
+    ) recent_messages
+    ORDER BY timestamp_ts ASC, created_at ASC, id ASC
+  `, params);
+
+  return dedupeVisualMessages(rows);
+}
+
 async function pingDatabase() {
   const database = await getPool();
   await database.query('SELECT 1');
@@ -341,6 +708,10 @@ module.exports = {
   getMysqlSettings,
   getStatusPayload,
   pingDatabase,
+  listRecentWhatsAppMessages,
+  listWhatsAppChatPhones,
+  listWhatsAppConversations,
+  listWhatsAppMessages,
   saveWhatsAppMessage,
   updateWhatsAppMessageAck
 };

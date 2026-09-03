@@ -841,6 +841,10 @@ function getVisibleTicketPhones(user, date) {
       if (phone) {
         phones.add(phone);
       }
+
+      for (const candidate of getAuditPhoneCandidates(value)) {
+        phones.add(candidate);
+      }
     }
   }
 
@@ -1362,10 +1366,14 @@ function attachTicketInfoToConversations(user, conversations) {
 }
 
 function conversationMatchesPhones(conversation, phones) {
-  const directPhone = normalizeChatPhone(conversation && conversation.phone || '');
-  const chatPhone = normalizeChatPhone(conversation && conversation.chat_id || '');
+  const candidates = new Set([
+    normalizeChatPhone(conversation && conversation.phone || ''),
+    normalizeChatPhone(conversation && conversation.chat_id || ''),
+    ...getAuditPhoneCandidates(conversation && conversation.phone),
+    ...getAuditPhoneCandidates(conversation && conversation.chat_id)
+  ].filter(Boolean));
 
-  return Boolean((directPhone && phones.has(directPhone)) || (chatPhone && phones.has(chatPhone)));
+  return Array.from(candidates).some(candidate => phones.has(candidate));
 }
 
 function listVisibleConversationsForUser(user, limit) {
@@ -1495,6 +1503,60 @@ function splitConversationBuckets(conversations, requestedLimit) {
   };
 }
 
+async function getRepresentedChatIdsFromMessages(conversations, listMessagesForChat) {
+  const represented = new Set();
+
+  for (const conversation of conversations) {
+    const chatId = getConversationChatId(conversation);
+    const accountId = getConversationAccountId(conversation);
+
+    if (!chatId) {
+      continue;
+    }
+
+    represented.add(`${accountId}:${chatId}`);
+
+    for (const message of await listMessagesForChat(chatId, accountId)) {
+      const messageChatId = String(message && message.chat_id || '').trim();
+
+      if (messageChatId) {
+        represented.add(`${accountId}:${messageChatId}`);
+      }
+    }
+  }
+
+  return represented;
+}
+
+async function splitConversationBucketsWithMessages(conversations, requestedLimit, listMessagesForChat) {
+  const overridesByChatId = new Map(
+    listWhatsAppConversationBucketOverrides()
+      .map(override => [
+        `${String(override.whatsapp_account || 'bot-1').trim() || 'bot-1'}:${String(override.chat_id || '').trim()}`,
+        override
+      ])
+  );
+  const withOverrides = conversations.map(conversation => attachBucketOverride(conversation, overridesByChatId));
+  const forcedMain = withOverrides.filter(conversation => conversation.conversation_bucket_override === 'main');
+  const forcedOther = withOverrides.filter(conversation => conversation.conversation_bucket_override === 'other');
+  const autoConversations = withOverrides.filter(conversation => !conversation.conversation_bucket_override);
+  const trackedConversations = sortConversationsByLatest([
+    ...forcedMain,
+    ...autoConversations.filter(isTrackedConversation)
+  ])
+    .slice(0, requestedLimit);
+  const representedChatIds = await getRepresentedChatIdsFromMessages(trackedConversations, listMessagesForChat);
+
+  return {
+    conversations: trackedConversations,
+    otherConversations: sortConversationsByLatest([
+      ...forcedOther,
+      ...autoConversations.filter(conversation => isOtherConversation(conversation) && !representedChatIds.has(getConversationIdentity(conversation)))
+    ])
+      .slice(0, requestedLimit)
+  };
+}
+
 function listConversationBucketsForUser(user, limit) {
   const requestedLimit = Math.min(Math.max(Number(limit) || 100, 1), 300);
   const accountIds = getAllowedWhatsAppAccountIds(user);
@@ -1526,6 +1588,39 @@ function listConversationBucketsForUser(user, limit) {
   );
 }
 
+async function listMysqlConversationBucketsForUser(user, limit) {
+  const requestedLimit = Math.min(Math.max(Number(limit) || 100, 1), 300);
+  const accountIds = getAllowedWhatsAppAccountIds(user);
+  const allConversations = [];
+
+  for (const accountId of accountIds) {
+    allConversations.push(...await primaryMessageDb.listWhatsAppConversations(1000, { accountId }));
+  }
+
+  const visiblePhones = getVisibleTicketPhones(user, getTodayDateString());
+  const sourceConversations = user && user.isAdmin
+    ? allConversations
+    : allConversations.filter(conversation =>
+      conversationMatchesPhones(conversation, visiblePhones) ||
+      (canSendToAnyTarget(user) && isAppStartedConversation(conversation))
+    );
+
+  return splitConversationBucketsWithMessages(
+    attachTicketInfoToConversations(user, sourceConversations),
+    requestedLimit,
+    (chatId, accountId) => primaryMessageDb.listWhatsAppMessages(chatId, 80, { accountId })
+  );
+}
+
+async function listConversationBucketsForUserPrimary(user, limit) {
+  try {
+    return await listMysqlConversationBucketsForUser(user, limit);
+  } catch (error) {
+    console.warn('MySQL principal no disponible para conversaciones; se usa SQLite:', error.message);
+    return listConversationBucketsForUser(user, limit);
+  }
+}
+
 function canReadChat(user, chatId, accountId = 'bot-1') {
   if (!canAccessWhatsAppAccount(user, accountId)) {
     return false;
@@ -1536,12 +1631,63 @@ function canReadChat(user, chatId, accountId = 'bot-1') {
   }
 
   const phones = getVisibleTicketPhones(user);
-  const candidatePhones = [
+  const candidatePhones = new Set([
     chatId,
     ...listWhatsAppChatPhones(chatId)
-  ].map(value => normalizeChatPhone(value));
+  ].flatMap(value => [
+    normalizeChatPhone(value),
+    ...getAuditPhoneCandidates(value)
+  ]).filter(Boolean));
 
-  return candidatePhones.some(candidatePhone => candidatePhone && phones.has(candidatePhone));
+  return Array.from(candidatePhones).some(candidatePhone => phones.has(candidatePhone));
+}
+
+async function canReadChatPrimary(user, chatId, accountId = 'bot-1') {
+  if (!canAccessWhatsAppAccount(user, accountId)) {
+    return false;
+  }
+
+  if (user && user.isAdmin) {
+    return true;
+  }
+
+  if (canSendToAnyTarget(user)) {
+    try {
+      const conversations = await primaryMessageDb.listWhatsAppConversations(1000, { accountId });
+      const conversation = conversations.find(row => getConversationChatId(row) === String(chatId || '').trim());
+
+      if (isAppStartedConversation(conversation)) {
+        return true;
+      }
+    } catch (error) {
+      console.warn('MySQL principal no disponible para conversacion iniciada por app; se revisa permiso por telefono:', error.message);
+    }
+  }
+
+  try {
+    const phones = getVisibleTicketPhones(user);
+    const candidatePhones = new Set([
+      chatId,
+      ...await primaryMessageDb.listWhatsAppChatPhones(chatId, { accountId })
+    ].flatMap(value => [
+      normalizeChatPhone(value),
+      ...getAuditPhoneCandidates(value)
+    ]).filter(Boolean));
+
+    return Array.from(candidatePhones).some(candidatePhone => phones.has(candidatePhone));
+  } catch (error) {
+    console.warn('MySQL principal no disponible para permisos de chat; se usa SQLite:', error.message);
+    return canReadChat(user, chatId, accountId);
+  }
+}
+
+async function listWhatsAppMessagesPrimary(chatId, limit = 200, options = {}) {
+  try {
+    return await primaryMessageDb.listWhatsAppMessages(chatId, limit, options);
+  } catch (error) {
+    console.warn('MySQL principal no disponible para mensajes; se usa SQLite:', error.message);
+    return listWhatsAppMessages(chatId, limit, options);
+  }
 }
 
 function canSendToAnyTarget(user) {
@@ -3755,7 +3901,7 @@ app.get('/api/audit/chats/by-agent', requireAuditAccess, async (req, res) => {
 app.get('/messages/conversations', requireLoggedIn, async (req, res) => {
   try {
     await syncRecentWhatsAppMessages();
-    const buckets = listConversationBucketsForUser(req.user, req.query.limit);
+    const buckets = await listConversationBucketsForUserPrimary(req.user, req.query.limit);
 
     res.json({
       success: true,
@@ -3770,7 +3916,7 @@ app.get('/messages/conversations', requireLoggedIn, async (req, res) => {
   }
 });
 
-app.post('/messages/conversations/bucket', requirePrivileged, (req, res) => {
+app.post('/messages/conversations/bucket', requirePrivileged, async (req, res) => {
   try {
     const chatId = String(req.body && req.body.chatId || '').trim();
     const accountId = isValidWhatsAppAccount(req.body && req.body.accountId)
@@ -3785,7 +3931,7 @@ app.post('/messages/conversations/bucket', requirePrivileged, (req, res) => {
       });
     }
 
-    if (!canReadChat(req.user, chatId, accountId)) {
+    if (!await canReadChatPrimary(req.user, chatId, accountId)) {
       return res.status(403).json({
         success: false,
         error: canAccessWhatsAppAccount(req.user, accountId)
@@ -3800,7 +3946,7 @@ app.post('/messages/conversations/bucket', requirePrivileged, (req, res) => {
       req.user && req.user.username || '',
       accountId
     );
-    const buckets = listConversationBucketsForUser(req.user, req.query.limit);
+    const buckets = await listConversationBucketsForUserPrimary(req.user, req.query.limit);
 
     res.json({
       success: true,
@@ -3830,7 +3976,7 @@ app.get('/messages', requireLoggedIn, async (req, res) => {
       });
     }
 
-    if (!canReadChat(req.user, chatId, accountId)) {
+    if (!await canReadChatPrimary(req.user, chatId, accountId)) {
       return res.status(403).json({
         success: false,
         error: 'Chat fuera de los grupos asignados'
@@ -3841,7 +3987,7 @@ app.get('/messages', requireLoggedIn, async (req, res) => {
 
     res.json({
       success: true,
-      messages: listWhatsAppMessages(chatId, req.query.limit, {
+      messages: await listWhatsAppMessagesPrimary(chatId, req.query.limit, {
         accountId
       })
     });

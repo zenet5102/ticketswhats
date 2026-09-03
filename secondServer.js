@@ -1329,7 +1329,8 @@ async function sendWhatsApp(target, message, mediaInput, source = 'second-app', 
     throw error;
   }
 
-  const cleanPhone = normalizeChatPhone(target || chatId);
+  const formPhone = normalizeSecondQueuePhone(options.phone) || normalizeChatPhone(options.phone);
+  const cleanPhone = formPhone || normalizeChatPhone(target || chatId);
   const requestedOwnerUsername = normalizeOwnerUsername(options.ownerUsername);
   const existingOwnerUsername = await getWhatsAppChatOwner(chatId, cleanPhone);
   const ownerUsername = existingOwnerUsername || requestedOwnerUsername;
@@ -1486,6 +1487,7 @@ async function processSecondMessageQueue() {
       try {
         const target = normalizeSecondQueuePhone(item.target) || item.target;
         await sendWhatsApp(target, body, null, item.source || 'second-queue', {
+          phone: item.phone || target,
           contactName: item.variables && (
             item.variables.razon_social ||
             item.variables.razonSocial ||
@@ -3226,6 +3228,7 @@ app.post('/api/messages/send', requirePrivileged, async (req, res) => {
     const body = req.body || {};
     const target = String(body.chatId || body.phone || '').trim();
     const result = await sendWhatsApp(target, body.message, body.media, 'second-inbox', {
+      phone: body.phone,
       contactName: body.contactName,
       ownerUsername: getUserOwnerUsername(req.user),
       sentByUsername: req.user && req.user.username,

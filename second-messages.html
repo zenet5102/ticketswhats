@@ -2816,7 +2816,7 @@
 
       const conversation = getSelectedConversation();
       const targetChatId = conversation && conversation.chat_id || '';
-      const targetPhone = state.draftPhone || conversation && conversation.phone || '';
+      const targetPhone = state.draftPhone || conversation && getDisplayPhone(conversation.phone, conversation.chat_id) || '';
       const contactName = state.draftName || conversation && conversation.contact_name || '';
       const message = els.replyMessage.value.trim();
       const file = els.mediaInput.files[0] || null;
@@ -2852,7 +2852,7 @@
           },
           body: JSON.stringify({
             chatId: targetChatId,
-            phone: targetChatId ? '' : targetPhone,
+            phone: targetPhone,
             contactName,
             message,
             media

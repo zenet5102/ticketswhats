@@ -266,6 +266,14 @@ async function initializeMessageDatabase(databasePool) {
       AND owner_username <> ''
       AND (sent_by_username IS NULL OR sent_by_username = '')
   `);
+  await databasePool.query(`
+    UPDATE ${messagesTableSql}
+    SET phone = NULL
+    WHERE LOWER(chat_id) LIKE '%@lid'
+      AND phone IS NOT NULL
+      AND phone <> ''
+      AND phone NOT REGEXP '^54[0-9]{10,11}$'
+  `);
   await ensureTableColumn(databasePool, queueTableSql, 'owner_username', 'VARCHAR(191) NULL');
   await ensureTableIndex(
     databasePool,
@@ -399,6 +407,10 @@ function normalizeMessagePhone(phone, chatId) {
   const lidUser = isLidChatId(chatId) ? normalizeChatPhone(chatId) : '';
 
   if (normalized && lidUser && normalized === lidUser) {
+    return '';
+  }
+
+  if (normalized && lidUser && !/^54\d{10,11}$/.test(normalized)) {
     return '';
   }
 
