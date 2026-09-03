@@ -1329,8 +1329,12 @@ async function sendWhatsApp(target, message, mediaInput, source = 'second-app', 
     throw error;
   }
 
-  const formPhone = normalizeSecondQueuePhone(options.phone) || normalizeChatPhone(options.phone);
-  const cleanPhone = formPhone || normalizeChatPhone(target || chatId);
+  const formPhone = normalizeOutgoingStoredPhone(options.phone);
+  const targetPhone = normalizeOutgoingStoredPhone(target);
+  const cleanPhone = (isLikelyRealStoredPhone(formPhone, chatId) ? formPhone : '') ||
+    (isLikelyRealStoredPhone(targetPhone, chatId) ? targetPhone : '') ||
+    (isLikelyRealStoredPhone(contactInfo.phone, chatId) ? normalizeChatPhone(contactInfo.phone) : '') ||
+    (isLikelyRealStoredPhone(chatId, chatId) ? normalizeChatPhone(chatId) : '');
   const requestedOwnerUsername = normalizeOwnerUsername(options.ownerUsername);
   const existingOwnerUsername = await getWhatsAppChatOwner(chatId, cleanPhone);
   const ownerUsername = existingOwnerUsername || requestedOwnerUsername;
@@ -1955,6 +1959,24 @@ function normalizeSecondQueuePhone(value) {
   }
 
   return normalizeArgentineMobilePhone(getFirstPhoneCandidate(value));
+}
+
+function normalizeOutgoingStoredPhone(value) {
+  return normalizeChatPhone(normalizeSecondQueuePhone(value) || value);
+}
+
+function isLikelyRealStoredPhone(phone, chatId) {
+  const cleanPhone = normalizeChatPhone(phone);
+
+  if (!cleanPhone) {
+    return false;
+  }
+
+  if (/@lid$/i.test(String(chatId || '').trim())) {
+    return /^54\d{10,11}$/.test(cleanPhone);
+  }
+
+  return true;
 }
 
 function isValidSecondQueueTarget(value) {

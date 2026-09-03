@@ -710,8 +710,21 @@ async function saveWhatsAppMessage(message = {}) {
           AND source IS NOT NULL
           AND source <> ''
           AND source <> 'whatsapp-second'
-        THEN phone
-        ELSE COALESCE(VALUES(phone), phone)
+        THEN CASE
+          WHEN LOWER(chat_id) LIKE '%@lid'
+            AND phone IS NOT NULL
+            AND phone <> ''
+            AND phone NOT REGEXP '^54[0-9]{10,11}$'
+          THEN NULL
+          ELSE phone
+        END
+        WHEN VALUES(phone) IS NOT NULL THEN VALUES(phone)
+        WHEN LOWER(VALUES(chat_id)) LIKE '%@lid'
+          AND phone IS NOT NULL
+          AND phone <> ''
+          AND phone NOT REGEXP '^54[0-9]{10,11}$'
+        THEN NULL
+        ELSE phone
       END,
       contact_name = COALESCE(VALUES(contact_name), contact_name),
       owner_username = COALESCE(VALUES(owner_username), owner_username),
