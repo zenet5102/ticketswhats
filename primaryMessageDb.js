@@ -411,14 +411,14 @@ async function listWhatsAppConversations(limit = 100, options = {}) {
   const whereClause = accountFilter ? 'WHERE COALESCE(whatsapp_account, ?) = ?' : '';
   const whereParams = accountFilter ? ['bot-1', accountFilter] : [];
 
-  const [rows] = await database.execute(`
+  const [rows] = await database.query(`
     WITH ranked AS (
       SELECT
         ${messagesTableSql}.*,
         ROW_NUMBER() OVER (
           PARTITION BY COALESCE(whatsapp_account, 'bot-1'), chat_id
           ORDER BY timestamp_ts DESC, created_at DESC, id DESC
-        ) AS row_number
+        ) AS rn
       FROM ${messagesTableSql}
       ${whereClause}
     ),
@@ -506,7 +506,7 @@ async function listWhatsAppConversations(limit = 100, options = {}) {
     JOIN counts
       ON counts.chat_id = ranked.chat_id
       AND counts.whatsapp_account = COALESCE(ranked.whatsapp_account, 'bot-1')
-    WHERE ranked.row_number = 1
+    WHERE ranked.rn = 1
     ORDER BY ranked.timestamp_ts DESC, ranked.created_at DESC
     LIMIT ?
   `, [...whereParams, ...whereParams, safeLimit]);
@@ -663,7 +663,7 @@ async function listWhatsAppMessages(chatId, limit = 200, options = {}) {
 
   params.push(safeLimit);
 
-  const [rows] = await database.execute(`
+  const [rows] = await database.query(`
     SELECT
       id,
       COALESCE(whatsapp_account, 'bot-1') AS whatsapp_account,

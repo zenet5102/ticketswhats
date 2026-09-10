@@ -2009,7 +2009,10 @@ function isTransientWhatsAppError(error) {
 
   const message = String(error && error.message || error || '').toLowerCase();
 
-  return message.includes('attempted to use detached frame') ||
+  return message === 'r' ||
+    message.includes("cannot read properties of undefined (reading 'getchats')") ||
+    message.includes("cannot read properties of undefined (reading 'getchat')") ||
+    message.includes('attempted to use detached frame') ||
     message.includes('detached frame') ||
     message.includes('frame was detached') ||
     message.includes('execution context was destroyed') ||
@@ -2289,8 +2292,10 @@ function isSyncableWhatsAppChat(chat) {
 
 async function syncRecentWhatsAppMessages(options = {}) {
   const now = Date.now();
+  const account = getWhatsAppAccountState('bot-1');
+  const accountClient = account.client || client;
 
-  if (!client || !whatsappReady || recentMessagesSyncRunning) {
+  if (!accountClient || !account.ready || recentMessagesSyncRunning) {
     return;
   }
 
@@ -2302,7 +2307,7 @@ async function syncRecentWhatsAppMessages(options = {}) {
   lastRecentMessagesSyncAt = now;
 
   try {
-    const chats = await client.getChats();
+    const chats = await accountClient.getChats();
     const recentChats = chats
       .filter(isSyncableWhatsAppChat)
       .sort((left, right) => {
@@ -2330,20 +2335,20 @@ async function syncRecentWhatsAppMessages(options = {}) {
         const messages = await chat.fetchMessages({ limit: recentMessagesSyncMessageLimit });
 
         for (const message of messages) {
-          await storeWhatsAppMessage(message, 'whatsapp');
+          await storeWhatsAppMessage(message, 'whatsapp', account.id);
         }
       } catch (error) {
-        if (handleTransientWhatsAppError(error, 'recent-messages-sync-error')) {
-          console.warn(`WhatsApp se recargo mientras se sincronizaban mensajes recientes de ${chatId}.`);
-          return;
+        if (isTransientWhatsAppError(error)) {
+          console.warn(`WhatsApp no dejo sincronizar mensajes recientes de ${chatId}; se reintentara luego.`);
+          continue;
         }
 
         console.warn(`No se pudieron sincronizar mensajes recientes de ${chatId}:`, error.message);
       }
     }
   } catch (error) {
-    if (handleTransientWhatsAppError(error, 'recent-chats-sync-error')) {
-      console.warn('WhatsApp se recargo mientras se listaban chats recientes.');
+    if (isTransientWhatsAppError(error)) {
+      console.warn('WhatsApp no dejo listar chats recientes; se reintentara luego.');
       return;
     }
 
@@ -2480,9 +2485,31 @@ async function backfillChatMedia(chatId, accountId = 'bot-1') {
 
   lastMediaBackfillByChat.set(backfillKey, now);
 
+  const chatPhoneCandidates = [
+    ...storedMessages.map(message => normalizeChatPhone(message.phone)),
+    normalizeChatPhone(chatId)
+  ].filter(Boolean);
+  const chatIdCandidates = [
+    chatId,
+    ...chatPhoneCandidates.map(phone => `${phone}@c.us`)
+  ].filter(Boolean);
+  const uniqueChatIdCandidates = [...new Set(chatIdCandidates)];
+
   try {
-    const chat = await account.client.getChatById(chatId);
-    const recentMessages = await chat.fetchMessages({ limit: 80 });
+    let recentMessages = [];
+
+    for (const candidate of uniqueChatIdCandidates) {
+      try {
+        const chat = await account.client.getChatById(candidate);
+        recentMessages = await chat.fetchMessages({ limit: 80 });
+
+        if (recentMessages.length) {
+          break;
+        }
+      } catch (candidateError) {
+        // Try the next possible WhatsApp id for chats stored as @lid aliases.
+      }
+    }
 
     for (const message of recentMessages) {
       if (message.id && missingIds.has(message.id._serialized)) {
@@ -2651,7 +2678,7 @@ async function sendWhatsApp(phone, message, source = 'bot', options = {}) {
 
   const target = String(phone || '').trim();
   const targetChatId = isDirectChatId(target) ? target : '';
-  const cleanPhone = normalizeChatPhone(target);
+  const cleanPhone = normalizeChatPhone(options.phone || options.targetPhone || target);
   const cleanMessage = String(message || '').trim();
   const questionContext = buildTicketQuestionContext(cleanMessage, options);
   const fullMessage = questionContext ? questionContext.fullMessage : cleanMessage;
@@ -2666,18 +2693,47 @@ async function sendWhatsApp(phone, message, source = 'bot', options = {}) {
   let sentMessage = null;
 
   try {
-    if (!chatId) {
+    const candidateChatIds = [];
+
+    if (chatId) {
+      candidateChatIds.push(chatId);
+    } else {
       const numberId = await account.client.getNumberId(cleanPhone);
 
       if (!numberId) {
         throw new Error('El numero no existe en WhatsApp o no se pudo resolver');
       }
 
-      chatId = numberId._serialized;
+      candidateChatIds.push(numberId._serialized);
     }
 
-    console.log('Chat ID resuelto:', chatId);
-    sentMessage = await account.client.sendMessage(chatId, fullMessage);
+    if (cleanPhone) {
+      candidateChatIds.push(`${cleanPhone}@c.us`);
+    }
+
+    const uniqueCandidateChatIds = [...new Set(candidateChatIds.filter(Boolean))];
+    let lastSendError = null;
+
+    for (const candidateChatId of uniqueCandidateChatIds) {
+      try {
+        console.log('Chat ID resuelto:', candidateChatId);
+        sentMessage = await account.client.sendMessage(candidateChatId, fullMessage);
+        chatId = candidateChatId;
+        break;
+      } catch (candidateError) {
+        lastSendError = candidateError;
+
+        if (!isLidChatId(candidateChatId) || !cleanPhone) {
+          throw candidateError;
+        }
+
+        console.warn(`No se pudo enviar a ${candidateChatId}; se reintentara por numero:`, candidateError.message);
+      }
+    }
+
+    if (!sentMessage) {
+      throw lastSendError || new Error('No se pudo enviar el mensaje');
+    }
   } catch (error) {
     if (handleTransientWhatsAppError(error, 'send-error', account.id)) {
       throw createTransientWhatsAppError(error);
@@ -4063,6 +4119,7 @@ app.post('/messages/send', requirePrivileged, async (req, res) => {
       sentByUsername: req.user && req.user.username,
       sentByName: req.user && req.user.name,
       accountId,
+      phone: targetPhone,
       ticketId: ticketExternalId
     });
     const fallbackChatId = isDirectChatId(target) ? target : `${cleanPhone}@c.us`;
