@@ -2718,6 +2718,16 @@ async function sendWhatsApp(phone, message, source = 'bot', options = {}) {
       try {
         console.log('Chat ID resuelto:', candidateChatId);
         sentMessage = await account.client.sendMessage(candidateChatId, fullMessage);
+
+        if (!sentMessage) {
+          console.warn(`WhatsApp no devolvio confirmacion local para ${candidateChatId}; se registra el envio para evitar duplicados.`);
+          sentMessage = {
+            timestamp: Date.now(),
+            ack: null,
+            _sendUnconfirmed: true
+          };
+        }
+
         chatId = candidateChatId;
         break;
       } catch (candidateError) {

@@ -77,7 +77,9 @@ function getAutomaticMessageDefaultBody() {
 
 function isTicketSpecificSendError(error) {
   const message = String(error && error.message || error || '').toLowerCase();
-  return message.includes('el numero no existe') || message.includes('faltan phone o message');
+  return message.includes('el numero no existe') ||
+    message.includes('faltan phone o message') ||
+    message.includes('no se pudo enviar el mensaje');
 }
 
 function getTicketLabel(ticket) {
@@ -228,6 +230,16 @@ async function notifyNextTicket(currentTicket, options = {}) {
 
   if (nextTicket.message_sent_at) {
     return { sent: false, reason: 'El ticket siguiente ya fue notificado', nextTicket };
+  }
+
+  if (nextTicket.message_error) {
+    return {
+      sent: false,
+      error: true,
+      haltNotifications: false,
+      reason: `El ticket siguiente ya tiene error de envio: ${nextTicket.message_error}`,
+      nextTicket
+    };
   }
 
   if (nextTicket.automatic_message_disabled_at) {
