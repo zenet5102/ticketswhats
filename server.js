@@ -2024,6 +2024,19 @@ function isTransientWhatsAppError(error) {
     message.includes('protocol error');
 }
 
+function isUnconfirmedWhatsAppSendError(error) {
+  if (error && error.code === 'WHATSAPP_SEND_UNCONFIRMED') {
+    return true;
+  }
+
+  const message = String(error && error.message || error || '').toLowerCase();
+
+  return message.includes('no se pudo confirmar el envio') ||
+    message.includes('no se pudo confirmar el envío') ||
+    message.includes('timeout de confirmacion de envio') ||
+    message.includes('timeout de confirmación de envío');
+}
+
 function createTransientWhatsAppError(error) {
   const detail = String(error && error.message || error || '').trim();
   const nextError = new Error(detail
@@ -2732,6 +2745,17 @@ async function sendWhatsApp(phone, message, source = 'bot', options = {}) {
         break;
       } catch (candidateError) {
         lastSendError = candidateError;
+
+        if (isUnconfirmedWhatsAppSendError(candidateError)) {
+          console.warn(`WhatsApp no pudo confirmar el envio a ${candidateChatId}; se registra el intento para evitar duplicados:`, candidateError.message);
+          sentMessage = {
+            timestamp: Date.now(),
+            ack: null,
+            _sendUnconfirmed: true
+          };
+          chatId = candidateChatId;
+          break;
+        }
 
         if (!isLidChatId(candidateChatId) || !cleanPhone) {
           throw candidateError;
