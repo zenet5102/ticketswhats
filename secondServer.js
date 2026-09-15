@@ -3023,10 +3023,7 @@ app.get('/api/chats', requireLoggedIn, async (req, res) => {
   try {
     res.json({
       success: true,
-      conversations: await listWhatsAppConversations(req.query.limit, {
-        ownerUsername: getScopedOwnerUsername(req.user),
-        includeUnassigned: !canSeeAllOwnedChats(req.user)
-      })
+      conversations: await listWhatsAppConversations(req.query.limit)
     });
   } catch (error) {
     res.status(500).json({
@@ -3206,7 +3203,6 @@ app.post('/api/client-identification', requireLoggedIn, async (req, res) => {
 app.get('/api/messages', requireLoggedIn, async (req, res) => {
   try {
     const chatId = String(req.query.chatId || '').trim();
-    const scopedOwnerUsername = getScopedOwnerUsername(req.user);
 
     if (!chatId) {
       return res.status(400).json({
@@ -3215,21 +3211,7 @@ app.get('/api/messages', requireLoggedIn, async (req, res) => {
       });
     }
 
-    if (scopedOwnerUsername) {
-      const existingOwnerUsername = await getWhatsAppChatOwner(chatId, req.query.phone || chatId);
-
-      if (existingOwnerUsername && existingOwnerUsername !== scopedOwnerUsername) {
-        return res.status(403).json({
-          success: false,
-          error: 'Este chat esta asignado a otro operador'
-        });
-      }
-    }
-
-    const messageScope = {
-      ownerUsername: scopedOwnerUsername,
-      includeUnassigned: !canSeeAllOwnedChats(req.user)
-    };
+    const messageScope = {};
 
     await backfillChatMedia(chatId, messageScope);
 
@@ -3255,7 +3237,7 @@ app.post('/api/messages/send', requirePrivileged, async (req, res) => {
       ownerUsername: getUserOwnerUsername(req.user),
       sentByUsername: req.user && req.user.username,
       sentByName: req.user && req.user.name,
-      allowAssignedChatSend: canSeeAllOwnedChats(req.user)
+      allowAssignedChatSend: true
     });
 
     res.json({
