@@ -3990,7 +3990,9 @@ app.get('/api/audit/chats/by-agent', requireAuditAccess, async (req, res) => {
 });
 app.get('/messages/conversations', requireLoggedIn, async (req, res) => {
   try {
-    await syncRecentWhatsAppMessages();
+    syncRecentWhatsAppMessages().catch(error => {
+      console.warn('No se pudo sincronizar mensajes recientes en segundo plano:', error.message);
+    });
     const buckets = await listConversationBucketsForUserPrimary(req.user, req.query.limit);
 
     res.json({
@@ -4073,7 +4075,9 @@ app.get('/messages', requireLoggedIn, async (req, res) => {
       });
     }
 
-    await backfillChatMedia(chatId, accountId);
+    backfillChatMedia(chatId, accountId).catch(error => {
+      console.warn(`No se pudo recuperar media del chat ${chatId} en segundo plano:`, error.message);
+    });
 
     res.json({
       success: true,
