@@ -1418,29 +1418,47 @@ function getConversationIdentity(conversation) {
   return `${getConversationAccountId(conversation)}:${getConversationChatId(conversation)}`;
 }
 
-function getRepresentedChatIds(conversations) {
+function getConversationPhoneIdentities(conversation) {
+  const accountId = getConversationAccountId(conversation);
+  const phones = new Set([
+    normalizeChatPhone(conversation && conversation.phone || ''),
+    normalizeChatPhone(conversation && conversation.chat_id || ''),
+    ...getAuditPhoneCandidates(conversation && conversation.phone),
+    ...getAuditPhoneCandidates(conversation && conversation.chat_id)
+  ].filter(Boolean));
+
+  return Array.from(phones).map(phone => `${accountId}:phone:${phone}`);
+}
+
+function getConversationRepresentedKeys(conversation) {
+  const chatId = getConversationChatId(conversation);
+  const keys = new Set(getConversationPhoneIdentities(conversation));
+
+  if (chatId) {
+    keys.add(getConversationIdentity(conversation));
+  }
+
+  return keys;
+}
+
+function getRepresentedConversationKeys(conversations) {
   const represented = new Set();
 
   for (const conversation of conversations) {
-    const chatId = getConversationChatId(conversation);
-    const accountId = getConversationAccountId(conversation);
-
-    if (!chatId) {
-      continue;
-    }
-
-    represented.add(`${accountId}:${chatId}`);
-
-    for (const message of listWhatsAppMessages(chatId, 80, { accountId })) {
-      const messageChatId = String(message && message.chat_id || '').trim();
-
-      if (messageChatId) {
-        represented.add(`${accountId}:${messageChatId}`);
-      }
-    }
+    getConversationRepresentedKeys(conversation).forEach(key => represented.add(key));
   }
 
   return represented;
+}
+
+function isConversationRepresented(conversation, representedKeys) {
+  for (const key of getConversationRepresentedKeys(conversation)) {
+    if (representedKeys.has(key)) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 function attachBucketOverride(conversation, overridesByChatId) {
@@ -1491,67 +1509,13 @@ function splitConversationBuckets(conversations, requestedLimit) {
     ...autoConversations.filter(isTrackedConversation)
   ])
     .slice(0, requestedLimit);
-  const representedChatIds = getRepresentedChatIds(trackedConversations);
+  const representedKeys = getRepresentedConversationKeys(trackedConversations);
 
   return {
     conversations: trackedConversations,
     otherConversations: sortConversationsByLatest([
       ...forcedOther,
-      ...autoConversations.filter(conversation => isOtherConversation(conversation) && !representedChatIds.has(getConversationIdentity(conversation)))
-    ])
-      .slice(0, requestedLimit)
-  };
-}
-
-async function getRepresentedChatIdsFromMessages(conversations, listMessagesForChat) {
-  const represented = new Set();
-
-  for (const conversation of conversations) {
-    const chatId = getConversationChatId(conversation);
-    const accountId = getConversationAccountId(conversation);
-
-    if (!chatId) {
-      continue;
-    }
-
-    represented.add(`${accountId}:${chatId}`);
-
-    for (const message of await listMessagesForChat(chatId, accountId)) {
-      const messageChatId = String(message && message.chat_id || '').trim();
-
-      if (messageChatId) {
-        represented.add(`${accountId}:${messageChatId}`);
-      }
-    }
-  }
-
-  return represented;
-}
-
-async function splitConversationBucketsWithMessages(conversations, requestedLimit, listMessagesForChat) {
-  const overridesByChatId = new Map(
-    listWhatsAppConversationBucketOverrides()
-      .map(override => [
-        `${String(override.whatsapp_account || 'bot-1').trim() || 'bot-1'}:${String(override.chat_id || '').trim()}`,
-        override
-      ])
-  );
-  const withOverrides = conversations.map(conversation => attachBucketOverride(conversation, overridesByChatId));
-  const forcedMain = withOverrides.filter(conversation => conversation.conversation_bucket_override === 'main');
-  const forcedOther = withOverrides.filter(conversation => conversation.conversation_bucket_override === 'other');
-  const autoConversations = withOverrides.filter(conversation => !conversation.conversation_bucket_override);
-  const trackedConversations = sortConversationsByLatest([
-    ...forcedMain,
-    ...autoConversations.filter(isTrackedConversation)
-  ])
-    .slice(0, requestedLimit);
-  const representedChatIds = await getRepresentedChatIdsFromMessages(trackedConversations, listMessagesForChat);
-
-  return {
-    conversations: trackedConversations,
-    otherConversations: sortConversationsByLatest([
-      ...forcedOther,
-      ...autoConversations.filter(conversation => isOtherConversation(conversation) && !representedChatIds.has(getConversationIdentity(conversation)))
+      ...autoConversations.filter(conversation => isOtherConversation(conversation) && !isConversationRepresented(conversation, representedKeys))
     ])
       .slice(0, requestedLimit)
   };
@@ -1605,10 +1569,9 @@ async function listMysqlConversationBucketsForUser(user, limit) {
       (canSendToAnyTarget(user) && isAppStartedConversation(conversation))
     );
 
-  return splitConversationBucketsWithMessages(
+  return splitConversationBuckets(
     attachTicketInfoToConversations(user, sourceConversations),
-    requestedLimit,
-    (chatId, accountId) => primaryMessageDb.listWhatsAppMessages(chatId, 80, { accountId })
+    requestedLimit
   );
 }
 
@@ -1653,10 +1616,7 @@ async function canReadChatPrimary(user, chatId, accountId = 'bot-1') {
 
   if (canSendToAnyTarget(user)) {
     try {
-      const conversations = await primaryMessageDb.listWhatsAppConversations(1000, { accountId });
-      const conversation = conversations.find(row => getConversationChatId(row) === String(chatId || '').trim());
-
-      if (isAppStartedConversation(conversation)) {
+      if (await primaryMessageDb.hasAppStartedConversation(chatId, { accountId })) {
         return true;
       }
     } catch (error) {

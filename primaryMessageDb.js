@@ -545,6 +545,39 @@ async function listWhatsAppChatPhones(chatId, options = {}) {
   return rows.map(row => row.phone);
 }
 
+async function hasAppStartedConversation(chatId, options = {}) {
+  const cleanChatId = String(chatId || '').trim();
+  const accountFilter = String(options.whatsappAccount || options.accountId || '').trim();
+  const cleanPhone = normalizeChatPhone(cleanChatId);
+
+  if (!cleanChatId) {
+    return false;
+  }
+
+  const database = await getPool();
+  const params = cleanPhone ? [cleanChatId, cleanPhone] : [cleanChatId];
+  const whereParts = [
+    cleanPhone ? '(chat_id = ? OR phone = ?)' : 'chat_id = ?',
+    "chat_id <> 'status@broadcast'"
+  ];
+
+  if (accountFilter) {
+    whereParts.push("COALESCE(whatsapp_account, 'bot-1') = ?");
+    params.push(accountFilter);
+  }
+
+  const [rows] = await database.execute(`
+    SELECT 1 AS found
+    FROM ${messagesTableSql}
+    WHERE ${whereParts.join(' AND ')}
+      AND direction = 'outgoing'
+      AND source IN ('ticket', 'ticket-response', 'notification-channel', 'manual', 'inbox', 'bot')
+    LIMIT 1
+  `, params);
+
+  return rows.length > 0;
+}
+
 function dedupeVisualMessages(rows) {
   const seen = new Set();
   const output = [];
@@ -724,6 +757,7 @@ module.exports = {
   listWhatsAppChatPhones,
   listWhatsAppConversations,
   listWhatsAppMessages,
+  hasAppStartedConversation,
   saveWhatsAppMessage,
   updateWhatsAppMessageAck
 };
