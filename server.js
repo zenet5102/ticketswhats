@@ -2283,9 +2283,63 @@ function isSyncableWhatsAppChat(chat) {
   return Boolean(chatId && chatId !== 'status@broadcast' && !chatId.endsWith('@g.us'));
 }
 
+async function fetchStoredChatsForSync(accountId, limit) {
+  try {
+    return (await primaryMessageDb.listWhatsAppConversations(limit, { accountId }))
+      .map(conversation => String(conversation && conversation.chat_id || '').trim())
+      .filter(Boolean);
+  } catch (error) {
+    return listWhatsAppConversations(limit, { accountId })
+      .map(conversation => String(conversation && conversation.chat_id || '').trim())
+      .filter(Boolean);
+  }
+}
+
+function buildChatIdCandidates(chatId) {
+  const cleanChatId = String(chatId || '').trim();
+  const phone = normalizeChatPhone(cleanChatId);
+
+  return [...new Set([
+    cleanChatId,
+    phone ? `${phone}@c.us` : ''
+  ].filter(Boolean))];
+}
+
+async function fetchChatMessagesById(accountClient, chatId, messageLimit) {
+  for (const candidate of buildChatIdCandidates(chatId)) {
+    try {
+      const chat = await accountClient.getChatById(candidate);
+      return await chat.fetchMessages({ limit: messageLimit });
+    } catch (error) {
+      // Try the next possible id for @lid/direct aliases.
+    }
+  }
+
+  return [];
+}
+
+async function syncMessagesFromChatIds(accountClient, chatIds, accountId, messageLimit, result) {
+  for (const chatId of chatIds) {
+    try {
+      const messages = await fetchChatMessagesById(accountClient, chatId, messageLimit);
+      result.messagesFetched += messages.length;
+
+      for (const message of messages) {
+        const storedMessage = await storeWhatsAppMessage(message, 'whatsapp', accountId);
+
+        if (storedMessage) {
+          result.messagesStored += 1;
+        }
+      }
+    } catch (error) {
+      console.warn(`No se pudieron sincronizar mensajes recientes de ${chatId}:`, error.message);
+    }
+  }
+}
+
 async function syncRecentWhatsAppMessages(options = {}) {
   const now = Date.now();
-  const account = getWhatsAppAccountState('bot-1');
+  const account = getWhatsAppAccountState(options.accountId || 'bot-1');
   const accountClient = account.client || client;
   const chatLimit = Math.min(Math.max(Number(options.chatLimit) || recentMessagesSyncChatLimit, 1), 300);
   const messageLimit = Math.min(Math.max(Number(options.messageLimit) || recentMessagesSyncMessageLimit, 1), 100);
@@ -2293,7 +2347,8 @@ async function syncRecentWhatsAppMessages(options = {}) {
     skipped: false,
     chatsScanned: 0,
     messagesFetched: 0,
-    messagesStored: 0
+    messagesStored: 0,
+    fallback: ''
   };
 
   if (!accountClient || !account.ready || recentMessagesSyncRunning) {
@@ -2334,13 +2389,14 @@ async function syncRecentWhatsAppMessages(options = {}) {
 
     for (const chat of recentChats) {
       const chatId = String(chat && chat.id && chat.id._serialized || '').trim();
-      const lastChatSync = lastRecentMessagesSyncByChat.get(chatId) || 0;
+      const syncKey = `${account.id}:${chatId}`;
+      const lastChatSync = lastRecentMessagesSyncByChat.get(syncKey) || 0;
 
       if (!options.force && now - lastChatSync < recentMessagesSyncChatCooldownMs) {
         continue;
       }
 
-      lastRecentMessagesSyncByChat.set(chatId, now);
+      lastRecentMessagesSyncByChat.set(syncKey, now);
 
       try {
         const messages = await chat.fetchMessages({ limit: messageLimit });
@@ -2365,10 +2421,16 @@ async function syncRecentWhatsAppMessages(options = {}) {
   } catch (error) {
     if (isTransientWhatsAppError(error)) {
       console.warn('WhatsApp no dejo listar chats recientes; se reintentara luego.');
+      const fallbackChatIds = await fetchStoredChatsForSync(account.id, chatLimit);
+      result.fallback = 'stored-chats';
+      result.chatsScanned = fallbackChatIds.length;
+      await syncMessagesFromChatIds(accountClient, fallbackChatIds, account.id, messageLimit, result);
+
       return {
         ...result,
-        skipped: true,
-        reason: 'transient-whatsapp-error'
+        skipped: !fallbackChatIds.length,
+        reason: fallbackChatIds.length ? 'getChats-failed-used-stored-chats' : 'transient-whatsapp-error',
+        error: error.message
       };
     }
 
@@ -4027,14 +4089,33 @@ app.get('/messages/conversations', requireLoggedIn, async (req, res) => {
 
 app.post('/messages/sync', requirePrivileged, async (req, res) => {
   try {
+    const accountId = isValidWhatsAppAccount(req.body && req.body.accountId)
+      ? String(req.body.accountId).trim()
+      : getDefaultWhatsAppAccountId(req.user);
+
+    if (!canAccessWhatsAppAccount(req.user, accountId)) {
+      return res.status(403).json({
+        success: false,
+        error: 'Sesion WhatsApp no asignada al usuario'
+      });
+    }
+
     const result = await syncRecentWhatsAppMessages({
+      accountId,
       force: true,
       chatLimit: req.body && req.body.chatLimit || req.query.chatLimit || 200,
       messageLimit: req.body && req.body.messageLimit || req.query.messageLimit || 25
     });
+    const account = getWhatsAppAccountState(accountId);
 
     res.json({
       success: true,
+      whatsapp: {
+        accountId: account.id,
+        state: account.state,
+        ready: account.ready,
+        lastError: account.lastError
+      },
       sync: result
     });
   } catch (error) {

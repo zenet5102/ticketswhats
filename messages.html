@@ -2453,8 +2453,8 @@
         });
         const sync = data.sync || {};
         const detail = sync.skipped
-          ? `Sync omitida: ${sync.reason || 'sin detalle'}`
-          : `Sync lista: ${sync.chatsScanned || 0} chats, ${sync.messagesStored || 0} mensajes`;
+          ? `Sync omitida: ${sync.error || sync.reason || 'sin detalle'}`
+          : `Sync lista: ${sync.chatsScanned || 0} chats, ${sync.messagesStored || 0} mensajes${sync.fallback ? ' (fallback)' : ''}`;
         showToast(detail);
         await loadConversations(true, {
           includeHistory: false,
