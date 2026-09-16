@@ -2283,6 +2283,98 @@ function isSyncableWhatsAppChat(chat) {
   return Boolean(chatId && chatId !== 'status@broadcast' && !chatId.endsWith('@g.us'));
 }
 
+function normalizeRawWhatsAppChatId(rawId) {
+  if (!rawId) {
+    return '';
+  }
+
+  if (typeof rawId === 'string') {
+    return rawId.trim();
+  }
+
+  const serialized = String(rawId._serialized || rawId._serializedWid || '').trim();
+
+  if (serialized) {
+    return serialized;
+  }
+
+  const user = String(rawId.user || '').trim();
+  const server = String(rawId.server || '').trim();
+
+  return user && server ? `${user}@${server}` : '';
+}
+
+async function listRawWhatsAppChatIds(accountClient, limit) {
+  const rawChats = await accountClient.pupPage.evaluate(maxChats => {
+    const collections = window.require && window.require('WAWebCollections');
+    const chats = collections && collections.Chat && collections.Chat.getModelsArray
+      ? collections.Chat.getModelsArray()
+      : [];
+
+    return chats
+      .map(chat => {
+        try {
+          return {
+            id: chat && chat.id,
+            unreadCount: Number(chat && chat.unreadCount || 0),
+            timestamp: Number(chat && (chat.t || chat.timestamp || chat.lastReceivedKey && chat.lastReceivedKey.t || chat.lastMessage && chat.lastMessage.t) || 0)
+          };
+        } catch (error) {
+          return null;
+        }
+      })
+      .filter(Boolean)
+      .sort((left, right) => {
+        const unreadDelta = Number(right.unreadCount || 0) - Number(left.unreadCount || 0);
+        return unreadDelta || Number(right.timestamp || 0) - Number(left.timestamp || 0);
+      })
+      .slice(0, maxChats);
+  }, limit);
+
+  return rawChats
+    .map(chat => normalizeRawWhatsAppChatId(chat.id))
+    .filter(chatId => chatId && chatId !== 'status@broadcast' && !chatId.endsWith('@g.us'));
+}
+
+async function fetchChatMessagesById(accountClient, chatId, messageLimit) {
+  const cleanChatId = String(chatId || '').trim();
+  const phone = normalizeChatPhone(cleanChatId);
+  const candidates = [...new Set([
+    cleanChatId,
+    phone ? `${phone}@c.us` : ''
+  ].filter(Boolean))];
+
+  for (const candidate of candidates) {
+    try {
+      const chat = await accountClient.getChatById(candidate);
+      return await chat.fetchMessages({ limit: messageLimit });
+    } catch (error) {
+      // Try the next possible id for @lid/direct aliases.
+    }
+  }
+
+  return [];
+}
+
+async function syncMessagesFromChatIds(accountClient, chatIds, accountId, messageLimit, result) {
+  for (const chatId of chatIds) {
+    try {
+      const messages = await fetchChatMessagesById(accountClient, chatId, messageLimit);
+      result.messagesFetched += messages.length;
+
+      for (const message of messages) {
+        const storedMessage = await storeWhatsAppMessage(message, 'whatsapp', accountId);
+
+        if (storedMessage) {
+          result.messagesStored += 1;
+        }
+      }
+    } catch (error) {
+      console.warn(`No se pudieron sincronizar mensajes recientes de ${chatId}:`, error.message);
+    }
+  }
+}
+
 async function syncRecentWhatsAppMessages(options = {}) {
   const now = Date.now();
   const account = getWhatsAppAccountState(options.accountId || 'bot-1');
@@ -2293,7 +2385,8 @@ async function syncRecentWhatsAppMessages(options = {}) {
     skipped: false,
     chatsScanned: 0,
     messagesFetched: 0,
-    messagesStored: 0
+    messagesStored: 0,
+    fallback: ''
   };
 
   if (!accountClient || !account.ready || recentMessagesSyncRunning) {
@@ -2366,10 +2459,15 @@ async function syncRecentWhatsAppMessages(options = {}) {
   } catch (error) {
     if (isTransientWhatsAppError(error)) {
       console.warn('WhatsApp no dejo listar chats recientes; se reintentara luego.');
+      const rawChatIds = await listRawWhatsAppChatIds(accountClient, chatLimit);
+      result.fallback = 'raw-chat-ids';
+      result.chatsScanned = rawChatIds.length;
+      await syncMessagesFromChatIds(accountClient, rawChatIds, account.id, messageLimit, result);
+
       return {
         ...result,
-        skipped: true,
-        reason: 'getChats-failed',
+        skipped: !rawChatIds.length,
+        reason: rawChatIds.length ? 'getChats-failed-used-raw-chat-ids' : 'getChats-failed',
         error: error.message
       };
     }
