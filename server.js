@@ -1338,6 +1338,18 @@ function buildTicketInfoByPhone(user) {
   return byPhone;
 }
 
+function getRecentConversationSinceTs() {
+  const date = new Date();
+  date.setHours(0, 0, 0, 0);
+  date.setDate(date.getDate() - 1);
+  return date.getTime();
+}
+
+function shouldLoadConversationHistory(query = {}) {
+  const history = String(query.history || query.includeHistory || '').trim().toLowerCase();
+  return ['1', 'true', 'all', 'full', 'history'].includes(history);
+}
+
 function attachTicketInfoToConversations(user, conversations) {
   const ticketsByPhone = buildTicketInfoByPhone(user);
 
@@ -1521,10 +1533,14 @@ function splitConversationBuckets(conversations, requestedLimit) {
   };
 }
 
-function listConversationBucketsForUser(user, limit) {
+function listConversationBucketsForUser(user, limit, options = {}) {
   const requestedLimit = Math.min(Math.max(Number(limit) || 100, 1), 300);
   const accountIds = getAllowedWhatsAppAccountIds(user);
-  const allConversations = accountIds.flatMap(accountId => listWhatsAppConversations(1000, { accountId }));
+  const sinceTs = Number(options.sinceTs || 0);
+  const allConversations = accountIds.flatMap(accountId => listWhatsAppConversations(1000, {
+    accountId,
+    ...(sinceTs ? { sinceTs } : {})
+  }));
 
   if (user && user.isAdmin) {
     return splitConversationBuckets(
@@ -1552,13 +1568,17 @@ function listConversationBucketsForUser(user, limit) {
   );
 }
 
-async function listMysqlConversationBucketsForUser(user, limit) {
+async function listMysqlConversationBucketsForUser(user, limit, options = {}) {
   const requestedLimit = Math.min(Math.max(Number(limit) || 100, 1), 300);
   const accountIds = getAllowedWhatsAppAccountIds(user);
   const allConversations = [];
+  const sinceTs = Number(options.sinceTs || 0);
 
   for (const accountId of accountIds) {
-    allConversations.push(...await primaryMessageDb.listWhatsAppConversations(1000, { accountId }));
+    allConversations.push(...await primaryMessageDb.listWhatsAppConversations(1000, {
+      accountId,
+      ...(sinceTs ? { sinceTs } : {})
+    }));
   }
 
   const visiblePhones = getVisibleTicketPhones(user, getTodayDateString());
@@ -1575,12 +1595,12 @@ async function listMysqlConversationBucketsForUser(user, limit) {
   );
 }
 
-async function listConversationBucketsForUserPrimary(user, limit) {
+async function listConversationBucketsForUserPrimary(user, limit, options = {}) {
   try {
-    return await listMysqlConversationBucketsForUser(user, limit);
+    return await listMysqlConversationBucketsForUser(user, limit, options);
   } catch (error) {
     console.warn('MySQL principal no disponible para conversaciones; se usa SQLite:', error.message);
-    return listConversationBucketsForUser(user, limit);
+    return listConversationBucketsForUser(user, limit, options);
   }
 }
 
@@ -3950,13 +3970,16 @@ app.get('/api/audit/chats/by-agent', requireAuditAccess, async (req, res) => {
 });
 app.get('/messages/conversations', requireLoggedIn, async (req, res) => {
   try {
-    syncRecentWhatsAppMessages().catch(error => {
-      console.warn('No se pudo sincronizar mensajes recientes en segundo plano:', error.message);
+    const includeHistory = shouldLoadConversationHistory(req.query);
+    const sinceTs = includeHistory ? 0 : getRecentConversationSinceTs();
+    const buckets = await listConversationBucketsForUserPrimary(req.user, req.query.limit, {
+      sinceTs
     });
-    const buckets = await listConversationBucketsForUserPrimary(req.user, req.query.limit);
 
     res.json({
       success: true,
+      history: includeHistory ? 'all' : 'recent',
+      sinceTs: sinceTs || null,
       conversations: buckets.conversations,
       otherConversations: buckets.otherConversations
     });
@@ -3998,11 +4021,15 @@ app.post('/messages/conversations/bucket', requirePrivileged, async (req, res) =
       req.user && req.user.username || '',
       accountId
     );
-    const buckets = await listConversationBucketsForUserPrimary(req.user, req.query.limit);
+    const includeHistory = shouldLoadConversationHistory(req.query);
+    const buckets = await listConversationBucketsForUserPrimary(req.user, req.query.limit, {
+      sinceTs: includeHistory ? 0 : getRecentConversationSinceTs()
+    });
 
     res.json({
       success: true,
       override,
+      history: includeHistory ? 'all' : 'recent',
       conversations: buckets.conversations,
       otherConversations: buckets.otherConversations
     });

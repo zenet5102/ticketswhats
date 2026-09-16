@@ -482,6 +482,15 @@
       line-height: 1;
     }
 
+    .history-chat-button {
+      min-width: 38px;
+      height: 38px;
+      padding: 0 10px;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 700;
+    }
+
     .conversation-tabs {
       padding: 8px;
       border-bottom: 1px solid var(--line);
@@ -1075,6 +1084,7 @@
           <button id="startChatBtn" class="new-chat-button" type="button" title="Nuevo chat" aria-label="Nuevo chat">
             <i class="bi bi-chat-left-text" aria-hidden="true"></i>
           </button>
+          <button id="loadOlderChatsBtn" class="history-chat-button" type="button" title="Cargar conversaciones anteriores">Historial</button>
         </div>
         <div class="conversation-tabs" role="tablist" aria-label="Tipo de conversaciones">
           <button id="mainChatsTab" class="conversation-tab active" type="button">Principal</button>
@@ -1206,6 +1216,8 @@
       channelSettings: null,
       whatsappReady: false,
       chatSearch: '',
+      conversationHistoryLoaded: false,
+      conversationHistoryLoading: false,
       newChatValidationRequestId: 0,
       newChatValidation: null,
       newChatValidationTimer: null
@@ -1231,6 +1243,7 @@
       conversationList: document.getElementById('conversationList'),
       lastIncoming: document.getElementById('lastIncoming'),
       lastIncomingDetail: document.getElementById('lastIncomingDetail'),
+      loadOlderChatsBtn: document.getElementById('loadOlderChatsBtn'),
       lastRefresh: document.getElementById('lastRefresh'),
       loadedBadge: document.getElementById('loadedBadge'),
       logoutBtn: document.getElementById('logoutBtn'),
@@ -2031,6 +2044,40 @@
         .find(item => String(item && item.chat_id || '').trim() === cleanChatId);
     }
 
+    function mergeConversationList(currentConversations, nextConversations) {
+      const byChatId = new Map();
+
+      [...currentConversations, ...nextConversations].forEach(conversation => {
+        const chatId = String(conversation && conversation.chat_id || '').trim();
+
+        if (!chatId) {
+          return;
+        }
+
+        const current = byChatId.get(chatId);
+
+        if (!current || Number(conversation.timestamp_ts || 0) >= Number(current.timestamp_ts || 0)) {
+          byChatId.set(chatId, conversation);
+        }
+      });
+
+      return Array.from(byChatId.values()).sort((left, right) => {
+        const timeDelta = Number(right.timestamp_ts || 0) - Number(left.timestamp_ts || 0);
+        return timeDelta || String(right.id || '').localeCompare(String(left.id || ''));
+      });
+    }
+
+    function setConversationLists(conversations, otherConversations, options = {}) {
+      if (options.merge) {
+        state.conversations = mergeConversationList(state.conversations, conversations || []);
+        state.otherConversations = mergeConversationList(state.otherConversations, otherConversations || []);
+        return;
+      }
+
+      state.conversations = conversations || [];
+      state.otherConversations = otherConversations || [];
+    }
+
     function setConversationBucket(bucket) {
       state.activeConversationBucket = bucket === 'other' ? 'other' : 'main';
       state.selectionLocked = false;
@@ -2068,7 +2115,11 @@
 
       els.conversationCount.textContent = unreadCount;
       els.loadedBadge.textContent = count;
-      els.conversationDetail.textContent = `${unreadCount} sin leer | ${state.conversations.length} principal | ${state.otherConversations.length} otros`;
+      els.conversationDetail.textContent = `${unreadCount} sin leer | ${state.conversations.length} principal | ${state.otherConversations.length} otros | ${state.conversationHistoryLoaded ? 'historico' : 'hoy y ayer'}`;
+      els.loadOlderChatsBtn.disabled = state.conversationHistoryLoading;
+      els.loadOlderChatsBtn.textContent = state.conversationHistoryLoading
+        ? 'Cargando...'
+        : (state.conversationHistoryLoaded ? 'Historial cargado' : 'Historial');
 
       if (lastIncoming) {
         els.lastIncoming.textContent = formatDateTime(lastIncoming.last_incoming_ts);
@@ -2312,10 +2363,18 @@
       renderStatus(data);
     }
 
-    async function loadConversations(preserveSelection = true) {
-      const data = await fetchJson('/messages/conversations');
-      state.conversations = data.conversations || [];
-      state.otherConversations = data.otherConversations || [];
+    async function loadConversations(preserveSelection = true, options = {}) {
+      const includeHistory = Boolean(options.includeHistory);
+      const url = includeHistory ? '/messages/conversations?history=all&limit=300' : '/messages/conversations';
+      const data = await fetchJson(url);
+      setConversationLists(data.conversations || [], data.otherConversations || [], {
+        merge: Boolean(options.merge)
+      });
+
+      if (includeHistory) {
+        state.conversationHistoryLoaded = true;
+      }
+
       detectNewTicketMessages([...state.conversations, ...state.otherConversations]);
 
       const activeConversations = getActiveConversations();
@@ -2337,6 +2396,28 @@
 
       renderConversations();
       renderChatHeader(findConversationByChatId(state.selectedChatId));
+    }
+
+    async function loadConversationHistory() {
+      if (state.conversationHistoryLoading) {
+        return;
+      }
+
+      state.conversationHistoryLoading = true;
+      renderConversations();
+
+      try {
+        await loadConversations(true, {
+          includeHistory: true,
+          merge: false
+        });
+        showToast('Historial cargado');
+      } catch (error) {
+        showToast(error.message);
+      } finally {
+        state.conversationHistoryLoading = false;
+        renderConversations();
+      }
     }
 
     async function loadMessages() {
@@ -2362,7 +2443,10 @@
 
       try {
         await loadStatus();
-        await loadConversations(true);
+        await loadConversations(true, {
+          includeHistory: false,
+          merge: state.conversationHistoryLoaded
+        });
         await loadMessages();
         els.lastRefresh.textContent = `Actualizado ${new Intl.DateTimeFormat('es-AR', {
           hour: '2-digit',
@@ -2469,7 +2553,7 @@
       els.moveBucketBtn.disabled = true;
 
       try {
-        const data = await fetchJson('/messages/conversations/bucket', {
+        const data = await fetchJson('/messages/conversations/bucket' + (state.conversationHistoryLoaded ? '?history=all' : ''), {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json'
@@ -2480,8 +2564,9 @@
           })
         });
 
-        state.conversations = data.conversations || [];
-        state.otherConversations = data.otherConversations || [];
+        setConversationLists(data.conversations || [], data.otherConversations || [], {
+          merge: false
+        });
         state.activeConversationBucket = targetBucket;
         state.selectionLocked = true;
         els.mainChatsTab.classList.toggle('active', targetBucket === 'main');
@@ -2683,7 +2768,10 @@
 
         closeNewChatModal();
         showToast('Mensaje enviado');
-        await loadConversations(true);
+        await loadConversations(true, {
+          includeHistory: false,
+          merge: state.conversationHistoryLoaded
+        });
         await loadMessages();
       } catch (error) {
         els.newChatError.textContent = error.message;
@@ -2773,7 +2861,10 @@
           renderTicketDetails(findConversationByChatId(state.selectedChatId));
         }
 
-        await loadConversations(true);
+        await loadConversations(true, {
+          includeHistory: false,
+          merge: state.conversationHistoryLoaded
+        });
         await loadMessages();
       } catch (error) {
         els.sendError.textContent = error.message;
@@ -2783,6 +2874,7 @@
     }
 
     els.refreshBtn.addEventListener('click', refreshAll);
+    els.loadOlderChatsBtn.addEventListener('click', loadConversationHistory);
     els.mainChatsTab.addEventListener('click', () => setConversationBucket('main'));
     els.otherChatsTab.addEventListener('click', () => setConversationBucket('other'));
     els.moveBucketBtn.addEventListener('click', moveSelectedConversationBucket);

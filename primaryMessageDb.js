@@ -407,9 +407,22 @@ async function listRecentWhatsAppMessages(limit = 1000, options = {}) {
 async function listWhatsAppConversations(limit = 100, options = {}) {
   const safeLimit = Math.min(Math.max(Number(limit) || 100, 1), 1000);
   const accountFilter = String(options.whatsappAccount || options.accountId || '').trim();
+  const sinceTs = Number(options.sinceTs || options.fromTs || 0);
   const database = await getPool();
-  const whereClause = accountFilter ? 'WHERE COALESCE(whatsapp_account, ?) = ?' : '';
-  const whereParams = accountFilter ? ['bot-1', accountFilter] : [];
+  const whereParts = [];
+  const whereParams = [];
+
+  if (accountFilter) {
+    whereParts.push('COALESCE(whatsapp_account, ?) = ?');
+    whereParams.push('bot-1', accountFilter);
+  }
+
+  if (Number.isFinite(sinceTs) && sinceTs > 0) {
+    whereParts.push('timestamp_ts >= ?');
+    whereParams.push(sinceTs);
+  }
+
+  const whereClause = whereParts.length ? `WHERE ${whereParts.join(' AND ')}` : '';
 
   const [rows] = await database.query(`
     WITH ranked AS (
