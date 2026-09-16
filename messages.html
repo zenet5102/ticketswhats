@@ -1084,6 +1084,7 @@
           <button id="startChatBtn" class="new-chat-button" type="button" title="Nuevo chat" aria-label="Nuevo chat">
             <i class="bi bi-chat-left-text" aria-hidden="true"></i>
           </button>
+          <button id="syncChatsBtn" class="history-chat-button" type="button" title="Sincronizar chats recientes desde WhatsApp">Sync</button>
           <button id="loadOlderChatsBtn" class="history-chat-button" type="button" title="Cargar conversaciones anteriores">Historial</button>
         </div>
         <div class="conversation-tabs" role="tablist" aria-label="Tipo de conversaciones">
@@ -1218,6 +1219,7 @@
       chatSearch: '',
       conversationHistoryLoaded: false,
       conversationHistoryLoading: false,
+      conversationSyncing: false,
       newChatValidationRequestId: 0,
       newChatValidation: null,
       newChatValidationTimer: null
@@ -1269,6 +1271,7 @@
       sendError: document.getElementById('sendError'),
       sessionBadge: document.getElementById('sessionBadge'),
       startChatBtn: document.getElementById('startChatBtn'),
+      syncChatsBtn: document.getElementById('syncChatsBtn'),
       ticketBadge: document.getElementById('ticketBadge'),
       ticketDetails: document.getElementById('ticketDetails'),
       toast: document.getElementById('toast'),
@@ -1855,6 +1858,7 @@
       const fullAccess = hasFullAccess();
       els.phoneInput.disabled = !fullAccess;
       els.startChatBtn.disabled = !fullAccess;
+      els.syncChatsBtn.hidden = !fullAccess;
       els.usersLink.hidden = user.role !== 'admin';
       els.reconnectBtn.hidden = !fullAccess;
       els.reconnectBtn.disabled = !fullAccess;
@@ -2120,6 +2124,8 @@
       els.loadOlderChatsBtn.textContent = state.conversationHistoryLoading
         ? 'Cargando...'
         : (state.conversationHistoryLoaded ? 'Historial cargado' : 'Historial');
+      els.syncChatsBtn.disabled = state.conversationSyncing || !hasFullAccess();
+      els.syncChatsBtn.textContent = state.conversationSyncing ? 'Sync...' : 'Sync';
 
       if (lastIncoming) {
         els.lastIncoming.textContent = formatDateTime(lastIncoming.last_incoming_ts);
@@ -2416,6 +2422,48 @@
         showToast(error.message);
       } finally {
         state.conversationHistoryLoading = false;
+        renderConversations();
+      }
+    }
+
+    async function syncWhatsAppChats() {
+      if (state.conversationSyncing) {
+        return;
+      }
+
+      if (!hasFullAccess()) {
+        showToast('Permisos insuficientes');
+        return;
+      }
+
+      state.conversationSyncing = true;
+      renderConversations();
+      showToast('Sincronizando WhatsApp...');
+
+      try {
+        const data = await fetchJson('/messages/sync', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            chatLimit: 200,
+            messageLimit: 25
+          })
+        });
+        const sync = data.sync || {};
+        const detail = sync.skipped
+          ? `Sync omitida: ${sync.reason || 'sin detalle'}`
+          : `Sync lista: ${sync.chatsScanned || 0} chats, ${sync.messagesStored || 0} mensajes`;
+        showToast(detail);
+        await loadConversations(true, {
+          includeHistory: false,
+          merge: state.conversationHistoryLoaded
+        });
+      } catch (error) {
+        showToast(error.message);
+      } finally {
+        state.conversationSyncing = false;
         renderConversations();
       }
     }
@@ -2875,6 +2923,7 @@
 
     els.refreshBtn.addEventListener('click', refreshAll);
     els.loadOlderChatsBtn.addEventListener('click', loadConversationHistory);
+    els.syncChatsBtn.addEventListener('click', syncWhatsAppChats);
     els.mainChatsTab.addEventListener('click', () => setConversationBucket('main'));
     els.otherChatsTab.addEventListener('click', () => setConversationBucket('other'));
     els.moveBucketBtn.addEventListener('click', moveSelectedConversationBucket);

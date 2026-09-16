@@ -2287,13 +2287,29 @@ async function syncRecentWhatsAppMessages(options = {}) {
   const now = Date.now();
   const account = getWhatsAppAccountState('bot-1');
   const accountClient = account.client || client;
+  const chatLimit = Math.min(Math.max(Number(options.chatLimit) || recentMessagesSyncChatLimit, 1), 300);
+  const messageLimit = Math.min(Math.max(Number(options.messageLimit) || recentMessagesSyncMessageLimit, 1), 100);
+  const result = {
+    skipped: false,
+    chatsScanned: 0,
+    messagesFetched: 0,
+    messagesStored: 0
+  };
 
   if (!accountClient || !account.ready || recentMessagesSyncRunning) {
-    return;
+    return {
+      ...result,
+      skipped: true,
+      reason: recentMessagesSyncRunning ? 'sync-running' : 'whatsapp-not-ready'
+    };
   }
 
   if (!options.force && now - lastRecentMessagesSyncAt < recentMessagesSyncIntervalMs) {
-    return;
+    return {
+      ...result,
+      skipped: true,
+      reason: 'cooldown'
+    };
   }
 
   recentMessagesSyncRunning = true;
@@ -2312,7 +2328,9 @@ async function syncRecentWhatsAppMessages(options = {}) {
 
         return getChatSortTimestamp(right) - getChatSortTimestamp(left);
       })
-      .slice(0, recentMessagesSyncChatLimit);
+      .slice(0, chatLimit);
+
+    result.chatsScanned = recentChats.length;
 
     for (const chat of recentChats) {
       const chatId = String(chat && chat.id && chat.id._serialized || '').trim();
@@ -2325,10 +2343,15 @@ async function syncRecentWhatsAppMessages(options = {}) {
       lastRecentMessagesSyncByChat.set(chatId, now);
 
       try {
-        const messages = await chat.fetchMessages({ limit: recentMessagesSyncMessageLimit });
+        const messages = await chat.fetchMessages({ limit: messageLimit });
+        result.messagesFetched += messages.length;
 
         for (const message of messages) {
-          await storeWhatsAppMessage(message, 'whatsapp', account.id);
+          const storedMessage = await storeWhatsAppMessage(message, 'whatsapp', account.id);
+
+          if (storedMessage) {
+            result.messagesStored += 1;
+          }
         }
       } catch (error) {
         if (isTransientWhatsAppError(error)) {
@@ -2342,13 +2365,24 @@ async function syncRecentWhatsAppMessages(options = {}) {
   } catch (error) {
     if (isTransientWhatsAppError(error)) {
       console.warn('WhatsApp no dejo listar chats recientes; se reintentara luego.');
-      return;
+      return {
+        ...result,
+        skipped: true,
+        reason: 'transient-whatsapp-error'
+      };
     }
 
     console.warn('No se pudieron sincronizar chats recientes de WhatsApp:', error.message);
+    return {
+      ...result,
+      skipped: true,
+      reason: error.message
+    };
   } finally {
     recentMessagesSyncRunning = false;
   }
+
+  return result;
 }
 
 async function processIncomingTicketResponse(storedMessage) {
@@ -3982,6 +4016,26 @@ app.get('/messages/conversations', requireLoggedIn, async (req, res) => {
       sinceTs: sinceTs || null,
       conversations: buckets.conversations,
       otherConversations: buckets.otherConversations
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+app.post('/messages/sync', requirePrivileged, async (req, res) => {
+  try {
+    const result = await syncRecentWhatsAppMessages({
+      force: true,
+      chatLimit: req.body && req.body.chatLimit || req.query.chatLimit || 200,
+      messageLimit: req.body && req.body.messageLimit || req.query.messageLimit || 25
+    });
+
+    res.json({
+      success: true,
+      sync: result
     });
   } catch (error) {
     res.status(500).json({
