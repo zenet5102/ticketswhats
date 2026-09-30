@@ -131,6 +131,15 @@ const maxStoredMediaBytes = 8 * 1024 * 1024;
 const lastMediaBackfillByChat = new Map();
 const lastRecentMessagesSyncByChat = new Map();
 const mediaDownloadRetryDelaysMs = [0, 750, 2000];
+const downloadableMessageTypes = new Set([
+  'audio',
+  'document',
+  'gif',
+  'image',
+  'ptt',
+  'sticker',
+  'video'
+]);
 const notificationChannelReplyByChat = new Map();
 const notificationChannelReplyCooldownMs = config.notificationChannelReplyCooldownHours * 60 * 60 * 1000;
 const notificationChannelSuppressAfterManualMs = config.notificationChannelSuppressAfterManualHours * 60 * 60 * 1000;
@@ -1856,6 +1865,10 @@ function attachWhatsAppEvents(instance, accountId = 'bot-1') {
   });
 
   instance.on('message_create', message => {
+    if (!message.fromMe) {
+      return;
+    }
+
     storeWhatsAppMessage(message, 'whatsapp', account.id).catch(error => {
       console.warn('No se pudo guardar mensaje creado:', error.message);
     });
@@ -2173,10 +2186,56 @@ function wait(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+function messageMayContainMedia(message) {
+  const data = message && message._data || {};
+  const messageType = String(message && message.type || data.type || '').toLowerCase();
+
+  return Boolean(
+    message && (
+      message.hasMedia ||
+      data.directPath ||
+      data.mimetype ||
+      data.mediaKey ||
+      downloadableMessageTypes.has(messageType)
+    )
+  );
+}
+
+async function refreshMessageForMedia(message, accountId) {
+  const account = getWhatsAppAccountState(accountId);
+  const accountClient = account.client || client;
+  const messageId = message && message.id && message.id._serialized;
+
+  if (accountClient && messageId && accountClient.getMessageById) {
+    try {
+      const refreshedMessage = await accountClient.getMessageById(messageId);
+
+      if (refreshedMessage) {
+        return refreshedMessage;
+      }
+    } catch (error) {
+      // Fall through to the in-place reload supported by whatsapp-web.js.
+    }
+  }
+
+  if (message && message.reload) {
+    try {
+      return await message.reload() || message;
+    } catch (error) {
+      return message;
+    }
+  }
+
+  return message;
+}
+
 async function getMessageMediaInfo(message, accountId = 'bot-1') {
-  if (!message.hasMedia || !message.downloadMedia) {
+  if (!message || !message.downloadMedia || !messageMayContainMedia(message)) {
     return {};
   }
+
+  let mediaMessage = message;
+  let mediaMetadata = {};
 
   for (let attempt = 0; attempt < mediaDownloadRetryDelaysMs.length; attempt += 1) {
     const delay = mediaDownloadRetryDelaysMs[attempt];
@@ -2186,26 +2245,42 @@ async function getMessageMediaInfo(message, accountId = 'bot-1') {
     }
 
     try {
-      const media = await message.downloadMedia();
+      if (attempt > 0 || !mediaMessage.hasMedia) {
+        mediaMessage = await refreshMessageForMedia(mediaMessage, accountId);
+      }
 
-      if (!media || !media.mimetype) {
+      if (!mediaMessage || !mediaMessage.hasMedia || !mediaMessage.downloadMedia) {
+        continue;
+      }
+
+      const media = await mediaMessage.downloadMedia();
+      const mediaMime = String(
+        media && media.mimetype ||
+        mediaMessage._data && mediaMessage._data.mimetype ||
+        ''
+      ).trim();
+
+      if (!media || !mediaMime) {
         continue;
       }
 
       const mediaInfo = {
-        mediaMime: media.mimetype,
-        mediaFilename: media.filename || (message._data && message._data.filename) || ''
+        mediaMime,
+        mediaFilename: media.filename || (mediaMessage._data && mediaMessage._data.filename) || ''
       };
+      mediaMetadata = mediaInfo;
 
-      if (shouldStoreInlineMedia(media.mimetype) && media.data) {
+      if (shouldStoreInlineMedia(mediaMime) && media.data) {
         const mediaBytes = Buffer.byteLength(media.data, 'base64');
 
         if (mediaBytes <= maxStoredMediaBytes) {
           mediaInfo.mediaData = media.data;
+          return mediaInfo;
         }
-      }
 
-      return mediaInfo;
+        console.warn(`Media de WhatsApp omitida por tamano (${accountId}, ${mediaBytes} bytes).`);
+        return mediaInfo;
+      }
     } catch (error) {
       if (attempt === mediaDownloadRetryDelaysMs.length - 1) {
         if (handleTransientWhatsAppError(error, 'media-download-error', accountId)) {
@@ -2217,7 +2292,8 @@ async function getMessageMediaInfo(message, accountId = 'bot-1') {
     }
   }
 
-  return {};
+  console.warn(`WhatsApp no entrego los datos del adjunto (${accountId}, tipo ${String(message.type || 'desconocido')}).`);
+  return mediaMetadata;
 }
 
 async function storeWhatsAppMessage(message, source = 'whatsapp', accountId = 'bot-1') {
