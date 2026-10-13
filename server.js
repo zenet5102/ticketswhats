@@ -2736,7 +2736,7 @@ async function getWhatsAppStatus(accountId = 'bot-1') {
   const accountClient = account.client;
 
   try {
-    if (accountClient && accountClient.pupPage) {
+    if (account.ready && accountClient && accountClient.pupPage) {
       const state = await accountClient.getState();
 
       if (state) {
